@@ -2,15 +2,33 @@
 
 **TypeScript + React + three.js + React Three Fiber + Vite + WebGPU**
 
-VisibleHuman is a browser app, now being set up, for rendering the [Visible Human Project](https://www.nlm.nih.gov/research/visible/visible_human.html)'s male body as Gaussian splats. The project photographed a body in cross-sections a millimetre apart, from the top of the head to the soles of the feet. Stacked back up, those photographs make a volume in true colour, and each small block of it becomes a soft blob of that colour at its place in the body. The body can then be turned in 3D and cut open along any of the three anatomical planes. The splats are drawn by three.js's own WebGPU-based Gaussian splat rendering.
+VisibleHuman renders the [Visible Human Project](https://www.nlm.nih.gov/research/visible/visible_human.html)'s male body in the browser as Gaussian splats. The project photographed a body in cross-sections a millimetre apart, from the top of the head to the soles of the feet. Stacked back up, those photographs make a volume in true colour, and each small block of it becomes a soft blob of that colour at its place in the body. The body can then be turned in 3D and cut open along any of the three anatomical planes. The splats are drawn by three.js's own WebGPU-based Gaussian splat rendering.
+
+**Live demo: [snovakow.com/visiblehuman](https://snovakow.com/visiblehuman/)**
+
+## Using it
+
+The page opens on the whole body, seen from the front. Drag to turn it, scroll or pinch to zoom, and right-drag or drag with two fingers to move it.
+
+The panel at the top right:
+
+- **Detail** sets the size of the blocks the body is drawn in: 16 mm (about 30,000 splats), 8 mm (about 215,000, where it starts) or 4 mm (about 1.6 million, which has the most detail and runs slowest).
+- **Size** shrinks or grows every splat, from half to twice its starting size.
+- **Opacity** fades the whole body, so you can see into it.
+- **Axial**, **Coronal** and **Sagittal** cut the body open. Axial cuts down from the head, coronal back from the front, and sagittal across from the body's right. At 0 nothing is cut, and at 1 the whole body is cut away.
+- **Splats shown** and **Renderer** tell you how many splats are being drawn, and whether WebGPU or WebGL 2 is drawing them.
+
+The counter at the top left shows the frame rate.
+
+VisibleHuman renders with WebGPU where the browser and the GPU can run it, and with WebGL 2 otherwise, including on GPUs known to fail at three.js's WebGPU splat sorting. Adding `?webgl` to the address forces WebGL 2. WebGL 2 sorts the splats on the CPU, so expect the 4 mm level to turn slowly there.
 
 ## Status
 
-The body is on screen. The page loads the volume that a script builds from the photographs, draws it as splats and frames it from the front, ready to be turned and zoomed. A panel picks the level of detail, sets the splats' size and opacity, and cuts the body open along the axial, coronal and sagittal planes. It renders with WebGPU where the browser and the GPU can run it, and with WebGL 2 otherwise; adding `?webgl` to the address forces WebGL 2. The [setup plan](docs/setup-plan.md) lays out the steps still to come: a review, then the first deploy.
+The first version is complete and live. The body loads, draws at three levels of detail and cuts open along all three planes, under WebGPU or WebGL 2. Ideas for later include the female body, which was cut three times as finely; the CT and MRI scans taken of both bodies; and full-resolution photographs shown on the cut faces. The [setup plan](docs/setup-plan.md) that built this version is still in the repository.
 
 ## Running it locally
 
-You'll need [Node.js](https://nodejs.org) 22.12 or later, which Vite 8 and drei's camera controls need. Then, in a clone of this repository:
+You'll need [Node.js](https://nodejs.org) 22.12 or later, which Vite 8 and drei's camera controls need. For the tests and the volume script, you'll need 22.18 or later, which runs TypeScript without a flag. Then, in a clone of this repository:
 
 ```sh
 npm install
@@ -18,6 +36,24 @@ npm run dev
 ```
 
 and open the address it prints.
+
+`npm run build` makes a static site in `dist/`, with the volume file included, which works from any folder on any web server. `npm run preview` serves it locally. `npm run lint`, `npm run typecheck` and `npm test` run the checks.
+
+## The volume file
+
+The NLM's photographs can't be read by a page on another site, because its server doesn't allow it, and at 6.2 GB they'd be far too much to load anyway. So a Node script reads them once and writes a file of about 5.5 MB, [`public/volume/male-4mm.bin`](public/volume/male-4mm.bin), which the page loads. The file is committed, so a clone runs, builds and deploys without the script.
+
+The script reads all 1,878 colour cross-sections of the male body. It tells the body apart from the blue gel it was set in and from the frame, scale card and labels around it, then averages what's left into 4 mm blocks, each keeping the colour of the tissue in it. The few slices that are blank or hazy in the NLM's set are skipped, and their blocks are filled from their neighbours'. To rebuild the file:
+
+```sh
+npm run volume
+```
+
+It downloads the 6.2 GB from the NLM, four slices at a time, and keeps none of it. That takes about 10 to 25 minutes, depending on the connection. It also draws previews of the result in `.cache/preview/`. Options go after `--`, as in `npm run volume -- --cache`:
+
+- `--cache` keeps the downloads in `.cache/slices/`, which needs 6.2 GB of space, and reads them from there on the next run.
+- `--previews` redraws the previews from the existing file, without downloading anything.
+- `--from` and `--to` read only a range of slices, numbered 1001 to 2878 from the head down, and `--out` writes the file somewhere else.
 
 ## Stack
 
@@ -40,7 +76,7 @@ Around them are drei's helpers, a leva control panel, zustand for app state, and
 - **Tested where it's pure.** The parts with no GPU or React in them, such as the volume file's reader and writer and the rule that tells the body from its surroundings, have tests that build their own inputs, and each review runs them with the other checks.
 - **Versioned checkpoints.** Versions start at 0.0.0 and count up: each reviewed batch ends with a version commit, which marks where the next review starts.
 - **Current dependencies.** Packages and tools track their latest releases, and each review reports anything that has fallen behind.
-- **Branches and deploys.** Work lands on `development` and reaches `main` by merge. The live site will be a static build of `main`.
+- **Branches and deploys.** Work lands on `development` and reaches `main` by merge. The live site is a static build of `main`.
 
 ## Credits
 
