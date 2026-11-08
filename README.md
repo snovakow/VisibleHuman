@@ -24,7 +24,7 @@ VisibleHuman renders with WebGPU where the browser and the GPU can run it, and w
 
 ## Status
 
-The first version is complete and live. The body loads, draws at three levels of detail and cuts open along all three planes, under WebGPU or WebGL 2. Ideas for later include the female body, which was cut three times as finely; the CT and MRI scans taken of both bodies; and full-resolution photographs shown on the cut faces. The [setup plan](docs/setup-plan.md) that built this version is still in the repository.
+The first version is complete and live. The body loads, draws at three levels of detail and cuts open along all three planes, under WebGPU or WebGL 2. Ideas for later include the female body, which was cut three times as finely; the CT and MRI scans taken of both bodies; and full-resolution photographs shown on the cut faces.
 
 ## Running it locally
 
@@ -71,7 +71,7 @@ Around them are drei's helpers, a leva control panel, zustand for app state, and
 
 ## Workflow
 
-- **Planned in phases.** The project is set up by following a [written plan](docs/setup-plan.md). Each phase is one focused thread, and the phases that change code end with lint, the tests and a type-checked production build passing.
+- **Planned in phases.** The project was set up by following a written plan. Each phase was one focused thread, and the phases that changed code ended with lint, the tests and a type-checked production build passing.
 - **Reviewed before it's committed.** Every batch of work goes through `/commit`, a [Claude Code skill](.claude/skills/commit/SKILL.md) that serves as the final code review. It's adapted from a shared [baseline](https://github.com/snovakow/Claude-Skills/tree/main/skills/commit), and it runs in a fresh thread, so the review starts without the author's assumptions. It reads every changed line for bugs, React Three Fiber and three.js pitfalls, type and lint escapes, new dependencies, leftovers and anything that shouldn't be public. Then it runs the checks, splits the work into focused commits with descriptive messages, and keeps this README accurate.
 - **Tested where it's pure.** The parts with no GPU or React in them, such as the volume file's reader and writer and the rule that tells the body from its surroundings, have tests that build their own inputs, and each review runs them with the other checks.
 - **Versioned checkpoints.** Versions start at 0.0.0 and count up: each reviewed batch ends with a version commit, which marks where the next review starts.
