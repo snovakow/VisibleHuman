@@ -6,7 +6,18 @@ VisibleHuman is a browser app, now being set up, for rendering the [Visible Huma
 
 ## Status
 
-The project is starting from an empty repository, so there's nothing to run yet. The [setup plan](docs/setup-plan.md) lays out the steps, from tooling to the first body on screen.
+The app shell runs: an empty black page, ready for the viewer. There's no body on screen yet. The [setup plan](docs/setup-plan.md) lays out the steps still to come, from the viewer to the first body on screen.
+
+## Running it locally
+
+You'll need [Node.js](https://nodejs.org) 22.12 or later, which Vite 8 and drei's camera controls need. Then, in a clone of this repository:
+
+```sh
+npm install
+npm run dev
+```
+
+and open the address it prints.
 
 ## Stack
 
