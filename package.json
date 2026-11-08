@@ -9,7 +9,9 @@
     "lint": "oxlint",
     "preview": "vite preview",
     "typecheck": "tsc -b",
-    "lint:fix": "oxlint --fix"
+    "lint:fix": "oxlint --fix",
+    "test": "node --test",
+    "volume": "node scripts/build-volume.ts"
   },
   "dependencies": {
     "@react-three/drei": "^10.7.9",

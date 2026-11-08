@@ -1,0 +1,129 @@
+// Telling body from background. Each slice shows the body set in blue gel, inside a black frame, with white
+// fiducial dots, a grey-scale card and a yellow tag. A pixel is body unless it's blue, dark or grey; a cell is body when
+// most of its pixels are; and only the largest connected piece of body is kept, which drops the tag, the card's pale
+// patches and the dots, since none of them touch the body. Tuned on slices 1100, 1500, 1950 and 2600
+
+// The gel is blue: blue above red by more than this. Tissue is red, yellow or cream, with red above blue
+export const blueMargin = 0
+// The frame, its shadow and the card's dark end are near black: every channel below this. The darkest tissue, such as
+// clotted blood, sits above it
+export const darkMax = 40
+// The card's patches and the fiducial dots are grey or white: the channels within this of each other. Tissue,
+// pale cartilage and fat included, spreads further
+export const greyRange = 20
+// A cell is body when more than this share of its pixels are
+export const bodyShare = 0.5
+
+export function isBodyPixel(r: number, g: number, b: number) {
+  if (b > r + blueMargin) return false
+  const max = Math.max(r, g, b)
+  if (max < darkMax) return false
+  return max - Math.min(r, g, b) >= greyRange
+}
+
+export const isBodyCell = (bodyPixels: number, pixels: number) => bodyPixels > pixels * bodyShare
+
+// Some slices are missing in effect, and are read as if they weren't there: they add nothing to their cells.
+// A blank slice has no body pixels at all, as 2424 to 2435 have, where the NLM's set holds all-black images between
+// the thighs' block and the legs'; an all-dark slice has none either, since dark pixels aren't body.
+// A short slice has far fewer body pixels than the slices on either side of it, as the first slices of a block do
+// under a frosty cast that reads as gel (2017 to 2020). It's short when its count is under dipShare of the smaller of
+// two references: the largest count among the dipWindow nearest non-blank slices before it, and the same after it.
+// A slice at either end of the slices read, or of the body, has nothing on one side, so a taper is never short
+export const dipWindow = 8
+export const dipShare = 0.85
+
+export type MissingReason = 'blank' | 'short'
+
+// Why a slice with this many body pixels is missing, or null if it isn't. Before and after hold the body pixel counts
+// of up to dipWindow non-blank slices on each side, nearest first
+export function missingReason(body: number, before: readonly number[], after: readonly number[]): MissingReason | null {
+  if (body === 0) return 'blank'
+  if (before.length === 0 || after.length === 0) return null
+  const reference = Math.min(Math.max(...before), Math.max(...after))
+  return body < reference * dipShare ? 'short' : null
+}
+
+// Fills each layer made only of missing slices from its nearest read layer, so the body stays one piece across the
+// gap: in a run of missing layers, the upper half copies the read layer above it and the lower half the one below
+// (the middle one, in an odd run, from above). A run at either end of the grid copies the one read layer beside it.
+// Cells hold one byte each and colours three, layer after layer of layerCells. Returns each layer's source: itself
+// when read, the layer it was filled from, or -1 when no layer was read at all
+export function fillMissingLayers(cells: Uint8Array, colors: Uint8Array, layerCells: number, missing: readonly boolean[]) {
+  const layers = missing.length
+  if (cells.length !== layers * layerCells || colors.length !== cells.length * 3) {
+    throw new Error(`fillMissingLayers: ${cells.length} cells and ${colors.length} colour bytes for ${layers} layers`)
+  }
+  const sources = missing.map((gap, layer) => (gap ? -1 : layer))
+  for (let layer = 0; layer < layers; layer++) {
+    if (!missing[layer]) continue
+    let above = layer - 1
+    while (above >= 0 && missing[above]) above--
+    let below = layer + 1
+    while (below < layers && missing[below]) below++
+    const hasBelow = below < layers
+    const source = above >= 0 && (!hasBelow || layer - above <= below - layer) ? above : hasBelow ? below : -1
+    sources[layer] = source
+    if (source < 0) continue
+    cells.copyWithin(layer * layerCells, source * layerCells, (source + 1) * layerCells)
+    colors.copyWithin(layer * layerCells * 3, source * layerCells * 3, (source + 1) * layerCells * 3)
+  }
+  return sources
+}
+
+// Keeps the largest 6-connected piece of a grid of cells, one byte each (non-zero for body), indexed
+// i + nx·(j + ny·k). Pieces join across faces only, slices included, not along edges or corners. Returns a new grid
+// of 0s and 1s and the piece's size. The search uses an explicit queue, since the body runs to millions of cells
+export function largestPiece(cells: Uint8Array, nx: number, ny: number, nz: number) {
+  const count = nx * ny * nz
+  if (cells.length !== count) throw new Error(`largestPiece: ${cells.length} cells for a ${nx} × ${ny} × ${nz} grid`)
+  const seen = new Uint8Array(count)
+  const queue = new Int32Array(count)
+  const layer = nx * ny
+
+  // Visits the piece holding start, calling visit on each cell, and returns its size
+  const flood = (start: number, visit: (index: number) => void) => {
+    let head = 0
+    let tail = 0
+    const step = (neighbour: number) => {
+      if (cells[neighbour] !== 0 && seen[neighbour] === 0) {
+        seen[neighbour] = 1
+        queue[tail++] = neighbour
+      }
+    }
+    step(start)
+    while (head < tail) {
+      const index = queue[head++]
+      visit(index)
+      const i = index % nx
+      const j = Math.floor(index / nx) % ny
+      const k = Math.floor(index / layer)
+      if (i > 0) step(index - 1)
+      if (i < nx - 1) step(index + 1)
+      if (j > 0) step(index - nx)
+      if (j < ny - 1) step(index + nx)
+      if (k > 0) step(index - layer)
+      if (k < nz - 1) step(index + layer)
+    }
+    return tail
+  }
+
+  let bestStart = -1
+  let bestSize = 0
+  for (let index = 0; index < count; index++) {
+    if (cells[index] === 0 || seen[index] !== 0) continue
+    const size = flood(index, () => undefined)
+    if (size > bestSize) {
+      bestSize = size
+      bestStart = index
+    }
+  }
+
+  const kept = new Uint8Array(count)
+  if (bestStart < 0) return { cells: kept, size: 0 }
+  seen.fill(0)
+  flood(bestStart, (index) => {
+    kept[index] = 1
+  })
+  return { cells: kept, size: bestSize }
+}

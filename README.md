@@ -6,7 +6,7 @@ VisibleHuman is a browser app, now being set up, for rendering the [Visible Huma
 
 ## Status
 
-The viewer runs, with a stand-in for the body: a box-shaped cloud of coloured splats, about the body's size, which can be turned and zoomed. It renders with WebGPU where the browser and the GPU can run it, and with WebGL 2 otherwise; adding `?webgl` to the address forces WebGL 2. There's no body on screen yet. The [setup plan](docs/setup-plan.md) lays out the steps still to come, from the script that builds the body's volume to the first body on screen.
+The viewer runs, with a stand-in for the body: a box-shaped cloud of coloured splats, about the body's size, which can be turned and zoomed. It renders with WebGPU where the browser and the GPU can run it, and with WebGL 2 otherwise; adding `?webgl` to the address forces WebGL 2. A script now builds the body's volume from the photographs, but there's no body on screen yet. The [setup plan](docs/setup-plan.md) lays out the steps still to come, from the first body on screen to the first deploy.
 
 ## Running it locally
 
@@ -37,7 +37,7 @@ Around them are drei's helpers, a leva control panel, zustand for app state, and
 
 - **Planned in phases.** The project is set up by following a [written plan](docs/setup-plan.md). Each phase is one focused thread, and the phases that change code end with lint, the tests and a type-checked production build passing.
 - **Reviewed before it's committed.** Every batch of work goes through `/commit`, a [Claude Code skill](.claude/skills/commit/SKILL.md) that serves as the final code review. It's adapted from a shared [baseline](https://github.com/snovakow/Claude-Skills/tree/main/skills/commit), and it runs in a fresh thread, so the review starts without the author's assumptions. It reads every changed line for bugs, React Three Fiber and three.js pitfalls, type and lint escapes, new dependencies, leftovers and anything that shouldn't be public. Then it runs the checks, splits the work into focused commits with descriptive messages, and keeps this README accurate.
-- **Tested where it's pure.** The parts with no GPU or React in them, such as the volume file's reader and writer and the rule that tells the body from its surroundings, will have tests that build their own inputs, and each review runs them with the other checks.
+- **Tested where it's pure.** The parts with no GPU or React in them, such as the volume file's reader and writer and the rule that tells the body from its surroundings, have tests that build their own inputs, and each review runs them with the other checks.
 - **Versioned checkpoints.** Versions start at 0.0.0 and count up: each reviewed batch ends with a version commit, which marks where the next review starts.
 - **Current dependencies.** Packages and tools track their latest releases, and each review reports anything that has fallen behind.
 - **Branches and deploys.** Work lands on `development` and reaches `main` by merge. The live site will be a static build of `main`.
