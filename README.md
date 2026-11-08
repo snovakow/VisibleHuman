@@ -28,7 +28,7 @@ The first version is complete and live. The body loads, draws at three levels of
 
 ## Running it locally
 
-You'll need [Node.js](https://nodejs.org) 22.12 or later, which Vite 8 and drei's camera controls need. For the tests and the volume script, you'll need 22.18 or later, which runs TypeScript without a flag. Then, in a clone of this repository:
+You'll need [Node.js](https://nodejs.org) 22.12 or later, which Vite 8 and drei's camera controls need. For the tests and the scripts, you'll need 22.18 or later, which runs TypeScript without a flag. Then, in a clone of this repository:
 
 ```sh
 npm install
@@ -41,7 +41,7 @@ and open the address it prints.
 
 ## The volume file
 
-The NLM's photographs can't be read by a page on another site, because its server doesn't allow it, and at 6.2 GB they'd be far too much to load anyway. So a Node script reads them once and writes a file of about 5.5 MB, [`public/volume/male-4mm.bin`](public/volume/male-4mm.bin), which the page loads. The file is committed, so a clone runs, builds and deploys without the script.
+The NLM's photographs can't be read by a page on another site, because its server doesn't allow it, and at 5.7 GB they'd be far too much to load anyway. So a Node script reads them once and writes a file of about 5.5 MB, [`public/volume/male-4mm.bin`](public/volume/male-4mm.bin), which the page loads. The file is committed, so a clone runs, builds and deploys without the script.
 
 The script reads all 1,878 colour cross-sections of the male body. It tells the body apart from the blue gel it was set in and from the frame, scale card and labels around it, then averages what's left into 4 mm blocks, each keeping the colour of the tissue in it. The few slices that are blank or hazy in the NLM's set are skipped, and their blocks are filled from their neighbours'. To rebuild the file:
 
@@ -49,11 +49,15 @@ The script reads all 1,878 colour cross-sections of the male body. It tells the 
 npm run volume
 ```
 
-It downloads the 6.2 GB from the NLM, four slices at a time, and keeps none of it. That takes about 10 to 25 minutes, depending on the connection. It also draws previews of the result in `.cache/preview/`. Options go after `--`, as in `npm run volume -- --cache`:
+It downloads the 5.7 GB from the NLM, four slices at a time, and keeps none of it. That takes about 10 to 25 minutes, depending on the connection. It also draws previews of the result in `.cache/preview/`. Options go after `--`, as in `npm run volume -- --cache`:
 
-- `--cache` keeps the downloads in `.cache/slices/`, which needs 6.2 GB of space, and reads them from there on the next run.
+- `--cache` keeps the downloads in `.cache/slices/`, which needs 5.7 GB of space, and reads them from there on the next run.
 - `--previews` redraws the previews from the existing file, without downloading anything.
 - `--from` and `--to` read only a range of slices, numbered 1001 to 2878 from the head down, and `--out` writes the file somewhere else.
+
+## Source data
+
+The next stage builds each body from a local copy of the NLM's images, rather than from its server. `npm run fetch` makes that copy in `~/Data/VisibleHuman`, one folder for each set, or in the folder named by `VHP_DATA` or by `--data`. It skips what's already there and picks up interrupted downloads where they stopped, so running it again finishes the job. When it's done, it writes a `manifest.json` that says what each set holds. By default it fetches the core sets, about 28 GB: the colour cross-sections, CT and MRI of the male and the female, and the separately scanned head. `--set all` adds the 70 mm film scans, about 260 GB more, which nothing here reads. `--dry-run` says what a fetch would do, and `--verify` checks the copy against the NLM's listings without downloading anything. Its options go after `--` too, as in `npm run fetch -- --verify`.
 
 ## Stack
 
@@ -65,7 +69,7 @@ It downloads the 6.2 GB from the NLM, four slices at a time, and keeps none of i
 | [React Three Fiber](https://r3f.docs.pmnd.rs) | The three.js scene, written as React components |
 | [Vite](https://vite.dev) | The dev server and the production build |
 | [WebGPU](https://developer.mozilla.org/en-US/docs/Web/API/WebGPU_API) | The GPU API three.js renders with, falling back to WebGL 2 in browsers without it or on GPUs where it fails |
-| [Node.js](https://nodejs.org) | The script that builds the body's volume from the source images |
+| [Node.js](https://nodejs.org) | The scripts that fetch the source images and build the body's volume from them |
 
 Around them are drei's helpers, a leva control panel, zustand for app state, and Oxlint for linting.
 
