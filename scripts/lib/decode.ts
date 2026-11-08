@@ -25,10 +25,18 @@ export async function readRgb(path: string): Promise<RawImage> {
   return { width: info.width, height: info.height, channels: info.channels, data }
 }
 
-// A grey image's pixels, one 8-bit channel, a colour file reduced to its luminance
-export async function readGray(path: string): Promise<RawImage> {
-  const { data, info } = await sharp(path).greyscale().toColourspace('b-w').raw().toBuffer({ resolveWithObject: true })
-  return { width: info.width, height: info.height, channels: info.channels, data }
+// A grey image's pixels as 16-bit values, one channel: the NLM's CT PNGs are 16-bit greys holding the scanner's own
+// numbers, which an 8-bit read would crush to 0–11. An 8-bit file comes back scaled to the same range
+export interface GrayImage {
+  width: number
+  height: number
+  data: Uint16Array
+}
+
+export async function readGray(path: string): Promise<GrayImage> {
+  const { data, info } = await sharp(path).toColourspace('grey16').raw({ depth: 'ushort' }).toBuffer({ resolveWithObject: true })
+  if (info.channels !== 1) throw new Error(`${path} read as ${info.channels} channels, not one grey`)
+  return { width: info.width, height: info.height, data: new Uint16Array(data.buffer, data.byteOffset, data.byteLength / 2) }
 }
 
 // A file's contents with its gzip undone, such as the head's .tiff.gz slices or a volume file; a file that isn't

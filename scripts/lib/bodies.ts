@@ -23,6 +23,15 @@ export interface Naming {
   extension: string
 }
 
+// A body's CT set, where it has one: the set's id, how a slice's image and header files are named around its number
+// (the male's cvm1125f.png and cvm1125f.txt), and what the NLM calls the scan
+export interface CtSet {
+  set: string
+  image: { prefix: string; suffix: string }
+  header: { prefix: string; suffix: string }
+  source: string
+}
+
 export interface Body {
   id: string
   // As the page names it, and the credit for it the NLM's terms ask for
@@ -48,6 +57,15 @@ export interface Body {
   blankFiles: readonly string[]
   // A pixel rule of the body's own, where the male's blue-gel rule doesn't fit its background
   segmentRule?: (r: number, g: number, b: number) => boolean
+  // The CT scanned slice for slice with the photographs, which the density channel is resampled from
+  ct?: CtSet
+}
+
+// The name of a CT slice's image or header file
+export function ctFileName(body: Body, kind: 'image' | 'header', slice: number) {
+  if (!body.ct) throw new Error(`The ${body.id} has no CT set`)
+  const { prefix, suffix } = body.ct[kind]
+  return `${prefix}${String(slice).padStart(body.naming.digits, '0')}${suffix}`
 }
 
 // The file name of one slice, or of one of its sub-slices
@@ -86,6 +104,13 @@ const male: Body = {
     [2436, 2878],
   ],
   blankFiles: range(2424, 2435).map((slice) => `a_vm${slice}.png`),
+  // The frozen CT, scanned before the sectioning and numbered like the photographs: 1,877 slices, 1006 to 2882
+  ct: {
+    set: 'male-ct',
+    image: { prefix: 'cvm', suffix: 'f.png' },
+    header: { prefix: 'cvm', suffix: 'f.txt' },
+    source: 'frozenCT',
+  },
 }
 
 export const bodies: readonly Body[] = [male]

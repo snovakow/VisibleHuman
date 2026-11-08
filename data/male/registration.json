@@ -1,0 +1,240 @@
+{
+  "body": "male",
+  "source": "frozenCT",
+  "fitted": "2026-11-08",
+  "cryoPixelMm": 0.33,
+  "segments": [
+    {
+      "slices": [
+        1006,
+        1236
+      ],
+      "ctPixelMm": 0.527344,
+      "dfovMm": 270,
+      "ctSize": [
+        512,
+        512
+      ],
+      "flip": "vertical",
+      "scale": 1.598,
+      "rotationDeg": -0.75,
+      "tx": 1014.4091,
+      "ty": 577.197,
+      "score": 0.7223,
+      "bodyScore": 0.9539,
+      "samples": [
+        1020,
+        1049,
+        1078,
+        1107,
+        1135,
+        1164,
+        1193,
+        1222
+      ]
+    },
+    {
+      "slices": [
+        1237,
+        1260
+      ],
+      "ctPixelMm": 0.78125,
+      "dfovMm": 400,
+      "ctSize": [
+        512,
+        512
+      ],
+      "flip": "vertical",
+      "scale": 2.3674,
+      "rotationDeg": -1.75,
+      "tx": 1017.4394,
+      "ty": 492.3485,
+      "score": 0.4962,
+      "bodyScore": 0.9686,
+      "samples": [
+        1238,
+        1241,
+        1244,
+        1247,
+        1250,
+        1253,
+        1256,
+        1259
+      ]
+    },
+    {
+      "slices": [
+        1261,
+        1505
+      ],
+      "ctPixelMm": 0.9375,
+      "dfovMm": 480,
+      "ctSize": [
+        512,
+        512
+      ],
+      "flip": "vertical",
+      "scale": 2.8409,
+      "rotationDeg": -0.75,
+      "tx": 1008.3485,
+      "ty": 495.3788,
+      "score": 0.6004,
+      "bodyScore": 0.8891,
+      "samples": [
+        1276,
+        1306,
+        1337,
+        1368,
+        1398,
+        1429,
+        1460,
+        1490
+      ]
+    },
+    {
+      "slices": [
+        1506,
+        1849
+      ],
+      "ctPixelMm": 0.9375,
+      "dfovMm": 480,
+      "ctSize": [
+        512,
+        512
+      ],
+      "flip": "vertical",
+      "scale": 2.8409,
+      "rotationDeg": -0.5,
+      "tx": 1020.4697,
+      "ty": 501.4394,
+      "score": 0.664,
+      "bodyScore": 0.9294,
+      "samples": [
+        1527,
+        1570,
+        1613,
+        1656,
+        1699,
+        1742,
+        1785,
+        1828
+      ]
+    },
+    {
+      "slices": [
+        1850,
+        2016
+      ],
+      "ctPixelMm": 0.9375,
+      "dfovMm": 480,
+      "ctSize": [
+        512,
+        512
+      ],
+      "flip": "vertical",
+      "scale": 2.8409,
+      "rotationDeg": -1,
+      "tx": 1011.3788,
+      "ty": 507.5,
+      "score": 0.8796,
+      "bodyScore": 0.9675,
+      "samples": [
+        1860,
+        1881,
+        1902,
+        1923,
+        1943,
+        1964,
+        1985,
+        2006
+      ]
+    },
+    {
+      "slices": [
+        2017,
+        2423
+      ],
+      "ctPixelMm": 0.9375,
+      "dfovMm": 480,
+      "ctSize": [
+        512,
+        512
+      ],
+      "flip": "vertical",
+      "scale": 2.8409,
+      "rotationDeg": -1.25,
+      "tx": 1008.3485,
+      "ty": 510.5303,
+      "score": 0.9193,
+      "bodyScore": 0.904,
+      "samples": [
+        2042,
+        2093,
+        2144,
+        2195,
+        2245,
+        2296,
+        2347,
+        2398
+      ]
+    },
+    {
+      "slices": [
+        2436,
+        2658
+      ],
+      "ctPixelMm": 0.9375,
+      "dfovMm": 480,
+      "ctSize": [
+        512,
+        512
+      ],
+      "flip": "vertical",
+      "scale": 2.8409,
+      "rotationDeg": -0.5,
+      "tx": 1005.3182,
+      "ty": 513.5606,
+      "score": 0.9522,
+      "bodyScore": 0.9331,
+      "samples": [
+        2449,
+        2477,
+        2505,
+        2533,
+        2561,
+        2589,
+        2617,
+        2645
+      ]
+    },
+    {
+      "slices": [
+        2659,
+        2878
+      ],
+      "ctPixelMm": 0.9375,
+      "dfovMm": 480,
+      "ctSize": [
+        512,
+        512
+      ],
+      "flip": "vertical",
+      "scale": 2.8409,
+      "rotationDeg": 0,
+      "tx": 993.197,
+      "ty": 401.4394,
+      "score": 0.9602,
+      "bodyScore": 0.929,
+      "samples": [
+        2672,
+        2700,
+        2727,
+        2755,
+        2782,
+        2810,
+        2837,
+        2865
+      ]
+    }
+  ]
+}

@@ -12,6 +12,7 @@
     "lint:fix": "oxlint --fix",
     "test": "node --test",
     "volume": "node scripts/build-volume.ts",
+    "register": "node scripts/register.ts",
     "fetch": "node scripts/fetch-data.ts"
   },
   "dependencies": {
