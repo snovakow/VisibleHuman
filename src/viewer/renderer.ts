@@ -1,11 +1,5 @@
 import { WebGPURenderer } from 'three/webgpu'
 
-// R3F types its renderer as a WebGLRenderer, though the Canvas's factory always makes a WebGPURenderer
-export function asWebGPU(renderer: unknown): WebGPURenderer {
-  if (!(renderer instanceof WebGPURenderer)) throw new Error('Expected a WebGPURenderer')
-  return renderer
-}
-
 // GPUs that offer WebGPU but can't compile the splat sort's shaders, and take Chrome's GPU process down trying.
 // Haswell's Intel Iris (gen-7) fails on CountingSortReset
 const failingGPUs = [{ vendor: 'intel', architecture: 'gen-7' }] as const
