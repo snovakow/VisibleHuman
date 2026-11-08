@@ -11,7 +11,8 @@
     "typecheck": "tsc -b",
     "lint:fix": "oxlint --fix",
     "test": "node --test",
-    "volume": "node scripts/build-volume.ts"
+    "volume": "node scripts/build-volume.ts",
+    "fetch": "node scripts/fetch-data.ts"
   },
   "dependencies": {
     "@react-three/drei": "^10.7.9",
