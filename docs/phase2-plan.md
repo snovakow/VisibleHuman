@@ -13,6 +13,14 @@ This phase brings in the three NLM datasets (Male, Female, the Ratiu Head), keep
 - **Assets**: small files committed (≤ ~10 MB each, gzip, decoded in the browser); finer opt-in levels gitignored, built before a deploy, copied to the live folder with `dist/`.
 - **Order**: data tooling, then the Volume, Raytrace and Surface styles on the male with its CT, then the female, then the head.
 - **Raytrace style** (asked for after approval, 2026-11-08): a render that needs only a quad. A fourth style traces the volume's surfaces from one full-screen quad (D21), and the Volume march shares that quad in place of a proxy box (D10).
+- **Banding** (2026-11-08, after Phase 2's data half): the dark contour bands on the splats get a phase of their own, Phase 3b, after the CT density (D22).
+
+### Where it stands (updated 2026-11-08)
+
+- **The data is all here.** Every set the NLM offers as PNG, TIFF or DICOM was downloaded on 2026-11-08 by a script run outside the repository, and verified against the NLM listings: 21 sets, 35,367 files, 288.2 GB on disk (the core 27.8 GB over 23,109 files, the three film sets 260.3 GB over 12,258 files; the plan had estimated the core at 22 GB). `npm run fetch` then found nothing to fetch, and `~/Data/VisibleHuman/manifest.json` records every set complete. No phase waits for a download.
+- **How the phases run.** The work is driven from an execution plan kept outside the repository, one milestone per fresh thread, reviewed by a manager thread; its milestones follow these phases, with two differences: Phase 2 runs as two threads (the format, codec, density, slice rule and builder first, released with the app still on version 1 and the committed file untouched; then the loader, levels, store, app and the rebuilt file), and Phase 3b is new. Each release is a plain `/commit`, whose own bump gives the number from 0.1.2 (Phase 1 made 0.1.3, Phase 2's data half 0.1.4); only the last is written in, `/commit 0.2.0`.
+- **Done so far.** Phase 1 (0.1.3): the fetch script, LICENSE, the README's 5.7 GB and data-root paragraph; of the walkthrough audit's six items this closed the fetch timeout, the README figure and the LICENSE. Phase 2's data half (0.1.4): the version 2 format, the slice-1002 fix, sharp in and pngjs out, the per-body builder; the gzip item is closed, and the Size slider waits for Phase 2's app half.
+- **Corrections from the threads** are folded into the text below, each where the fact lives, so that this file stays a true description of what was built; a phase's text that disagrees with the tree is the tree's to win, and the thread reports the difference.
 
 ## Research findings (checked 2026-11-07/08)
 
@@ -94,6 +102,7 @@ The data-discovery page (`datadiscovery.nlm.nih.gov/.../ux2j-9i9a`) is only a po
 VisibleHuman/
 ├── .claude/skills/commit/        unchanged, except its settings mention data/ and the opt-in level files (Phase 10)
 ├── docs/phase2-plan.md           this plan, deleted before the merge (D20)
+├── docs/data.md                  the complete overview of the NLM data, written in Phase 10 (D20)
 ├── LICENSE                       MIT, for the code; the images stay under the NLM's terms (D18)
 ├── data/                         small committed JSON the scripts read and write
 │   ├── male/registration.json    CT → cryosection, one 2D similarity per segment (D7, Appendix B)
@@ -103,7 +112,7 @@ VisibleHuman/
 │   ├── fetch-data.ts             npm run fetch: the NLM's sets into the data root, resumable (D1–D3)
 │   ├── build-volume.ts           npm run volume: a body's slices (+ CT/MRI) into a v2 volume file (D4–D6)
 │   ├── register.ts               npm run register: the CT→cryo fit for male/female, the 3D fit for the head (D7, D8)
-│   └── lib/                      sets.ts, data.ts, listing.ts, bodies.ts, decode.ts, dicom.ts, images.ts, previews.ts
+│   └── lib/                      sets.ts, data.ts, listing.ts, files.ts, bodies.ts, decode.ts, dicom.ts, images.ts, previews.ts
 ├── public/volume/
 │   ├── bodies.json               the bodies, their levels and files (D5, D14, Appendix B)
 │   ├── male-4mm.bin              v2 (D4), committed; replaces the v1 file of the same name
@@ -115,14 +124,14 @@ VisibleHuman/
 │   ├── Panel.tsx                 the leva panel, built from options.ts (D9)
 │   ├── options.ts                the view options table: folders, labels, defaults, which styles show each (D9)
 │   ├── store.ts                  body, level, status, volume, bounds, splat levels, options
-│   ├── volume/                   format.ts (v2), codec.ts, loadVolume.ts, density.ts, segment.ts, levels.ts,
+│   ├── volume/                   format.ts (v2), codec.ts, loadVolume.ts, density.ts, segment.ts, blocks.ts, levels.ts,
 │   │                             ctHeader.ts, similarity.ts, rigid.ts
 │   ├── surface/                  marchingCubes.ts, surface.worker.ts, surfaceWorker.ts (D11)
 │   └── viewer/                   Viewer.tsx, renderer.ts, styles.ts, cuts.ts, rays.ts, rayQuad.ts, volumeTexture.ts,
 │                                 shading.ts, BodySplats.tsx, cellTable.ts, volumeMarch.ts, BodyVolume.tsx,
 │                                 raytrace.ts, BodyRaytrace.tsx, BodySurface.tsx, CutCaps.tsx, weighted.ts,
 │                                 Effects.tsx, Framing.tsx
-├── test/                         format, codec, density, segment, levels, listing, ctHeader, similarity, rigid,
+├── test/                         format, codec, density, segment, blocks, levels, listing, sets, ctHeader, similarity, rigid,
 │                                 marchingCubes, cuts, rays  (node:test, D16)
 └── README.md
 
@@ -135,8 +144,8 @@ Scripts in `package.json`: the existing ones, plus `fetch` (`node scripts/fetch-
 
 | # | Topic | Default | Alternative |
 | --- | --- | --- | --- |
-| D1 | Where the originals live | **`~/Data/VisibleHuman/<set>/`**, overridable by the `VHP_DATA` environment variable or `--data PATH` on every script. One flat folder per set (`male-colour`, `male-ct`, `male-mri`, `male-70mm`, `female-colour`, `female-ct`, `female-mri`, `female-70mm-2k`, `female-70mm-4k`, `head-cryo`, `head-cryo-jpeg`, `head-cat`, `head-cat-dicom`, `head-mri`, `head-mri-dicom`), files under their NLM names; the NLM's region folders aren't mirrored, since a slice listed in two regions is the same file. `manifest.json` at the root records what's present (Appendix B). The 1,878 slices already in `.cache/slices/` are **moved** there with one `mv` (Phase 1), not downloaded again; `.cache/` keeps only previews afterwards | Mirror the NLM's folder tree verbatim under the root |
-| D2 | What's downloaded | Two runs. **Core, ≈22.3 GB**, needed by Phases 3–9: male frozen CT + headers (0.47 GB), male MRI + headers (0.06), female colour (16.45), female CT + headers (0.41), female MRI (0.06), head cryo TIFFs (4.28), head CAT TIFFs (0.05) and CAT DICOM (0.11, for its geometry), head MRI TIFFs (0.03) and MRI DICOM, head quarter-size axial JPEGs (0.03, the orientation proof set). **Film, ≈260 GB**, archived and unused by this phase (the frames are unaligned): `male-70mm` (40.2), `female-70mm-2k` (24.9), `female-70mm-4k` (195.2). Both resumable; the film run can take a day or more and can run while Phases 2–7 proceed. Not downloaded: the `.Z` originals, the male normal CT, scouts and x-rays (in `sets.ts` as optional sets) | Add `male-normal-ct` (0.11 GB) if the fresh/frozen comparison ever matters |
+| D1 | Where the originals live | **`~/Data/VisibleHuman/<set>/`**, overridable by the `VHP_DATA` environment variable or `--data PATH` on every script. One flat folder per set (`male-colour`, `male-ct`, `male-mri`, `male-70mm`, `female-colour`, `female-ct`, `female-mri`, `female-70mm-2k`, `female-70mm-4k`, `head-cryo`, `head-cryo-jpeg`, `head-cat`, `head-cat-dicom`, `head-mri`, `head-mri-dicom`), files under their NLM names, the two head MRI sets keeping a subfolder per series (`head-mri/PD`, `T1`, `T2`, `T2_512`, and the same under `head-mri-dicom`); the NLM's region folders aren't mirrored, since a slice listed in two regions is the same file. `manifest.json` at the root records what's present (Appendix B). The 1,878 slices already in `.cache/slices/` are **moved** there with one `mv` (Phase 1), not downloaded again; `.cache/` keeps only previews afterwards | Mirror the NLM's folder tree verbatim under the root |
+| D2 | What's downloaded | Two runs. **Core, 27.8 GB** (23,109 files, measured 2026-11-08; the plan had estimated 22 GB), needed by Phases 3–9: male frozen CT + headers (0.47 GB), male MRI + headers (0.06), female colour (16.45), female CT + headers (0.41), female MRI (0.06), head cryo TIFFs (4.28), head CAT TIFFs (0.05) and CAT DICOM (0.11, for its geometry), head MRI TIFFs (0.03) and MRI DICOM, head quarter-size axial JPEGs (0.03, the orientation proof set). **Film, 260.3 GB** (12,258 files), archived and unused by this phase (the frames are unaligned): `male-70mm` (40.2), `female-70mm-2k` (24.9), `female-70mm-4k` (195.2). Both resumable; the film run can take a day or more and can run while Phases 2–7 proceed. Not downloaded: the `.Z` originals, the male normal CT, scouts and x-rays (not in `sets.ts`; a set is added there if one is ever wanted) | Add `male-normal-ct` (0.11 GB) if the fresh/frozen comparison ever matters |
 | D3 | Decoders in the scripts | **sharp 0.35** (dev dependency; prebuilt `@img/sharp-darwin-x64`, Node ≥ 20.9, no install script): PNG, TIFF (8- and 16-bit), JPEG and raw output in one native library, about 10× faster than pngjs on a 2048×1216 slice, which matters for the female's 5,186 slices (≈15 min instead of ≈2 h). **dicom-parser 1.8** (pure JS) reads the head's DICOM headers and pixels. `node:zlib` handles `.gz`. pngjs and `@types/pngjs` go; the previews are written with sharp too. Phase 1 proves sharp on this Mac before anything depends on it | pngjs + utif2 + jpeg-js, pure JS: no native risk, but slow; decode in `worker_threads` to claw back 3–4× |
 | D4 | The volume file, version 2 | **One dense grid per body and spacing, cropped to the body's bounds**, in planar byte blocks: colour as G, R−G, B−G (mod 256), then density, coverage and, for the head, MRI; every block delta-coded along i; the whole file gzipped and read in the browser through `DecompressionStream('gzip')` (Appendix A has the byte layout). Measured on the male's 4 mm colour: 3.73 MB this way against 4.34 MB for today's sparse file, so empty space costs nothing after gzip and the dense grid is the cheaper one. Colour is dilated one voxel outward past the body (coverage stays 0 there), so trilinear sampling at the skin never mixes tissue with black. Density is 0 outside the body and 1–255 inside (D6). The three styles all read this one file: splats from coverage + colour, the volume from an RGBA `Data3DTexture` built in the browser (R, G, B, density), the surface from coverage and density on the CPU with colour from that texture. Version 1 is retired; the app reads v2 only | A bricked atlas (8³ bricks + page table) as a v3 for regional 1 mm data (Appendix E says why not now) |
 | D5 | Levels: what ships, what's opt-in | Committed and loaded by default: **male 4 mm (≈5 MB)**, **female 4 mm (≈4.5 MB)**, **head 1.2 mm (8 px blocks, ≈10 MB)**. Opt-in, gitignored, built before a deploy and listed in `bodies.json` with `optional: true`: male 2 mm (≈39 MB file, 173 MB GPU texture), female 2 mm (≈32 MB, 139 MB), head 1 mm (7 px, ≈14 MB, 28 MB) and head 0.6 mm (4 px, ≈78 MB, 149 MB). A level the server lacks shows "not built" in the panel and the body stays on its default. All within the 2048³ texture limit; the 128 MB storage-binding limit doesn't apply to textures. The splat Detail list derives from whatever grid is loaded: blocks of 1, 2, 4 and 8 voxels, labelled in mm, omitting any with over **2 million** cells (52 bytes per splat against the 128 MB binding), starting on the finest with at most 400,000 (male: 8 mm, 215,000, as today) | Commit the head at 1 mm (≈14 MB) if the extra 4 MB is acceptable; or quantise colour to 6 bits (−30 % file size, measured) |
@@ -151,11 +160,12 @@ Scripts in `package.json`: the existing ones, plus `fetch` (`node scripts/fetch-
 | D14 | Bodies | A **Body** chooser (Male / Female / Head) and a **Level** chooser from `public/volume/bodies.json` (Appendix B). The store holds one body at a time: choosing another aborts the current load, loads that body's default level, rebuilds levels and bounds and reframes. Each file carries its own scene axes in its header (D4), so `format.ts`'s fixed `sceneAxes` becomes `volume.axes`; the male's mapping is the default, the female's is checked on her previews, and the head's is decided by a **check step** (Phase 9) on contact sheets of its slices before the build, as the setup plan checked the male's. `?body=female` in the URL opens on a body | A single merged scene with all three bodies side by side |
 | D15 | Memory in the scripts | As today: slices are summed into the layer being built and let go; the grid is held as byte arrays of the full slice field (coverage, R, G, B, density: 5 bytes per cell; 27 MB for the male at 4 mm, 325 MB at 2 mm, 23 MB for the head at 1.2 mm, 186 MB at 0.6 mm), then cropped. Decoding is sharp's (libvips, threaded); the sums are plain loops (≈10 ms per slice). One spacing per run; coarser splat levels are derived in the app, never built twice. The female's 12 sub-slices per 4 mm layer (6 per 2 mm) are read 4 at a time like the male's | — |
 | D16 | Tests | node:test on the pure modules, as before: v2 round trip and refusals, delta coding, density formula, the amended short-slice rule, levels from v2, listing parsing, CT header parsing, the 2D similarity and 3D rigid maths (apply, invert, compose, PCA on a synthetic ellipsoid), marching cubes on a sphere field (closed: V − E + F = 2, normals outward), the cuts' box and planes | — |
-| D17 | Versions and dependencies | Latest of everything, as D16 of the setup plan; new dev dependencies `sharp`, `dicom-parser` (and `@types/dicom-parser` if it still ships separately); `pngjs` and `@types/pngjs` removed in Phase 2. Phases end at 0.1.1 … 0.1.9; Phase 10 releases **0.2.0**. The committed binaries are rebuilt only where a phase says (≈19 MB of history in all) | — |
+| D17 | Versions and dependencies | Latest of everything, as D16 of the setup plan; new dev dependencies `sharp`, `dicom-parser` (and `@types/dicom-parser` if it still ships separately); `pngjs` and `@types/pngjs` removed in Phase 2. Each phase's release takes `/commit`'s own bump from 0.1.2 (Phase 1 made 0.1.3, Phase 2's data half 0.1.4, and so on); Phase 10 releases **0.2.0**. The committed binaries are rebuilt only where a phase says (≈19 MB of history in all) | — |
 | D18 | LICENSE | **MIT** for the code, with the README's existing note that the images are the NLM's and used under its terms | — |
 | D19 | README | Brought up to date in Phase 10 for the public: three bodies, four styles, the data scripts (with the corrected 5.7 GB), the data root, what's committed and what's built before a deploy | — |
-| D20 | This plan | Lives at `docs/phase2-plan.md` during the work and is deleted in Phase 10 before the merge, as the setup plan was | Keep it under `docs/` |
+| D20 | This plan | Lives at `docs/phase2-plan.md` during the work and is deleted in Phase 10 before the merge, as the setup plan was. Amended 2026-11-08: its description of the NLM data survives as `docs/data.md`, written in Phase 10 as a complete overview of what data is available and what it could support, for future analysis of what can be done with it (every set, downloaded or not, with geometry, numbering, counts, sizes, quirks, limits, what this project uses it for and what it could support), linked from the README | Keep it under `docs/` |
 | D21 | The Raytrace style | **Surfaces traced straight from the volume by the same single quad** (`rayQuad.ts`), with no mesh: per pixel the ray is clipped to the cut box and stepped a voxel at a time (half a voxel on WebGPU) through the chosen field until it crosses the isosurface; the crossing is refined by five bisection steps, the normal is the field's central-difference gradient there, and the point is shaded by the headlight and a hemisphere (Lambert plus a Blinn–Phong highlight) in the RGBA texture's colour sampled half a voxel inward, decoded from sRGB. **Fields**: the skin from a second R8 `Data3DTexture` of the coverage block at iso 0.5 (the same surface the mesh takes), the bone from the density channel at the Bone threshold, the brain (head) from the MRI block; **Trace** chooses skin, bone or both. **Cut faces for free**: a ray whose entry into the cut box is already inside the surface hits at the entry, and that hit is drawn flat in the texture's colour and lit by the cut plane's normal (bone opaque, tissue at Opacity), so this style has no cap geometry. **Layers**: under 1 Opacity the ray carries on after a skin hit, composites front to back and stops at bone, at T < 0.01 or after Layers hits (1–4), which orders skin over bone over far skin exactly per pixel with no sort, pre-pass or OIT. **Shadows** (switch, off): from a hit, a second march toward the Light direction (two sliders, upper left of the camera by default) at 2-voxel steps darkens the diffuse term where the field blocks it. Rim and Depth cue as the surface's. The fragment writes `depthNode` from the first hit, so anything drawn with it composites correctly, and a miss discards before any work. Expected cost: skin-only about the Volume march at Quality 1 (the skin is near the box), bone-only up to ≈100 steps per pixel through soft tissue; this Mac's fallback at dpr 1 should hold ≥ 15 fps skin-only and ≥ 10 bone-only | Trace the skin only and leave bone to the mesh; or a screen-space bounding quad in place of the full-screen one, which saves the discarded pixels but needs projected bounds every frame |
+| D22 | Banding (added 2026-11-08) | The dark contour-like bands on the splats, fixed on the body and unmoved by rotation, are two things, measured on the data that day. In the data: the body's mean luminance steps by 5–11 % where one cryo block meets the next (1505/1506, 2016/2017, 2423/2436) and by 19 % into the blank run 2425–2432, whose layers are copies of their neighbours, against about 1 % between neighbouring 4 mm layers within a block. In the rendering: every body cell draws a splat at full alpha, so the skin is a staircase of whole cells whose depth steps show as contour rings. **Phase 3b** fixes both: a per-block colour gain measured across each block boundary in the builder and applied to the colour sums, never to the body decision; gap layers blended between their two read neighbours instead of copied from one side; and the splats' alpha weighted by each cell's coverage share, which fades a partly covered cell instead of leaving it a whole step proud | Measured and rejected the same day: per-slice exposure normalisation (the Kodak card's white patch holds within a block to 1.3 % or better while the gel wobbles 7–11 % with frost, uncorrelated with it, so a per-slice gain would print bands); an OBS-style chroma key in Cb/Cr (within 1 % of the current rule on normal slices, and no better on the frosty 2017–2020); tuning the rule live in the page, which never holds the slices |
 
 ## 3. How to run a phase
 
@@ -191,7 +201,7 @@ Read docs/phase2-plan.md: sections 1 and 2 (especially D1 to D3), Phase 1, secti
 - `scripts/lib/sets.ts`: the set table (Appendix C): id, the NLM folder URL(s), how its files are named (an enumerated pattern with ranges and suffixes, or "every file the listing shows"), the expected count, and whether it's in the core download. The male's regions and the female's a/b/c suffixes live here as data.
 - `scripts/lib/listing.ts` (pure, tested): `parseListing(html)` → `{ name, bytes | null }[]` from a folder's `index.html` (anchors, then a size cell and a date cell; the research parsed these pages as name/size/date text triples). Capture one real listing in the thread to write the test from, inline in `test/listing.test.ts`.
 - `scripts/lib/data.ts`: the data root (`--data`, `VHP_DATA`, default `~/Data/VisibleHuman`), set folders, and `manifest.json` read/write (Appendix B).
-- `scripts/fetch-data.ts`, `npm run fetch -- [--set a,b,…] [--data PATH] [--dry-run] [--verify [--md5]] [--parallel 4]`: for each chosen set, read the folder listing(s), work out the wanted files, skip those already present with the listed size, download the rest four at a time with `AbortSignal.timeout(60_000)` per request, four attempts with a growing pause, through a `.part` file renamed when whole and size-checked, resuming a `.part` with a `Range` header when the server answers 206. `--verify` re-checks sizes without downloading; `--verify --md5` also compares each file's MD5 with the server's ETag where the ETag is a plain MD5 (no `-` suffix). It logs progress per set with an ETA and ends by writing `manifest.json`: per set, files present, bytes, the missing names (as runs) and `complete`. `--dry-run` prints counts and bytes per set and fetches nothing but listings. With no `--set`, the core sets of D2. This closes the "no fetch timeout" audit item, since `build-volume.ts` stops downloading in Phase 2.
+- `scripts/fetch-data.ts`, `npm run fetch -- [--set a,b,…|all] [--data PATH] [--dry-run] [--verify [--md5]]`: for each chosen set, read the folder listing(s), work out the wanted files, skip those already present with the listed size, download the rest four at a time, giving a request up once 60 s pass with no bytes arriving (a slow but steady download is never cut), four attempts with a growing pause, through a `.part` file renamed when whole and size-checked, resuming a `.part` with a `Range` header when the server answers 206. `--verify` re-checks sizes without downloading; `--verify --md5` also compares each file's MD5 with the server's ETag where the ETag is a plain MD5 (no `-` suffix). It logs progress per set with an ETA and ends by writing `manifest.json`: per set, files present, bytes, the missing names (as runs) and `complete`. `--dry-run` prints counts and bytes per set and fetches nothing but listings. With no `--set`, the core sets of D2. This closes the "no fetch timeout" audit item, since `build-volume.ts` stops downloading in Phase 2.
 - A DICOM check in the thread: fetch one head CAT DICOM (`--set head-cat-dicom` is 0.11 GB, fine to run), gunzip it, parse with dicom-parser, and report Rows, Columns, PixelSpacing, SliceThickness, ImagePositionPatient, ImageOrientationPatient, RescaleIntercept/Slope, BitsAllocated and FrameOfReferenceUID; do the same for one T2_512 MRI DICOM. Put the values in the summary; Phase 9 relies on them.
 - Run `npm run fetch -- --set male-ct,male-mri,head-cryo-jpeg,head-cat,head-cat-dicom,head-mri,head-mri-dicom` (≈0.8 GB) and `npm run fetch -- --dry-run` for the core, then `--dry-run --set male-70mm,female-70mm-2k,female-70mm-4k` for the film sets.
 - `LICENSE` (MIT, D18). README: "6.2 GB" → "5.7 GB" where it describes the male download, and a short "Source data" paragraph on the data root and `npm run fetch` (the full rewrite is Phase 10's).
@@ -207,7 +217,7 @@ Then `/commit Phase 1 of docs/phase2-plan.md`.
 
 ### Phase 2: the volume file v2, the script per body, the loader
 
-Needs `male-colour` (already there). Nothing else.
+Needs `male-colour` (already there). Nothing else. Run as two threads (see *Where it stands*): the data half first, with the app still reading version 1 and the committed file untouched, released as 0.1.4; then the app half with the rebuilt file.
 
 **Prompt**
 
@@ -221,8 +231,8 @@ Read docs/phase2-plan.md: sections 1 and 2 (especially D4 to D6, D12, D14 and D1
 - `src/volume/codec.ts` (pure, tested): `deltaEncode(block, nx)`/`deltaDecode`, `decorrelate(r, g, b)` → (G, R−G, B−G) and back. Encoding and decoding each run in one pass per block.
 - `src/volume/density.ts` (pure, tested): `densityFromColor(r, g, b)` on D6's scale: from luminance and saturation, giving bone-white ≈120–180, muscle ≈60–70, fat ≈45–55, never below 1; and the thresholds `boneDensity = 110`, `xrayFloor = 40`, shared with the shaders.
 - `src/volume/segment.ts`: the **slice 1002 fix**: `missingReason` returns `'short'` only when both `before` and `after` hold `dipWindow` non-blank counts (tests updated: a slice with one neighbour above is never short). Keep the rest.
-- `scripts/lib/bodies.ts`: per-body constants: slice numbers and naming (`a_vmNNNN.png`; the female's `avfNNNN[abc].png` and the head's `NNNN.tiff.gz` entries are added in Phases 8 and 9 but the shape is designed now), pixel size, slice spacing, the levels as pixel-block sizes per nominal spacing (male: 4 mm = 12 px × 4 slices, 2 mm = 6 × 2, 1 mm = 3 × 1), the scene axes, the cryo blocks, and the known blank slices.
-- `scripts/lib/decode.ts`: sharp wrappers: `readRgb(path | buffer)` → `{ width, height, data }` with the size check, `readGray16`, `gunzipFile`, `writePng(path, rgba, width, height)`.
+- `scripts/lib/bodies.ts`: per-body constants: slice numbers and naming (`a_vmNNNN.png`; the female's `avfNNNN[abc].png` and the head's `NNNN.tiff.gz` entries are added in Phases 8 and 9 but the shape is designed now), pixel size, slice spacing, the levels as pixel-block sizes per nominal spacing (male: 4 mm = 12 px × 4 slices, 2 mm = 6 × 2, 1 mm = 3 × 1), the scene axes, the cryo blocks, the known blank files (`blankFiles`, by name; a listed blank is still decoded and measured, and only a file that fails to decode is read as missing, which the female's 0-byte files need), and `segmentRule`, a pixel predicate that overrides `isBodyPixel` where a body's background differs.
+- `scripts/lib/decode.ts`: sharp wrappers: `readRgb(path)` → `{ width, height, data }` with the size check, `readGray` (8-bit grey, which the CT PNGs are), `gunzipFile` (a plain file passes through), `writePng`; `scripts/lib/files.ts` holds `writeWhole`, the temporary-name write the script and the decoders share.
 - `scripts/lib/previews.ts`: `drawPreviews` moved out of `build-volume.ts`, through `volume.axes`, written with sharp; plus a fourth preview, `density.png`, the mid-coronal plane of the density channel in grey.
 - `scripts/build-volume.ts`, `npm run volume -- --body male --spacing 4 [--out PATH] [--from A --to B] [--previews] [--data PATH]`: reads slices from the data root only (a missing file is an error that names the fetch command), sums as today, keeps per cell the coverage byte, dilates colour one voxel outward after the crop, fills density with `densityFromColor` (the CT comes in Phase 3), writes the file through `writeVolume` + `zlib.gzipSync(level 9)` + a temporary name, updates the level's entry in `public/volume/bodies.json` (bytes, size, spacing, origin), and logs what it did. The default output is `public/volume/<body>-<spacing>mm.bin`.
 - `public/volume/bodies.json` (Appendix B) with the male's two levels, 2 mm marked `optional: true`.
@@ -233,7 +243,7 @@ Read docs/phase2-plan.md: sections 1 and 2 (especially D4 to D6, D12, D14 and D1
 - Remove `pngjs` and `@types/pngjs`. `.gitignore`: add `public/volume/*-2mm.bin`, `public/volume/head-1mm.bin`, `public/volume/head-0.6mm.bin`.
 - Run `npm run volume -- --body male --spacing 4 --from 1400 --to 1600 --out .cache/test.bin` first, then the full `npm run volume -- --body male --spacing 4`.
 
-**Check** The full build reads 1,878 local slices in ≈3–6 min and logs: grid 142 × 81 × 470 (or 471 if the kept slice 1002 adds a layer), ≈1.60 million body voxels, `public/volume/male-4mm.bin` **≈4.5–5.5 MB** (colour 3.7 + density-from-colour ≈0.8 + coverage ≈0.1 + dilation ≈0.3). `.cache/preview/front.png`, `coronal.png` and `sagittal.png` match the previous previews; `density.png` shows a plausible grey body with pale bone. In the browser the page opens on the body as before; the console logs the decode time (expect < 300 ms) and the levels (4 mm ≈1.60 M, 8 mm ≈215,000, 16 mm ≈30,000); dragging Size rebuilds once on release; Opacity and the cuts behave as before. `git status` shows `male-4mm.bin` changed and nothing under `public/volume/` untracked but `bodies.json`. Then `/commit Phase 2 of docs/phase2-plan.md` (it asks about the volume file; answer that the script built it as committed).
+**Check** The full build reads 1,878 local slices in ≈3–6 min and logs: grid 144 × 83 × 472 (the cropped body plus a one-voxel margin on every side; layer 0 holds 92 body cells against the earlier 96 once slice 1002 is kept), 1,601,609 body voxels, `public/volume/male-4mm.bin` **≈5.6 MB** (the data half measured 5,580,377 bytes with the colour stand-in density; the estimate had been 4.5–5.5). `.cache/preview/front.png`, `coronal.png` and `sagittal.png` match the previous previews; `density.png` shows a dim, nearly uniform grey body with nothing outside it: at 4 mm a cell's mean colour dilutes bone white, so the colour stand-in puts 99.6 % of body voxels between 50 and 69 and bone appears only once Phase 3 brings the CT. In the browser the page opens on the body as before; the console logs the decode time (expect < 300 ms) and the levels (4 mm ≈1.60 M, 8 mm ≈215,000, 16 mm ≈30,000); dragging Size rebuilds once on release; Opacity and the cuts behave as before. `git status` shows `male-4mm.bin` changed and nothing under `public/volume/` untracked but `bodies.json`. Then `/commit Phase 2 of docs/phase2-plan.md` (it asks about the volume file; answer that the script built it as committed).
 
 ### Phase 3: CT registration and density for the male
 
@@ -255,6 +265,26 @@ Read docs/phase2-plan.md: sections 1 and 2 (especially D6 and D7), Phase 3, sect
 - Rebuild `male-4mm.bin`; `bodies.json` gains `density: "ct"` for the level.
 
 **Check** The registration log shows ≈5–7 segments, the expected vertical flip on every one, scales near 1.6 (head) to 2.8 (hips), scores ≥ 0.6 on bone. In the overlays the cyan skull, vertebrae, pelvis and femora sit on the pale bone of the photograph within about 2 mm (one or two 1 mm pixels); the magenta "before" shows how far they moved. `density.png` now shows a CT-grey body: dark lungs, grey organs, white bone; the file grows by ≈0.5–1 MB. The app shows no change yet. Then `/commit Phase 3 of docs/phase2-plan.md`.
+
+### Phase 3b: banding — block gains, gap blending and coverage-weighted splats
+
+Needs `male-colour`. Added 2026-11-08 (D22).
+
+**Prompt**
+
+```text
+Read docs/phase2-plan.md: sections 1 and 2 (especially D22), Phase 3b and Appendix A. Carry out Phase 3b only: the per-block colour gains in the builder with their tests, the blended gap layers, the coverage byte per splat and its weight in the cell table, then rebuild male-4mm.bin. Measure before and after as the Check says. If the plan turns out to be wrong or impossible somewhere, stop and tell me instead of improvising. Don't commit. Finish with npm run lint, npm run typecheck, npm test and npm run build passing, then summarise with the per-layer series and the screenshot pairs.
+```
+
+**The work**
+
+- `src/volume/blocks.ts` (pure, tested): `blockGains(windows)`: for each block boundary, the mean body colour per channel of the eight kept slices before it and of the eight kept after it, skipping the first four kept after it (the frost at a block's start still tints them); the gains cumulative from the first block, per channel, clamped to 0.8–1.25 and reported when clamped.
+- `build-volume.ts`: a pre-pass over those slices before the build; the gains applied to each slice's colour sums before they are averaged, never to the body decision; `--no-match` skips it; the gains recorded in the level's `bodies.json` entry as `blockGains`.
+- `segment.ts`, `fillMissingLayers`: a run of missing layers between two read neighbours blends colour by position between them, the nearer neighbour still supplying the cell bytes; a run at either end still copies.
+- `levels.ts`: a coverage byte per splat (the cell's at the finest level, the block's mean when merged); `cellTable.ts`: alpha = opacity × cut × coverage / 255.
+- Rebuild `male-4mm.bin`.
+
+**Check** The body's mean luminance per layer, before and after, with every block-boundary step under 2 % and the gap layers a ramp between their neighbours; the coverage block byte-identical to before, since the body decision must not change; the previews; screenshot pairs of the default view and of a thigh close-up, the old tree on port 5182 and the new on 5180, in which a band metric (the standard deviation of the luminance's high-pass with a 15 px box) at least halves over the thigh and the abdomen while the look is otherwise the same. Then `/commit`.
 
 ### Phase 4: the options table, the panel, the style switch, and the Volume style
 
@@ -384,7 +414,8 @@ Read docs/phase2-plan.md in full. Carry out Phase 10 only: review the app and th
 **The work**
 
 - Review against D4–D14, D21 and Appendix D: every GPU object disposed on volume change and Canvas remount; no per-frame allocation; uniforms set in effects; the worker terminated on unmount; the loader's abort on body switch; no `any` or suppressions without reasons; dependencies all imported (`npm ls --depth=0`).
-- README (D19): three bodies, four styles, the controls by folder, the data root and `npm run fetch` (5.7 GB male, 22 GB core, the film sets as an archive), `npm run volume` per body and spacing, `npm run register`, what's committed (the three default files and `bodies.json`) and what's built before a deploy, the LICENSE line, the credits (add Brigham and Women's / the Ratiu head as the NLM's page credits it).
+- `docs/data.md` (D20 as amended): the complete overview of the NLM data, every set downloaded or not, each count and size verified against the data root, linked from the README.
+- README (D19): three bodies, four styles, the controls by folder, a link to `docs/data.md`, the data root and `npm run fetch` (5.7 GB male, 22 GB core, the film sets as an archive), `npm run volume` per body and spacing, `npm run register`, what's committed (the three default files and `bodies.json`) and what's built before a deploy, the LICENSE line, the credits (add Brigham and Women's / the Ratiu head as the NLM's page credits it).
 - `.claude/skills/commit/SKILL.md` settings: the volume files are generated (now three plus opt-in gitignored ones), `data/*/registration.json` is generated by `npm run register` and small, `~/Data` is never in the repository.
 - `npm run build`, `npm run preview`, and confirm HTTP 200 for the page, `volume/bodies.json` and the three default files.
 
@@ -400,7 +431,7 @@ Read docs/phase2-plan.md in full. Carry out Phase 10 only: review the app and th
 
    Try the male 2 mm in the app on this Mac: expect the volume style to slow or fail (173 MB texture on the Iris) and the panel to say the texture size; that's the opt-in warning working. Skip the head 0.6 mm unless a stronger GPU will show it.
 2. Walk the agent's checklist in `npm run dev` and `npm run preview`.
-3. Delete the plan, then `/commit 0.2.0 Phase 10 of docs/phase2-plan.md, removing the plan`. Merge `development` into `main`, push both, `npm ci && npm run build`, copy `dist/` to `~/Sites/localhost/live/visiblehuman/` and publish. Check the live page's Network panel: the three default files and `bodies.json` at 200, and an opt-in level only when chosen.
+3. Delete the plan (its data description now lives in `docs/data.md`), set the GitHub repository's description and homepage, then `/commit 0.2.0`. Merge `development` into `main`, push both, `npm ci && npm run build`, copy `dist/` to `~/Sites/localhost/live/visiblehuman/` and publish. Check the live page's Network panel: the three default files and `bodies.json` at 200, and an opt-in level only when chosen.
 
 ## 5. Risks and unknowns, each with the check that settles it early
 
@@ -425,6 +456,7 @@ Read docs/phase2-plan.md in full. Carry out Phase 10 only: review the app and th
 | An R8 3D texture with an odd width on WebGL 2 | Head MRI | `unpackAlignment = 1` on the MRI texture (the RGBA texture needs nothing) |
 | Repository growth from rebuilt binaries | Phases 2, 3, 8, 9 | Each default file is rebuilt only where the phase says; experiments go to `.cache`; ≈19 MB of binaries in all |
 | `DecompressionStream` missing | Old browsers | A clear load error naming the browser; every current browser has it |
+| Block gains measured on frosty or discoloured slices (1505, 2017–2020) | Phase 3b | The window after a boundary skips the first four kept slices; a clamped gain is reported and its window moved by hand; the per-layer series before and after is the check |
 | Marching cubes memory at 2 mm (12.8 M body voxels) | Phase 10 opt-in | The worker's typed arrays double as they fill; skin ≈1 M triangles, bone ≈1.5 M at 2 mm, well under 10 M; the worker reports time |
 
 ## Appendix A: the volume file, version 2
@@ -439,7 +471,8 @@ offset  bytes  field
  8       6     u16 × 3 size: nx, ny, nz
 14      12     f32 × 3 spacing: mm between voxel centres along i, j, k (male 4 mm: 3.96, 3.96, 4)
 26      12     f32 × 3 origin: the centre of voxel (0, 0, 0) in the source frame, mm: i and j from the
-               slice image's top-left pixel centre, k from slice firstSlice's plane
+               slice image's top-left pixel centre, k from slice 1001's plane, the layers' alignment
+               origin, whatever --from says (a 1400–1600 build has origin z 393.5 mm, firstSlice 1400)
 38       2     u16 firstSlice: the first slice number the grid covers (after the crop)
 40       2     u16 lastSlice
 42       3     u8 × 3 axes, for scene x, y, z: bits 0–1 the source axis (0 = i, 1 = j, 2 = k), bit 7 set when
@@ -480,7 +513,9 @@ The app's RGBA texture is R, G, B, density per voxel; the body test on the GPU i
 }
 ```
 
-**`~/Data/VisibleHuman/manifest.json`** (written by `fetch-data.ts`):
+From Phase 3b a level's entry also carries `blockGains`, the per-block colour gains its build applied.
+
+**`~/Data/VisibleHuman/manifest.json`** (written by `fetch-data.ts`; each set's record also carries its own `checked` time and, after `--verify --md5`, an MD5 tally; the head MRI series are keyed `head-mri/PD` and so on):
 
 ```json
 { "root": "/Users/snovakow/Data/VisibleHuman", "checked": "2026-11-09T10:12:00Z",
@@ -517,7 +552,7 @@ The set table (`scripts/lib/sets.ts`), base `https://data.lhncbc.nlm.nih.gov/pub
 | `male-colour` | `Male-Images/PNG_format/{head,thorax,abdomen,pelvis,thighs,legs}/a_vmNNNN.png`, first region listing the number | 1,878 (1001–2878) | yes (already present) |
 | `male-ct` | `Male-Images/PNG_format/radiological/frozenCT/cvmNNNNf.png`, headers `…/frozenCTHeaders/cvmNNNNf.txt` | 1,877 + 1,877 (1006–2882) | yes |
 | `male-mri` | `Male-Images/PNG_format/radiological/mri/` and `mriHeaders/`, every file listed | 1,029 + 1,029 | yes |
-| `male-normal-ct` | `…/radiological/normalCT/` + `normalCTHeaders/` | 521 + 521 | no |
+| `male-normal-ct` | `…/radiological/normalCT/` + `normalCTHeaders/` | 521 + 521 | no (not in `sets.ts`) |
 | `male-70mm` | `Male-Images/70mm/fullbody/NNNN.rgb.gz` | 1,878 (1001–2878; 2426–2432 empty) | no (film run) |
 | `female-colour` | `Female-Images/PNG_format/{head,thorax,abdomen,pelvis,thighs,legs}/avfNNNN[abc].png` | 5,186 (1001–2730 × a/b/c, less 2328c, 2329a, 2329b, 2730c) | yes |
 | `female-ct` | `Female-Images/PNG_format/radiological/normalCT/cvfNNNNf.png`, headers `…/normalCTHeaders/c_vfNNNN.txt` | 1,734 + 1,734 (1001–2734) | yes |
@@ -528,8 +563,8 @@ The set table (`scripts/lib/sets.ts`), base `https://data.lhncbc.nlm.nih.gov/pub
 | `head-cryo-jpeg` | `Additional-Head-Images/cryo/jpeg/quarterSize/axial/` | 1,477 | yes (proof set) |
 | `head-cat` | `Additional-Head-Images/MR_CT_tiffs/CAT-tiff/N.tif.gz` | 463 | yes |
 | `head-cat-dicom` | `Additional-Head-Images/MR_CT_DICOM/CAT/` | 463 | yes |
-| `head-mri` | `Additional-Head-Images/MR_CT_tiffs/MRI-tiff/{PD,T1,T2,T2_512}-tiff/` | 76 × 3 + 229 | yes |
-| `head-mri-dicom` | `Additional-Head-Images/MR_CT_DICOM/MRI/{PD,T1,T2,T2_512}/` | as listed (T2_512: 229) | yes |
+| `head-mri` | `Additional-Head-Images/MR_CT_tiffs/MRI-tiff/{PD,T1,T2,T2_512}-tiff/`, one subfolder per series | 76 × 3 + 229 | yes |
+| `head-mri-dicom` | `Additional-Head-Images/MR_CT_DICOM/MRI/{PD,T1,T2,T2_512}/`, one subfolder per series | 76 × 3 + 229 | yes |
 
 Per body (`scripts/lib/bodies.ts`): the male as the research findings say (blanks 2424–2435; frosty 1506–1507, 2017–2020; cryo blocks 1001–1505, 1506–2016, 2017–2423, 2436–2878; levels 12 px × 4, 6 × 2, 3 × 1). The female: 0.33 mm cubic, 12 px × 12 sub-slices for 4 mm, 6 × 6 for 2 mm; the a/b/c order within a number; absent names and blank files as Phase 8 lists; her cryo blocks found from the blank runs in Phase 8. The head: 0.147 mm isotropic, 1056 × 1528, 8 px × 8 (1.18 mm), 7 × 7 (1.03 mm), 4 × 4 (0.59 mm); slices 0172–0174 and 1395 are neighbours' averages and need no special handling; the CAT 512 × 512 × 463 at 0.489 × 0.489 × 0.5 mm; T2_512 512 × 512 × 229 at 0.469 × 0.469 × 1 mm. The male and female CT PNGs are already on D6's scale; the head's DICOM HU go through (HU + 1000) / 16.
 
