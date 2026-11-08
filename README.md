@@ -12,7 +12,8 @@ The page opens on the whole body, seen from the front. Drag to turn it, scroll o
 
 The panel at the top right:
 
-- **Detail** sets the size of the blocks the body is drawn in: 16 mm (about 30,000 splats), 8 mm (about 215,000, where it starts) or 4 mm (about 1.6 million, which has the most detail and runs slowest).
+- **Level** chooses the file the body is drawn from: 4 mm, which it opens on, or 2 mm, twice as fine along each axis and a larger download. Where the site doesn't have a level's file, the panel marks it not built and the body stays as it was.
+- **Detail** sets the size of the blocks the body is drawn in: at the 4 mm level, 32 mm (about 4,500 splats), 16 mm (about 30,000), 8 mm (about 215,000, where it starts) or 4 mm (about 1.6 million, which has the most detail and runs slowest).
 - **Size** shrinks or grows every splat, from half to twice its starting size.
 - **Opacity** fades the whole body, so you can see into it.
 - **Axial**, **Coronal** and **Sagittal** cut the body open. Axial cuts down from the head, coronal back from the front, and sagittal across from the body's right. At 0 nothing is cut, and at 1 the whole body is cut away.
@@ -20,11 +21,11 @@ The panel at the top right:
 
 The counter at the top left shows the frame rate.
 
-VisibleHuman renders with WebGPU where the browser and the GPU can run it, and with WebGL 2 otherwise, including on GPUs known to fail at three.js's WebGPU splat sorting. Adding `?webgl` to the address forces WebGL 2. WebGL 2 sorts the splats on the CPU, so expect the 4 mm level to turn slowly there.
+VisibleHuman renders with WebGPU where the browser and the GPU can run it, and with WebGL 2 otherwise, including on GPUs known to fail at three.js's WebGPU splat sorting. Adding `?webgl` to the address forces WebGL 2. WebGL 2 sorts the splats on the CPU, so expect the finest Detail to turn slowly there.
 
 ## Status
 
-The first version is complete and live. The body loads, draws at three levels of detail and cuts open along all three planes, under WebGPU or WebGL 2. Ideas for later include the female body, which was cut three times as finely; the CT and MRI scans taken of both bodies; and full-resolution photographs shown on the cut faces.
+The first version is complete and live. The body loads, draws at four levels of detail and cuts open along all three planes, under WebGPU or WebGL 2. Ideas for later include the female body, which was cut three times as finely; the CT and MRI scans taken of both bodies; and full-resolution photographs shown on the cut faces.
 
 ## Running it locally
 
@@ -41,7 +42,7 @@ and open the address it prints.
 
 ## The volume file
 
-The NLM's photographs can't be read by a page on another site, because its server doesn't allow it, and at 5.7 GB they'd be far too much to load anyway. So a Node script reads them once and writes a file of about 5.5 MB, [`public/volume/male-4mm.bin`](public/volume/male-4mm.bin), which the page loads. The file is committed, so a clone runs, builds and deploys without the script.
+The NLM's photographs can't be read by a page on another site, because its server doesn't allow it, and at 5.7 GB they'd be far too much to load anyway. So a Node script reads them once and writes a file of about 5.6 MB, [`public/volume/male-4mm.bin`](public/volume/male-4mm.bin), which the page loads. It holds every block of the box around the body: its colour, how much of it is body, and a density, gzipped so the empty space around the body costs next to nothing. The page finds it through [`public/volume/bodies.json`](public/volume/bodies.json), which lists each body and the levels of detail it can be built at. The 4 mm file is committed, so a clone runs, builds and deploys without the script.
 
 The script reads all 1,878 colour cross-sections of the male body. It tells the body apart from the blue gel it was set in and from the frame, scale card and labels around it, then averages what's left into 4 mm blocks, each keeping the colour of the tissue in it. The few slices that are blank or hazy in the NLM's set are skipped, and their blocks are filled from their neighbours'. To rebuild the file:
 
@@ -51,7 +52,7 @@ npm run volume -- --body male --spacing 4
 
 It reads the slices from the local copy of the NLM's images that `npm run fetch` makes, described below, so that copy comes first. The male takes a few minutes. It also draws previews of the result in `.cache/preview/`. The other options go after the `--` too:
 
-- `--spacing` picks how fine the blocks are, in millimetres: 4 for the file the page loads, 2 for a finer one.
+- `--spacing` picks how fine the blocks are, in millimetres: 4 for the file the page opens on, 2 for a finer one, several times the size. The finer file isn't committed: it's built before a deploy, and a host without it offers it as not built. A file written into `public/volume/` is entered in `bodies.json` as it's written.
 - `--previews` redraws the previews from the existing file, without reading any slice.
 - `--from` and `--to` read only a range of slices, numbered 1001 to 2878 from the head down; `--out` writes the file somewhere else; `--data` names the folder of the local copy, as it does for `npm run fetch`.
 

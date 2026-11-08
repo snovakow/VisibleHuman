@@ -1,20 +1,23 @@
-import { cellCount, scenePosition, sceneSpacing, type Triple, type Volume } from './format.ts'
+import { isBodyVoxel, scenePosition, sceneSpacing, type Triple, type Volume } from './format.ts'
 
-// The body at three levels of detail: every 4 mm cell, and the 8 mm and 16 mm levels, whose cells are the 2 × 2 × 2 and
-// 4 × 4 × 4 blocks of 4 mm cells that hold body. A block's cell sits at the centre of its body cells, coloured by their
-// mean. Every level is in the scene's axes and millimetres, centred on the body's bounds
+// The body as splat levels: every body voxel, and the blocks of 2 × 2 × 2, 4 × 4 × 4 and 8 × 8 × 8 voxels that hold
+// body. A block's cell sits at the centre of its body voxels, coloured by their mean. Every level is in the scene's
+// axes and millimetres, centred on the body's bounds
 
-// The levels by their nominal spacing in millimetres, coarsest first, as the panel lists them
-export const details = [16, 8, 4] as const
-export type Detail = (typeof details)[number]
+// The blocks a level may merge, in voxels along each axis, finest first. A level's Detail is its block
+export const blocks = [1, 2, 4, 8] as const
+export type Detail = number
 
-export const isDetail = (value: unknown): value is Detail => details.some((detail) => detail === value)
+// A level of more cells than this is left out. three keeps a splat in 52 bytes over four storage buffers, 16 in the
+// largest, and its sort in 8 more, so a level this size takes about 120 MB, and 32 MB in its largest buffer, well
+// within the 128 MB a storage binding may hold
+export const maxLevelCells = 2_000_000
+// The page opens on the finest level of at most this many cells, which on the male's 4 mm file is the 8 mm level of
+// about 215,000, the most the WebGL 2 fallback orbits smoothly on a 2014 Intel Iris
+export const defaultLevelCells = 400_000
 
-// How many 4 mm cells each level's block spans along each axis
-export const blockCells: Record<Detail, number> = { 4: 1, 8: 2, 16: 4 }
-
-// The body's bounds in the scene, in millimetres, before centring: the box its body cells fill, each reaching half a
-// cell either side of its centre
+// The body's bounds in the scene, in millimetres, before centring: the box its body voxels fill, each reaching half a
+// voxel either side of its centre
 export interface Bounds {
   center: Triple
   // Half the box's extent along x, y and z
@@ -22,47 +25,49 @@ export interface Bounds {
 }
 
 export interface Level {
+  // The voxels it merges along each axis, its Detail
+  block: number
+  // The spacing of the level's grid in millimetres: the voxels' mean spacing times the block
+  spacing: number
+  // As the panel lists it, such as "8 mm"
+  label: string
   count: number
   // Each cell's centre, three floats per cell, in the scene's millimetres, centred on the body's bounds
   centers: Float32Array
   // Each cell's colour, R, G and B, as photographed
   colors: Uint8Array
-  // The spacing of the level's grid in millimetres: the 4 mm cells' mean spacing times the block
-  spacing: number
 }
 
-export type Levels = Record<Detail, Level>
+// Finest first
+export type Levels = readonly Level[]
 
-// format.ts's mapping from grid to scene is linear, so a cell's place is i, j and k times these, the scene's
-// millimetres per step along each of the grid's axes
-function sceneBasis(volume: Volume) {
-  return [scenePosition(volume, 1, 0, 0), scenePosition(volume, 0, 1, 0), scenePosition(volume, 0, 0, 1)] as const
+export interface Body {
+  bounds: Bounds
+  levels: Levels
+  // The level the page opens on
+  defaultDetail: Detail
 }
 
-// The index of every body cell, in index order, which is the order of their colours too. It reads the mask a byte at
-// a time and skips the empty ones, since most of the grid around the body is empty
+// The lowest and highest i, j and k of any body voxel
+interface Extent {
+  low: Triple
+  high: Triple
+}
+
+// The index of every body voxel, in index order
 export function bodyIndices(volume: Volume): Uint32Array {
-  const { mask } = volume
-  const cells = cellCount(volume.size)
-  const indices = new Uint32Array(volume.colors.length / 3)
+  const { coverage } = volume
+  let count = 0
+  for (let index = 0; index < coverage.length; index++) if (isBodyVoxel(coverage[index])) count++
+  const indices = new Uint32Array(count)
   let n = 0
-  for (let byte = 0; byte < mask.length; byte++) {
-    let bits = mask[byte]
-    while (bits !== 0 && n < indices.length) {
-      // The lowest set bit, which is then cleared
-      const index = byte * 8 + 31 - Math.clz32(bits & -bits)
-      bits &= bits - 1
-      if (index < cells) indices[n++] = index
-    }
-  }
+  for (let index = 0; index < coverage.length; index++) if (isBodyVoxel(coverage[index])) indices[n++] = index
   return indices
 }
 
-export function bodyBounds(volume: Volume, indices = bodyIndices(volume)): Bounds {
-  if (indices.length === 0) throw new Error('The volume holds no body cells')
+function extentOf(volume: Volume, indices: Uint32Array): Extent {
+  if (indices.length === 0) throw new Error('The volume holds no body voxels')
   const [nx, ny] = volume.size
-  // The lowest and highest i and j of any body cell. Its k only grows along the indices, so the first and the last
-  // body cells hold the lowest and the highest
   let lowI = nx
   let highI = 0
   let lowJ = ny
@@ -77,12 +82,17 @@ export function bodyBounds(volume: Volume, indices = bodyIndices(volume)): Bound
     if (j < lowJ) lowJ = j
     if (j > highJ) highJ = j
   }
+  // k only grows along the indices, so the first and the last body voxels hold the lowest and the highest
   const lowK = Math.floor(indices[0] / (nx * ny))
   const highK = Math.floor(indices[indices.length - 1] / (nx * ny))
+  return { low: [lowI, lowJ, lowK], high: [highI, highJ, highK] }
+}
 
-  // The grid's extreme corners in the scene; an axis that runs backwards swaps which is the lower
-  const a = scenePosition(volume, lowI, lowJ, lowK)
-  const b = scenePosition(volume, highI, highJ, highK)
+export function bodyBounds(volume: Volume, indices = bodyIndices(volume), extent = extentOf(volume, indices)): Bounds {
+  const { low, high } = extent
+  // The extreme voxels' centres in the scene; an axis that runs backwards swaps which is the lower
+  const a = scenePosition(volume, ...low)
+  const b = scenePosition(volume, ...high)
   const spacing = sceneSpacing(volume)
   const along = (axis: number) => {
     const min = Math.min(a[axis], b[axis]) - spacing[axis] / 2
@@ -93,23 +103,47 @@ export function bodyBounds(volume: Volume, indices = bodyIndices(volume)): Bound
   return { center: [x.center, y.center, z.center], half: [x.half, y.half, z.half] }
 }
 
-// A level of blocks of `block` cells along each axis, listing the blocks that hold body in index order. The body cells
-// come in index order, so they fill one layer of blocks after another, and the sums only ever hold one layer
-export function buildLevel(volume: Volume, bounds: Bounds, block: number, indices = bodyIndices(volume)): Level {
+// format.ts's mapping from grid to scene is linear, so a voxel's place is i, j and k times these, the scene's
+// millimetres per step along each of the grid's axes
+function sceneBasis(volume: Volume) {
+  return [scenePosition(volume, 1, 0, 0), scenePosition(volume, 0, 1, 0), scenePosition(volume, 0, 0, 1)] as const
+}
+
+// The panel's name for a level: the voxels' mean spacing to a tenth of a millimetre, times the block, so the male's
+// 3.96 × 3.96 × 4 mm voxels make "4 mm", "8 mm" and so on
+function labelOf(volume: Volume, block: number) {
+  const [sx, sy, sz] = volume.spacing
+  const nominal = Math.round(((sx + sy + sz) / 3) * 10) / 10
+  return `${Number((nominal * block).toFixed(1))} mm`
+}
+
+// A level of blocks of `block` voxels along each axis, listing the blocks that hold body in index order. The blocks
+// start at the body's lowest voxel along each axis, not at the grid's first, which lies in the margin, so they group
+// the body as they always have. The body voxels come in index order, so they fill one layer of blocks after another,
+// and the sums only ever hold one layer
+export function buildLevel(
+  volume: Volume,
+  bounds: Bounds,
+  block: number,
+  indices = bodyIndices(volume),
+  extent = extentOf(volume, indices),
+): Level {
   const [nx, ny] = volume.size
-  const { colors } = volume
-  const bx = Math.ceil(nx / block)
-  const layerBlocks = bx * Math.ceil(ny / block)
+  const { red, green, blue } = volume
+  const { low, high } = extent
+  const bx = Math.floor((high[0] - low[0]) / block) + 1
+  const layerBlocks = bx * (Math.floor((high[1] - low[1]) / block) + 1)
+  const blockLayers = Math.floor((high[2] - low[2]) / block) + 1
   const layerCells = nx * ny
-  // A level has at most one cell per body cell
-  const bodyCells = indices.length
-  const centers = new Float32Array(bodyCells * 3)
-  const levelColors = new Uint8Array(bodyCells * 3)
+  // A level has at most one cell per body voxel, and one per block
+  const most = Math.min(indices.length, layerBlocks * blockLayers)
+  const centers = new Float32Array(most * 3)
+  const levelColors = new Uint8Array(most * 3)
   const [cx, cy, cz] = bounds.center
   const [ei, ej, ek] = sceneBasis(volume)
   let count = 0
 
-  // Adds a cell at a place in the grid, in cells, which needn't be whole, with its colour
+  // Adds a cell at a place in the grid, in voxels, which needn't be whole, with its colour
   const emit = (i: number, j: number, k: number, r: number, g: number, b: number) => {
     const at = count * 3
     centers[at] = i * ei[0] + j * ej[0] + k * ek[0] - cx
@@ -122,15 +156,15 @@ export function buildLevel(volume: Volume, bounds: Bounds, block: number, indice
   }
 
   if (block === 1) {
-    for (let n = 0; n < bodyCells; n++) {
+    for (let n = 0; n < indices.length; n++) {
       const index = indices[n]
       const k = Math.floor(index / layerCells)
       const inLayer = index - k * layerCells
       const j = Math.floor(inLayer / nx)
-      emit(inLayer - j * nx, j, k, colors[n * 3], colors[n * 3 + 1], colors[n * 3 + 2])
+      emit(inLayer - j * nx, j, k, red[index], green[index], blue[index])
     }
   } else {
-    // Per block of the layer: the sums of its body cells' i, j and k, and of their R, G and B, then how many there are
+    // Per block of the layer: the sums of its body voxels' i, j and k, and of their R, G and B, then how many there are
     const sums = new Float64Array(layerBlocks * 6)
     const counts = new Uint32Array(layerBlocks)
     const flush = () => {
@@ -151,25 +185,25 @@ export function buildLevel(volume: Volume, bounds: Bounds, block: number, indice
       counts.fill(0)
     }
     let layer = -1
-    for (let n = 0; n < bodyCells; n++) {
+    for (let n = 0; n < indices.length; n++) {
       const index = indices[n]
       const k = Math.floor(index / layerCells)
       const inLayer = index - k * layerCells
       const j = Math.floor(inLayer / nx)
       const i = inLayer - j * nx
-      const blockLayer = Math.floor(k / block)
+      const blockLayer = Math.floor((k - low[2]) / block)
       if (blockLayer !== layer) {
         if (layer >= 0) flush()
         layer = blockLayer
       }
-      const b = Math.floor(i / block) + bx * Math.floor(j / block)
+      const b = Math.floor((i - low[0]) / block) + bx * Math.floor((j - low[1]) / block)
       const s = b * 6
       sums[s] += i
       sums[s + 1] += j
       sums[s + 2] += k
-      sums[s + 3] += colors[n * 3]
-      sums[s + 4] += colors[n * 3 + 1]
-      sums[s + 5] += colors[n * 3 + 2]
+      sums[s + 3] += red[index]
+      sums[s + 4] += green[index]
+      sums[s + 5] += blue[index]
       counts[b]++
     }
     flush()
@@ -177,17 +211,41 @@ export function buildLevel(volume: Volume, bounds: Bounds, block: number, indice
 
   const [sx, sy, sz] = volume.spacing
   return {
-    count,
-    centers: count === bodyCells ? centers : centers.slice(0, count * 3),
-    colors: count === bodyCells ? levelColors : levelColors.slice(0, count * 3),
+    block,
     spacing: ((sx + sy + sz) / 3) * block,
+    label: labelOf(volume, block),
+    count,
+    centers: count === most ? centers : centers.slice(0, count * 3),
+    colors: count === most ? levelColors : levelColors.slice(0, count * 3),
   }
 }
 
-// The body's bounds and its three levels, from the body cells listed once
-export function buildBody(volume: Volume): { bounds: Bounds; levels: Levels } {
-  const indices = bodyIndices(volume)
-  const bounds = bodyBounds(volume, indices)
-  const level = (detail: Detail) => buildLevel(volume, bounds, blockCells[detail], indices)
-  return { bounds, levels: { 4: level(4), 8: level(8), 16: level(16) } }
+export interface LevelLimits {
+  maxCells: number
+  defaultCells: number
 }
+
+// The body's bounds and its levels, from the body voxels listed once: every block of `blocks` whose level holds at
+// most maxCells cells, finest first, and as the default the finest of those with at most defaultCells, else the
+// coarsest
+export function buildBody(
+  volume: Volume,
+  limits: LevelLimits = { maxCells: maxLevelCells, defaultCells: defaultLevelCells },
+): Body {
+  const indices = bodyIndices(volume)
+  const extent = extentOf(volume, indices)
+  const bounds = bodyBounds(volume, indices, extent)
+  const levels: Level[] = []
+  for (const block of blocks) {
+    // The finest level has a cell per body voxel, so it's known too large before it's built
+    if (block === 1 && indices.length > limits.maxCells) continue
+    const level = buildLevel(volume, bounds, block, indices, extent)
+    if (level.count <= limits.maxCells) levels.push(level)
+  }
+  if (levels.length === 0) throw new Error(`Every level of the ${volume.body} holds more than ${limits.maxCells} cells`)
+  const opening = levels.find((level) => level.count <= limits.defaultCells) ?? levels[levels.length - 1]
+  return { bounds, levels, defaultDetail: opening.block }
+}
+
+// The level of a Detail, if the body has one
+export const levelOf = (levels: Levels, detail: Detail) => levels.find((level) => level.block === detail)

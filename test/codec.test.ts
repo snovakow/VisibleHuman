@@ -41,3 +41,12 @@ void test('decorrelation refuses channels of different lengths', () => {
   assert.throws(() => decorrelate(new Uint8Array(3), new Uint8Array(4)), /one length/)
   assert.throws(() => correlate(new Uint8Array(4), new Uint8Array(3)), /one length/)
 })
+
+void test('delta decoding onto green gives a decorrelated channel back whole', () => {
+  const green = Uint8Array.from([10, 250, 0, 128, 7, 255])
+  const red = Uint8Array.from([12, 3, 255, 100, 7, 0])
+  const coded = deltaEncode(decorrelate(red.slice(), green), 3)
+  assert.deepEqual(deltaDecode(coded, 3, green), red)
+  assert.deepEqual(deltaDecode(coded, 3, green), correlate(deltaDecode(coded, 3), green))
+  assert.throws(() => deltaDecode(coded, 3, new Uint8Array(5)), /one length/)
+})

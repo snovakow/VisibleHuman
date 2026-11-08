@@ -14,11 +14,29 @@ export function deltaEncode(block: Uint8Array, nx: number): Uint8Array {
   return coded
 }
 
-export function deltaDecode(coded: Uint8Array, nx: number): Uint8Array {
+// Row by row, with the running sum kept in a local: the page decodes 28 million bytes of the male's file before it can
+// show anything, and a remainder per byte, as the coder takes, made that several times slower. Given green, it also
+// adds green back to a decorrelated channel as it goes, which saves correlate's pass over the block
+export function deltaDecode(coded: Uint8Array, nx: number, green?: Uint8Array): Uint8Array {
   checkRow(nx)
+  if (green) checkPair(coded, green)
   const block = new Uint8Array(coded.length)
-  for (let n = 0; n < coded.length; n++) {
-    block[n] = n % nx === 0 ? coded[n] : (block[n - 1] + coded[n]) & 0xff
+  for (let start = 0; start < coded.length; start += nx) {
+    const end = Math.min(start + nx, coded.length)
+    let value = coded[start]
+    if (green) {
+      block[start] = (value + green[start]) & 0xff
+      for (let n = start + 1; n < end; n++) {
+        value = (value + coded[n]) & 0xff
+        block[n] = (value + green[n]) & 0xff
+      }
+    } else {
+      block[start] = value
+      for (let n = start + 1; n < end; n++) {
+        value = (value + coded[n]) & 0xff
+        block[n] = value
+      }
+    }
   }
   return block
 }

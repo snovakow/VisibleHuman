@@ -5,7 +5,7 @@ import { GaussianSplat } from 'three/addons/objects/GaussianSplat.js'
 import { createGaussianSplatGeometry, writeCovariance } from 'three/addons/utils/GaussianSplatUtils.js'
 import { useShallow } from 'zustand/react/shallow'
 import { useStore } from '../store.ts'
-import type { Detail, Level } from '../volume/levels.ts'
+import { levelOf, type Detail, type Level } from '../volume/levels.ts'
 import { cellColor, createCellTable, paintCellTable, writeCellIndex, type CellTable, type TablePaint } from './cellTable.ts'
 
 // A round splat's standard deviation, as a share of its level's spacing, at Size 1. three draws a splat out to two of
@@ -80,8 +80,9 @@ export function BodySplats() {
     const built = new Map<Detail, BuiltLevel>()
     const current: Drawn = {
       show: (shown) => {
-        if (!built.has(shown)) {
-          const level = buildLevel(levels[shown], size)
+        const source = levelOf(levels, shown)
+        if (source && !built.has(shown)) {
+          const level = buildLevel(source, size)
           scene.add(level.splat)
           built.set(shown, level)
         }
@@ -89,7 +90,8 @@ export function BodySplats() {
       },
       paint: (shown, inputs) => {
         const level = built.get(shown)
-        if (level && level.table.painted !== inputs) paintCellTable(level.table, levels[shown], bounds.half, inputs)
+        const source = levelOf(levels, shown)
+        if (level && source && level.table.painted !== inputs) paintCellTable(level.table, source, bounds.half, inputs)
       },
     }
     showNow(current)

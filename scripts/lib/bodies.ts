@@ -2,7 +2,7 @@
 // their geometry, the levels it can be built at, its scene axes and the quirks of its set. The male is here; the
 // female and the head follow in their milestones, each an entry of the same shape.
 
-import type { SceneAxes } from '../../src/volume/format2.ts'
+import type { SceneAxes } from '../../src/volume/format.ts'
 
 // One level a body can be built at: the voxel's nominal spacing in millimetres, the pixels it spans across a slice
 // and the slices it spans along the body
@@ -10,6 +10,8 @@ export interface Level {
   spacing: number
   pixels: number
   slices: number
+  // The level the page opens on, whose file is committed; the others are built only before a deploy
+  default?: true
 }
 
 // How a slice's file is named: the prefix, the slice number padded to digits, a sub-slice suffix where a number has
@@ -23,6 +25,9 @@ export interface Naming {
 
 export interface Body {
   id: string
+  // As the page names it, and the credit for it the NLM's terms ask for
+  label: string
+  credit: string
   // The data set the slices are in, by the id scripts/lib/sets.ts gives it
   set: string
   firstSlice: number
@@ -58,6 +63,8 @@ const range = (first: number, last: number) => Array.from({ length: last - first
 // right to its left, rows from its back to its front, and slices down from the head (read from slice 1500)
 const male: Body = {
   id: 'male',
+  label: 'Male',
+  credit: 'Visible Human Male, courtesy of the U.S. National Library of Medicine',
   set: 'male-colour',
   firstSlice: 1001,
   lastSlice: 2878,
@@ -68,7 +75,7 @@ const male: Body = {
   sliceSpacing: 1,
   // 12 × 12 pixels is 3.96 mm across, four slices 4 mm along; 6 × 6 and two slices for the 2 mm level
   levels: [
-    { spacing: 4, pixels: 12, slices: 4 },
+    { spacing: 4, pixels: 12, slices: 4, default: true },
     { spacing: 2, pixels: 6, slices: 2 },
   ],
   axes: { x: { source: 0, sign: 1 }, y: { source: 2, sign: -1 }, z: { source: 1, sign: 1 } },

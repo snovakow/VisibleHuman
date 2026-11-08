@@ -5,7 +5,7 @@
 // of the grid along that axis; otherwise each line of sight shows its nearest body voxel
 
 import { join } from 'node:path'
-import { cellIndex, isBodyVoxel, sceneCell, type Volume } from '../../src/volume/format2.ts'
+import { cellIndex, isBodyVoxel, sceneCell, type Volume } from '../../src/volume/format.ts'
 import { writePng } from './decode.ts'
 
 export const previewFolder = '.cache/preview'

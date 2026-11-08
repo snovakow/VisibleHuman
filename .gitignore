@@ -25,3 +25,8 @@ dist-ssr
 
 # The volume script's previews
 .cache
+
+# The opt-in volume levels, built before a deploy rather than committed
+public/volume/*-2mm.bin
+public/volume/head-1mm.bin
+public/volume/head-0.6mm.bin

@@ -3,16 +3,19 @@
 //
 //   --body ID          which body: male (the female and the head arrive with their milestones)
 //   --spacing MM       which level, by its voxels' spacing in millimetres: the male's are 4 and 2
-//   --out PATH         write the file there rather than public/volume/<body>-<spacing>mm.bin
+//   --out PATH         write the file there rather than public/volume/<body>-<spacing>mm.bin; a file written into
+//                      public/volume/ also gets its entry in public/volume/bodies.json, which the page reads
 //   --from A, --to B   read only slices A to B (by default every slice of the body)
 //   --previews         redraw the previews from the existing file, reading no slice
 //   --data PATH        the data root, else VHP_DATA, else ~/Data/VisibleHuman
 
-import { stat } from 'node:fs/promises'
+import { readFile, stat } from 'node:fs/promises'
+import { basename, relative, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
 import { gzipSync } from 'node:zlib'
+import { readBodies, withLevel, type BodiesFile, type BodyEntry, type LevelEntry } from '../src/volume/bodies.ts'
 import { densityFromColor } from '../src/volume/density.ts'
-import { bodyCoverage, cellIndex, countBody, readVolume, writeVolume, type Triple, type Volume } from '../src/volume/format2.ts'
+import { bodyCoverage, cellIndex, countBody, readVolume, writeVolume, type Triple, type Volume } from '../src/volume/format.ts'
 import {
   dipWindow,
   fillMissingLayers,
@@ -417,6 +420,60 @@ function cropToBody(grid: Grid, body: Body, level: Level, field: Field, from: nu
 
 const mm = (value: number) => Number(value.toFixed(3)).toString()
 
+// The folder the page loads its files from, and the list of bodies and levels there
+const pageFolder = resolve('public')
+const volumeFolder = resolve(pageFolder, 'volume')
+const bodiesPath = resolve(volumeFolder, 'bodies.json')
+
+const levelId = (level: Level) => `${level.spacing}mm`
+const levelFile = (body: Body, level: Level) => `volume/${body.id}-${level.spacing}mm.bin`
+
+// Millimetres to a ten-thousandth, which drops the 32-bit floats' and the products' noise, as 3.9600000381 for 3.96
+const rounded = ([a, b, c]: Triple): Triple => [Number(a.toFixed(4)), Number(b.toFixed(4)), Number(c.toFixed(4))]
+
+// A level's entry before it has been built: its name, its file and its nominal spacing
+function levelEntry(body: Body, level: Level): LevelEntry {
+  const entry: LevelEntry = {
+    id: levelId(level),
+    label: `${level.spacing} mm`,
+    file: levelFile(body, level),
+    spacing: rounded([level.pixels * body.pixelSize, level.pixels * body.pixelSize, level.slices * body.sliceSpacing]),
+  }
+  if (level.default) entry.default = true
+  else entry.optional = true
+  return entry
+}
+
+// Records a file just written into public/volume/ in bodies.json, measured, beside the body's other levels as they
+// were last built; a file written anywhere else is left out, as it isn't one the page loads
+async function recordLevel(out: string, body: Body, level: Level, volume: Volume, bytes: number) {
+  const path = resolve(out)
+  if (relative(volumeFolder, path) !== basename(path)) return null
+  let listed: BodiesFile | null = null
+  try {
+    listed = readBodies(JSON.parse(await readFile(bodiesPath, 'utf8')))
+  } catch (error) {
+    if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error
+  }
+  const entry: BodyEntry = {
+    id: body.id,
+    label: body.label,
+    credit: body.credit,
+    levels: body.levels.map((each) => levelEntry(body, each)),
+  }
+  const built: LevelEntry = {
+    ...levelEntry(body, level),
+    file: relative(pageFolder, path).split('\\').join('/'),
+    spacing: rounded(volume.spacing),
+    size: volume.size,
+    bytes,
+    textureBytes: volume.size[0] * volume.size[1] * volume.size[2] * 4,
+    density: 'colour',
+  }
+  await writeWhole(bodiesPath, new TextEncoder().encode(`${JSON.stringify(withLevel(listed, entry, built), null, 2)}\n`))
+  return bodiesPath
+}
+
 async function main() {
   const { body, level, from, to, out, previews, root } = options()
   const started = performance.now()
@@ -435,6 +492,8 @@ async function main() {
   for (const path of await drawPreviews(volume)) console.log(`Preview: ${path}`)
 
   const { size } = await stat(out)
+  const listed = await recordLevel(out, body, level, volume, size)
+  if (listed) console.log(`Recorded the ${level.spacing} mm level in ${relative(process.cwd(), listed)}`)
   const seconds = (performance.now() - started) / 1000
   const cells = volume.size[0] * volume.size[1] * volume.size[2]
   console.log(`Slices read: ${frames.length} (${from} to ${to})`)

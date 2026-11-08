@@ -1,0 +1,41 @@
+{
+  "bodies": [
+    {
+      "id": "male",
+      "label": "Male",
+      "credit": "Visible Human Male, courtesy of the U.S. National Library of Medicine",
+      "levels": [
+        {
+          "id": "4mm",
+          "label": "4 mm",
+          "file": "volume/male-4mm.bin",
+          "spacing": [
+            3.96,
+            3.96,
+            4
+          ],
+          "default": true,
+          "size": [
+            144,
+            83,
+            472
+          ],
+          "bytes": 5580377,
+          "textureBytes": 22565376,
+          "density": "colour"
+        },
+        {
+          "id": "2mm",
+          "label": "2 mm",
+          "file": "volume/male-2mm.bin",
+          "spacing": [
+            1.98,
+            1.98,
+            2
+          ],
+          "optional": true
+        }
+      ]
+    }
+  ]
+}
