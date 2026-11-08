@@ -6,7 +6,7 @@ VisibleHuman is a browser app, now being set up, for rendering the [Visible Huma
 
 ## Status
 
-The app shell runs: an empty black page, ready for the viewer. There's no body on screen yet. The [setup plan](docs/setup-plan.md) lays out the steps still to come, from the viewer to the first body on screen.
+The viewer runs, with a stand-in for the body: a box-shaped cloud of coloured splats, about the body's size, which can be turned and zoomed. It renders with WebGPU where the browser and the GPU can run it, and with WebGL 2 otherwise; adding `?webgl` to the address forces WebGL 2. There's no body on screen yet. The [setup plan](docs/setup-plan.md) lays out the steps still to come, from the script that builds the body's volume to the first body on screen.
 
 ## Running it locally
 
