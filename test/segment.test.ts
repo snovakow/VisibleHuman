@@ -110,6 +110,24 @@ void test('a slice far short of the slices on both sides is short', () => {
   assert.equal(missingReason(721_827, before, after), null)
 })
 
+void test('a slice with fewer than eight counts on one side is never short', () => {
+  // Body pixels of slices 1001 to 1012, as measured: the crown widens fast, and 1002 is a sixth under 1001
+  const crown = [58_126, 49_282, 56_498, 57_970, 54_000, 58_102, 68_683, 69_922, 71_959, 76_254, 74_186, 85_436]
+  const windows = (slice: number) => ({
+    before: crown.slice(0, slice).reverse().slice(0, 8),
+    after: crown.slice(slice + 1, slice + 9),
+  })
+  // 1002 has one slice before it, and 1008 only seven, so neither is judged, whatever the slices after them say
+  const second = windows(1)
+  assert.equal(second.before.length, 1)
+  assert.equal(missingReason(crown[1], second.before, second.after), null)
+  const eighth = windows(7)
+  assert.equal(eighth.before.length, 7)
+  assert.equal(missingReason(30_000, eighth.before, eighth.after), null)
+  // With eight on each side, the same count would be short
+  assert.equal(missingReason(30_000, crown.slice(0, 8).reverse(), crown.slice(8, 12).concat([80_000, 80_000, 80_000, 80_000])), 'short')
+})
+
 void test('a taper is never short, since one side has no larger slice or no slice at all', () => {
   // The soles: the body shrinks to the last slice read
   assert.equal(missingReason(20_000, [180_000, 200_000], []), null)

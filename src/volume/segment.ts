@@ -29,7 +29,9 @@ export const isBodyCell = (bodyPixels: number, pixels: number) => bodyPixels > p
 // A short slice has far fewer body pixels than the slices on either side of it, as the first slices of a block do
 // under a frosty cast that reads as gel (2017 to 2020). It's short when its count is under dipShare of the smaller of
 // two references: the largest count among the dipWindow nearest non-blank slices before it, and the same after it.
-// A slice at either end of the slices read, or of the body, has nothing on one side, so a taper is never short
+// A slice within dipWindow slices of either end of the slices read, or of the body, has too few on that side to judge
+// it by, so it's never short: a taper isn't, and nor is the crown's second slice, 1002, which is a sixth smaller
+// than 1001 alone and was flagged when one slice was reference enough
 export const dipWindow = 8
 export const dipShare = 0.85
 
@@ -39,7 +41,7 @@ export type MissingReason = 'blank' | 'short'
 // of up to dipWindow non-blank slices on each side, nearest first
 export function missingReason(body: number, before: readonly number[], after: readonly number[]): MissingReason | null {
   if (body === 0) return 'blank'
-  if (before.length === 0 || after.length === 0) return null
+  if (before.length < dipWindow || after.length < dipWindow) return null
   const reference = Math.min(Math.max(...before), Math.max(...after))
   return body < reference * dipShare ? 'short' : null
 }
