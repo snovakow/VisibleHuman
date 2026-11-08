@@ -49,13 +49,18 @@ export function missingReason(body: number, before: readonly number[], after: re
 // Fills each layer made only of missing slices from its nearest read layer, so the body stays one piece across the
 // gap: in a run of missing layers, the upper half copies the read layer above it and the lower half the one below
 // (the middle one, in an odd run, from above). A run at either end of the grid copies the one read layer beside it.
-// Cells hold one byte each and colours three, layer after layer of layerCells. Returns each layer's source: itself
-// when read, the layer it was filled from, or -1 when no layer was read at all
-export function fillMissingLayers(cells: Uint8Array, colors: Uint8Array, layerCells: number, missing: readonly boolean[]) {
+// Each plane holds the whole grid, layer after layer of layerCells cells, with any whole number of bytes per cell (one
+// for a cell's body or coverage, three for its colour), and every plane is filled the same way. Returns each layer's
+// source: itself when read, the layer it was filled from, or -1 when no layer was read at all
+export function fillMissingLayers(planes: readonly Uint8Array[], layerCells: number, missing: readonly boolean[]) {
   const layers = missing.length
-  if (cells.length !== layers * layerCells || colors.length !== cells.length * 3) {
-    throw new Error(`fillMissingLayers: ${cells.length} cells and ${colors.length} colour bytes for ${layers} layers`)
-  }
+  const strides = planes.map((plane) => {
+    const stride = plane.length / (layers * layerCells)
+    if (!Number.isInteger(stride) || stride < 1) {
+      throw new Error(`fillMissingLayers: a plane of ${plane.length} bytes for ${layers} layers of ${layerCells} cells`)
+    }
+    return stride
+  })
   const sources = missing.map((gap, layer) => (gap ? -1 : layer))
   for (let layer = 0; layer < layers; layer++) {
     if (!missing[layer]) continue
@@ -67,8 +72,10 @@ export function fillMissingLayers(cells: Uint8Array, colors: Uint8Array, layerCe
     const source = above >= 0 && (!hasBelow || layer - above <= below - layer) ? above : hasBelow ? below : -1
     sources[layer] = source
     if (source < 0) continue
-    cells.copyWithin(layer * layerCells, source * layerCells, (source + 1) * layerCells)
-    colors.copyWithin(layer * layerCells * 3, source * layerCells * 3, (source + 1) * layerCells * 3)
+    planes.forEach((plane, n) => {
+      const bytes = layerCells * strides[n]
+      plane.copyWithin(layer * bytes, source * bytes, (source + 1) * bytes)
+    })
   }
   return sources
 }

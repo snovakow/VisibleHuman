@@ -46,14 +46,14 @@ The NLM's photographs can't be read by a page on another site, because its serve
 The script reads all 1,878 colour cross-sections of the male body. It tells the body apart from the blue gel it was set in and from the frame, scale card and labels around it, then averages what's left into 4 mm blocks, each keeping the colour of the tissue in it. The few slices that are blank or hazy in the NLM's set are skipped, and their blocks are filled from their neighbours'. To rebuild the file:
 
 ```sh
-npm run volume
+npm run volume -- --body male --spacing 4
 ```
 
-It downloads the 5.7 GB from the NLM, four slices at a time, and keeps none of it. That takes about 10 to 25 minutes, depending on the connection. It also draws previews of the result in `.cache/preview/`. Options go after `--`, as in `npm run volume -- --cache`:
+It reads the slices from the local copy of the NLM's images that `npm run fetch` makes, described below, so that copy comes first. The male takes a few minutes. It also draws previews of the result in `.cache/preview/`. The other options go after the `--` too:
 
-- `--cache` keeps the downloads in `.cache/slices/`, which needs 5.7 GB of space, and reads them from there on the next run.
-- `--previews` redraws the previews from the existing file, without downloading anything.
-- `--from` and `--to` read only a range of slices, numbered 1001 to 2878 from the head down, and `--out` writes the file somewhere else.
+- `--spacing` picks how fine the blocks are, in millimetres: 4 for the file the page loads, 2 for a finer one.
+- `--previews` redraws the previews from the existing file, without reading any slice.
+- `--from` and `--to` read only a range of slices, numbered 1001 to 2878 from the head down; `--out` writes the file somewhere else; `--data` names the folder of the local copy, as it does for `npm run fetch`.
 
 ## Source data
 

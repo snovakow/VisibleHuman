@@ -1,25 +1,18 @@
-// The data script: reads the Visible Human Male's colour slices from the NLM's server and writes the volume
-// file the app loads, with previews in .cache/preview/. Run by `npm run volume`, on Node's own TypeScript.
+// The volume script: reads a body's colour slices from the data root and writes the gzipped volume file the app
+// loads, with previews in .cache/preview/. Run by `npm run volume`, on Node's own TypeScript.
 //
-//   --from A, --to B   read only slices A to B (by default 1001 to 2878, every one)
-//   --out PATH         write the file there rather than public/volume/male-4mm.bin
-//   --cache            keep the downloads in .cache/slices/, and read them from there next time
-//   --previews         redraw the previews from the existing file, downloading nothing
+//   --body ID          which body: male (the female and the head arrive with their milestones)
+//   --spacing MM       which level, by its voxels' spacing in millimetres: the male's are 4 and 2
+//   --out PATH         write the file there rather than public/volume/<body>-<spacing>mm.bin
+//   --from A, --to B   read only slices A to B (by default every slice of the body)
+//   --previews         redraw the previews from the existing file, reading no slice
+//   --data PATH        the data root, else VHP_DATA, else ~/Data/VisibleHuman
 
-import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { stat } from 'node:fs/promises'
 import { parseArgs } from 'node:util'
-import { PNG } from 'pngjs'
-import {
-  cellIndex,
-  isBodyCell as isMaskedBody,
-  maskBytes,
-  readVolume,
-  sceneCell,
-  writeVolume,
-  type Triple,
-  type Volume,
-} from '../src/volume/format.ts'
+import { gzipSync } from 'node:zlib'
+import { densityFromColor } from '../src/volume/density.ts'
+import { bodyCoverage, cellIndex, countBody, readVolume, writeVolume, type Triple, type Volume } from '../src/volume/format2.ts'
 import {
   dipWindow,
   fillMissingLayers,
@@ -29,198 +22,184 @@ import {
   missingReason,
   type MissingReason,
 } from '../src/volume/segment.ts'
+import { bodyOf, fileName, levelOf, type Body, type Level } from './lib/bodies.ts'
+import { dataRoot, requireDataFile, setFolder } from './lib/data.ts'
+import { gunzipFile, readRgb, type RawImage } from './lib/decode.ts'
+import { writeWhole } from './lib/files.ts'
+import { drawPreviews } from './lib/previews.ts'
 
-const baseUrl = 'https://data.lhncbc.nlm.nih.gov/public/Visible-Human/Male-Images/PNG_format'
-// Each region's folder and the slices it holds. Regions overlap, and a slice in two is the same file, so each slice is
-// taken from the first region that lists it
-const regions = [
-  { name: 'head', first: 1001, last: 1377 },
-  { name: 'thorax', first: 1280, last: 1688 },
-  { name: 'abdomen', first: 1455, last: 1997 },
-  { name: 'pelvis', first: 1732, last: 2028 },
-  { name: 'thighs', first: 1732, last: 2411 },
-  { name: 'legs', first: 2265, last: 2878 },
-] as const
-const firstSlice = 1001
-const lastSlice = 2878
-
-// Each slice is a 2048 × 1216 8-bit RGB PNG of 0.33 mm pixels, the slices 1 mm apart
-const sliceWidth = 2048
-const sliceHeight = 1216
-const rgbColorType = 2
-const pixelSize = 0.33
-const sliceSpacing = 1
-// A 4 mm cell: 12 × 12 pixels across (3.96 mm), 4 slices along (4 mm)
-const pixelsPerCell = 12
-const slicesPerLayer = 4
-
-// Downloads run four at a time, which is one layer's slices; a failed one is tried again after a growing pause
-const attempts = 4
-const retryPause = 2000
-
-const defaultOut = 'public/volume/male-4mm.bin'
-const cacheFolder = '.cache/slices'
-const previewFolder = '.cache/preview'
-// Each cell is drawn as a square of this many pixels in the previews
-const previewScale = 2
-
-// The full grid's size across a slice; the last column and row of cells are partial
-const nx = Math.ceil(sliceWidth / pixelsPerCell)
-const ny = Math.ceil(sliceHeight / pixelsPerCell)
-const layerCells = nx * ny
+// Files are decoded this many at a time, within a layer
+const batchSize = 4
 
 function options() {
   const { values } = parseArgs({
     options: {
+      body: { type: 'string' },
+      spacing: { type: 'string' },
+      out: { type: 'string' },
       from: { type: 'string' },
       to: { type: 'string' },
-      out: { type: 'string', default: defaultOut },
-      cache: { type: 'boolean', default: false },
       previews: { type: 'boolean', default: false },
+      data: { type: 'string' },
     },
     strict: true,
   })
+  if (values.body === undefined || values.spacing === undefined) {
+    throw new Error('--body and --spacing say what to build, as in --body male --spacing 4')
+  }
+  const body = bodyOf(values.body)
+  const spacing = Number(values.spacing)
+  if (!(spacing > 0)) throw new Error(`--spacing takes millimetres, not ${values.spacing}`)
+  const level = levelOf(body, spacing)
   const slice = (text: string | undefined, fallback: number, name: string) => {
     if (text === undefined) return fallback
     const value = Number(text)
-    if (!Number.isInteger(value) || value < firstSlice || value > lastSlice) {
-      throw new Error(`--${name} takes a slice number from ${firstSlice} to ${lastSlice}, not ${text}`)
+    if (!Number.isInteger(value) || value < body.firstSlice || value > body.lastSlice) {
+      throw new Error(`--${name} takes a slice number from ${body.firstSlice} to ${body.lastSlice}, not ${text}`)
     }
     return value
   }
-  const from = slice(values.from, firstSlice, 'from')
-  const to = slice(values.to, lastSlice, 'to')
+  const from = slice(values.from, body.firstSlice, 'from')
+  const to = slice(values.to, body.lastSlice, 'to')
   if (from > to) throw new Error(`--from ${from} comes after --to ${to}`)
-  return { from, to, out: values.out, cache: values.cache, previews: values.previews }
+  const out = values.out ?? `public/volume/${body.id}-${spacing}mm.bin`
+  return { body, level, from, to, out, previews: values.previews, root: dataRoot(values.data) }
 }
 
-const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
-const layerOf = (slice: number) => Math.floor((slice - firstSlice) / slicesPerLayer)
+// The field of cells a slice divides into at a level, and where each pixel falls in it. The last column and row of
+// cells are partial where the cell size doesn't divide the image
+function fieldOf(body: Body, level: Level) {
+  const nx = Math.ceil(body.width / level.pixels)
+  const ny = Math.ceil(body.height / level.pixels)
+  const layerCells = nx * ny
+  const cellColumn = Int32Array.from({ length: body.width }, (_, x) => Math.floor(x / level.pixels))
+  const cellRowStart = Int32Array.from({ length: body.height }, (_, y) => Math.floor(y / level.pixels) * nx)
+  // The pixels each cell takes from one slice
+  const cellPixels = Uint32Array.from({ length: layerCells }, (_, cell) => {
+    const across = Math.min(level.pixels, body.width - (cell % nx) * level.pixels)
+    const down = Math.min(level.pixels, body.height - Math.floor(cell / nx) * level.pixels)
+    return across * down
+  })
+  return { nx, ny, layerCells, cellColumn, cellRowStart, cellPixels }
+}
+type Field = ReturnType<typeof fieldOf>
 
-function sliceUrl(slice: number) {
-  const region = regions.find((r) => slice >= r.first && slice <= r.last)
-  if (!region) throw new Error(`No region holds slice ${slice}`)
-  return `${baseUrl}/${region.name}/a_vm${slice}.png`
+// One file of the body: its index in the body's sequence of files from the first slice, which layers are counted
+// from, whatever --from says, so a range builds the same layers as the whole; the slice number it belongs to; its name
+interface Frame {
+  index: number
+  slice: number
+  name: string
 }
 
-// Writes through a temporary name, renamed into place once whole, so a failed run never leaves half a file
-async function writeWhole(path: string, bytes: Uint8Array) {
-  await mkdir(dirname(path), { recursive: true })
-  const temporary = `${path}.${process.pid}.tmp`
-  await writeFile(temporary, bytes)
-  await rename(temporary, path)
-}
-
-// A slice's pixels, checked to be the size and kind every slice is
-function decode(slice: number, bytes: Buffer) {
-  const png = PNG.sync.read(bytes)
-  if (png.width !== sliceWidth || png.height !== sliceHeight || png.colorType !== rgbColorType || png.depth !== 8) {
-    throw new Error(
-      `Slice ${slice} is ${png.width} × ${png.height}, colour type ${png.colorType}, depth ${png.depth}, ` +
-        `not ${sliceWidth} × ${sliceHeight} 8-bit RGB`,
-    )
+function framesOf(body: Body, from: number, to: number): Frame[] {
+  const subs = body.naming.subSlices
+  const frames: Frame[] = []
+  for (let slice = from; slice <= to; slice++) {
+    subs.forEach((sub, n) => {
+      frames.push({ index: (slice - body.firstSlice) * subs.length + n, slice, name: fileName(body, slice, sub) })
+    })
   }
-  // pngjs gives four bytes per pixel, alpha included, even for an RGB file
-  return png.data
+  return frames
 }
 
-// A slice's pixels, from the cache when asked and it's there, and otherwise downloaded, with retries
-async function readSlice(slice: number, cache: boolean) {
-  const cachePath = join(cacheFolder, `a_vm${slice}.png`)
-  if (cache) {
-    const cached = await readFile(cachePath).catch(() => null)
-    if (cached) {
-      try {
-        return decode(slice, cached)
-      } catch (error) {
-        console.warn(`Cached slice ${slice} is unreadable (${String(error)}), so downloading it again`)
-      }
-    }
-  }
-  const url = sliceUrl(slice)
-  for (let attempt = 1; ; attempt++) {
-    try {
-      const response = await fetch(url)
-      if (!response.ok) throw new Error(`HTTP ${response.status}`)
-      const bytes = Buffer.from(await response.arrayBuffer())
-      const pixels = decode(slice, bytes)
-      if (cache) await writeWhole(cachePath, bytes)
-      return pixels
-    } catch (error) {
-      if (attempt === attempts) {
-        throw new Error(`Slice ${slice} failed ${attempts} times, at ${url}: ${String(error)}`, { cause: error })
-      }
-      console.warn(`Slice ${slice} failed (${String(error)}), so trying again`)
-      await pause(retryPause * attempt)
-    }
-  }
+// A frame's name in the logs: its slice number, and its sub-slice letter where the body has them
+function frameText(body: Body, index: number) {
+  const subs = body.naming.subSlices
+  return `${body.firstSlice + Math.floor(index / subs.length)}${subs[index % subs.length]}`
 }
 
-// Each pixel's column of cells, and each row's offset into a layer's cells
-const cellColumn = Int32Array.from({ length: sliceWidth }, (_, x) => Math.floor(x / pixelsPerCell))
-const cellRowStart = Int32Array.from({ length: sliceHeight }, (_, y) => Math.floor(y / pixelsPerCell) * nx)
-
-// The pixels each cell takes from one slice: 12 × 12, fewer in the partial last column and row
-const cellPixels = Uint32Array.from({ length: layerCells }, (_, cell) => {
-  const across = Math.min(pixelsPerCell, sliceWidth - (cell % nx) * pixelsPerCell)
-  const down = Math.min(pixelsPerCell, sliceHeight - Math.floor(cell / nx) * pixelsPerCell)
-  return across * down
-})
-
-// One slice's sums: for each cell, its body pixels' channels and their count; and the slice's body pixels in all.
-// The slice's pixels aren't kept, only these
-function sliceSums(slice: number, pixels: Buffer) {
-  const red = new Uint32Array(layerCells)
-  const green = new Uint32Array(layerCells)
-  const blue = new Uint32Array(layerCells)
-  const body = new Uint16Array(layerCells)
-  let total = 0
-  for (let y = 0; y < sliceHeight; y++) {
-    const rowStart = cellRowStart[y]
-    let offset = y * sliceWidth * 4
-    for (let x = 0; x < sliceWidth; x++, offset += 4) {
-      const r = pixels[offset]
-      const g = pixels[offset + 1]
-      const b = pixels[offset + 2]
-      if (!isBodyPixel(r, g, b)) continue
-      const cell = rowStart + cellColumn[x]
-      red[cell] += r
-      green[cell] += g
-      blue[cell] += b
-      body[cell]++
-      total++
-    }
-  }
-  return { slice, red, green, blue, body, total }
-}
-type SliceSums = ReturnType<typeof sliceSums>
-
-// Slice numbers as runs, such as 2017–2020, 2424–2435
-function runsText(slices: readonly number[]) {
+// Frame indices as runs, such as 2017–2020, 2424–2435
+function runsText(body: Body, indices: readonly number[]) {
   const runs: string[] = []
-  for (let n = 0; n < slices.length; ) {
+  for (let n = 0; n < indices.length; ) {
     let end = n
-    while (end + 1 < slices.length && slices[end + 1] === slices[end] + 1) end++
-    runs.push(end === n ? `${slices[n]}` : `${slices[n]}–${slices[end]}`)
+    while (end + 1 < indices.length && indices[end + 1] === indices[end] + 1) end++
+    const first = frameText(body, indices[n])
+    runs.push(end === n ? first : `${first}–${frameText(body, indices[end])}`)
     n = end + 1
   }
   return runs.join(', ')
 }
 
-// The grid of every layer read: one byte per cell for body, three for its colour. Each slice is decided once the
-// dipWindow non-blank slices after it are read: a missing one adds nothing to its layer (segment.ts). Memory holds the
-// sums of the layer being built and of the slices waiting on that decision, never the slices themselves
-async function readLayers(from: number, to: number, cache: boolean) {
-  const firstLayer = layerOf(from)
-  const layers = layerOf(to) - firstLayer + 1
-  const body = new Uint8Array(layerCells * layers)
+// One slice's sums: for each cell, its body pixels' channels and their count; and the slice's body pixels in all.
+// The slice's pixels aren't kept, only these. The stride through the pixels is the image's channel count
+function sliceSums(frame: Frame, position: number, image: RawImage, body: Body, field: Field) {
+  const { layerCells, cellColumn, cellRowStart } = field
+  const red = new Uint32Array(layerCells)
+  const green = new Uint32Array(layerCells)
+  const blue = new Uint32Array(layerCells)
+  const bodyPixels = new Uint16Array(layerCells)
+  const isBody = body.segmentRule ?? isBodyPixel
+  const { data, channels } = image
+  let total = 0
+  for (let y = 0; y < body.height; y++) {
+    const rowStart = cellRowStart[y]
+    let offset = y * body.width * channels
+    for (let x = 0; x < body.width; x++, offset += channels) {
+      const r = data[offset]
+      const g = data[offset + 1]
+      const b = data[offset + 2]
+      if (!isBody(r, g, b)) continue
+      const cell = rowStart + cellColumn[x]
+      red[cell] += r
+      green[cell] += g
+      blue[cell] += b
+      bodyPixels[cell]++
+      total++
+    }
+  }
+  return { frame, position, red, green, blue, body: bodyPixels, total }
+}
+type SliceSums = ReturnType<typeof sliceSums>
+
+// The sums of a slice with nothing in it
+const emptySums = (frame: Frame, position: number, field: Field): SliceSums => ({
+  frame,
+  position,
+  red: new Uint32Array(field.layerCells),
+  green: new Uint32Array(field.layerCells),
+  blue: new Uint32Array(field.layerCells),
+  body: new Uint16Array(field.layerCells),
+  total: 0,
+})
+
+// A slice's sums, read from its file in the data root. A file that can't be decoded stops the build, unless the body
+// lists it as blank, when it's read as one
+async function readFrame(frame: Frame, position: number, body: Body, field: Field, root: string, blanks: ReadonlySet<string>) {
+  const path = await requireDataFile(root, body.set, frame.name)
+  let image: RawImage
+  try {
+    image = await readRgb(path)
+  } catch (error) {
+    if (!blanks.has(frame.name)) throw new Error(`${path} can't be decoded: ${String(error)}`, { cause: error })
+    return emptySums(frame, position, field)
+  }
+  if (image.width !== body.width || image.height !== body.height) {
+    throw new Error(`${path} is ${image.width} × ${image.height}, not ${body.width} × ${body.height}`)
+  }
+  return sliceSums(frame, position, image, body, field)
+}
+
+// The field of every layer read: for each cell, whether it's body by the rule, the share of its pixels that are body
+// scaled to 255, and the mean colour of its body pixels. Each slice is decided once the dipWindow non-blank slices
+// after it are read: a missing one adds nothing to its layer (segment.ts). Memory holds the sums of the layer being
+// built and of the slices waiting on that decision, never the slices themselves
+async function readLayers(body: Body, level: Level, field: Field, frames: readonly Frame[], root: string) {
+  const { layerCells, cellPixels } = field
+  const layerOf = (index: number) => Math.floor(index / level.slices)
+  const firstLayer = layerOf(frames[0].index)
+  const layers = layerOf(frames[frames.length - 1].index) - firstLayer + 1
+  const bodyCells = new Uint8Array(layerCells * layers)
+  const share = new Uint8Array(layerCells * layers)
   const colors = new Uint8Array(layerCells * layers * 3)
-  // Each slice's body pixels, once read
-  const counts = new Int32Array(to - from + 1)
+  // Each frame's body pixels, once read, by its position in frames
+  const counts = new Int32Array(frames.length)
   const missing: Record<MissingReason, number[]> = { blank: [], short: [] }
   const missingLayers = Array.from({ length: layers }, () => false)
+  const blanks = new Set(body.blankFiles)
   const pending: SliceSums[] = []
-  let fetched = from - 1
+  let read = 0
   const started = performance.now()
 
   // The layer being built, from the slices kept so far
@@ -248,16 +227,20 @@ async function readLayers(from: number, to: number, cache: boolean) {
     missingLayers[layer.index] = layer.kept === 0
     for (let cell = 0; cell < layerCells; cell++) {
       const count = layer.body[cell]
-      if (!isBodyCell(count, layer.pixels[cell])) continue
-      body[base + cell] = 1
+      const pixels = layer.pixels[cell]
+      if (pixels > 0) share[base + cell] = Math.round((255 * count) / pixels)
+      if (isBodyCell(count, pixels)) bodyCells[base + cell] = 1
+      if (count === 0) continue
       colors[(base + cell) * 3] = Math.round(layer.red[cell] / count)
       colors[(base + cell) * 3 + 1] = Math.round(layer.green[cell] / count)
       colors[(base + cell) * 3 + 2] = Math.round(layer.blue[cell] / count)
     }
-    if (layer.index % 10 === 9 || layer.index === layers - 1) {
-      const read = fetched - from + 1
-      const left = ((performance.now() - started) / 1000 / read) * (to - fetched)
-      console.log(`Read slices to ${fetched}: ${read} of ${to - from + 1}, about ${Math.ceil(left / 60)} min left`)
+    // Progress every ten layers, and at the last, which stands in for a tenth within ten of it
+    if (layer.index === layers - 1 || (layer.index % 10 === 9 && layers - 1 - layer.index >= 10)) {
+      const left = ((performance.now() - started) / 1000 / read) * (frames.length - read)
+      console.log(
+        `Read slices to ${frameText(body, frames[read - 1].index)}: ${read} of ${frames.length}, about ${Math.ceil(left / 60)} min left`,
+      )
     }
     for (const sums of [layer.red, layer.green, layer.blue, layer.body, layer.pixels]) sums.fill(0)
     layer.kept = 0
@@ -267,48 +250,47 @@ async function readLayers(from: number, to: number, cache: boolean) {
   // The body pixel counts of up to dipWindow non-blank slices read from start onwards, by step, nearest first
   const nonBlank = (start: number, step: 1 | -1) => {
     const found: number[] = []
-    for (let slice = start; slice >= from && slice <= fetched && found.length < dipWindow; slice += step) {
-      const count = counts[slice - from]
-      if (count > 0) found.push(count)
+    for (let position = start; position >= 0 && position < read && found.length < dipWindow; position += step) {
+      if (counts[position] > 0) found.push(counts[position])
     }
     return found
   }
   const decide = () => {
     while (pending.length > 0) {
       const sums = pending[0]
-      const after = nonBlank(sums.slice + 1, 1)
-      if (after.length < dipWindow && fetched < to) return
+      const after = nonBlank(sums.position + 1, 1)
+      if (after.length < dipWindow && read < frames.length) return
       pending.shift()
-      while (layerOf(sums.slice) - firstLayer > layer.index) finishLayer()
-      const reason = missingReason(sums.total, nonBlank(sums.slice - 1, -1), after)
-      if (reason) missing[reason].push(sums.slice)
+      while (layerOf(sums.frame.index) - firstLayer > layer.index) finishLayer()
+      const reason = missingReason(sums.total, nonBlank(sums.position - 1, -1), after)
+      if (reason) missing[reason].push(sums.frame.index)
       else keep(sums)
     }
   }
 
-  // Four downloads at a time, one layer's slices
-  for (let batchFirst = from; batchFirst <= to; ) {
-    const batchLast = Math.min(to, firstSlice + (layerOf(batchFirst) + 1) * slicesPerLayer - 1)
-    const slices = Array.from({ length: batchLast - batchFirst + 1 }, (_, n) => batchFirst + n)
-    // Each slice is summed, and its pixels let go, as soon as it's read, so no more than a batch's slices are held at once
-    const read = await Promise.all(slices.map(async (slice) => sliceSums(slice, await readSlice(slice, cache))))
-    for (const sums of read) counts[sums.slice - from] = sums.total
-    pending.push(...read)
-    fetched = batchLast
+  // A few files at a time, never across a layer: the files are summed as they arrive and their pixels let go
+  for (let first = 0; first < frames.length; ) {
+    const layerEnd = (layerOf(frames[first].index) + 1) * level.slices - 1 - frames[0].index
+    const last = Math.min(frames.length - 1, first + batchSize - 1, layerEnd)
+    const positions = Array.from({ length: last - first + 1 }, (_, n) => first + n)
+    const sums = await Promise.all(positions.map((p) => readFrame(frames[p], p, body, field, root, blanks)))
+    for (const each of sums) counts[each.position] = each.total
+    pending.push(...sums)
+    read = last + 1
     decide()
-    batchFirst = batchLast + 1
+    first = last + 1
   }
   while (layer.index < layers) finishLayer()
 
   // A layer made only of missing slices is filled from its nearest read layers, so the body stays one piece
   const layerText = (index: number) => {
-    const first = Math.max(from, firstSlice + (firstLayer + index) * slicesPerLayer)
-    const last = Math.min(to, firstSlice + (firstLayer + index + 1) * slicesPerLayer - 1)
-    return `${first}–${last}`
+    const first = Math.max(frames[0].index, (firstLayer + index) * level.slices)
+    const last = Math.min(frames[frames.length - 1].index, (firstLayer + index + 1) * level.slices - 1)
+    return `${frameText(body, first)}–${frameText(body, last)}`
   }
-  if (missing.blank.length > 0) console.log(`Blank slices, read as missing: ${runsText(missing.blank)}`)
-  if (missing.short.length > 0) console.log(`Short slices, read as missing: ${runsText(missing.short)}`)
-  const sources = fillMissingLayers(body, colors, layerCells, missingLayers)
+  if (missing.blank.length > 0) console.log(`Blank slices, read as missing: ${runsText(body, missing.blank)}`)
+  if (missing.short.length > 0) console.log(`Short slices, read as missing: ${runsText(body, missing.short)}`)
+  const sources = fillMissingLayers([bodyCells, share, colors], layerCells, missingLayers)
   sources.forEach((source, index) => {
     if (source === index) return
     console.log(
@@ -317,16 +299,21 @@ async function readLayers(from: number, to: number, cache: boolean) {
         : `Layer ${layerText(index)} has no slice, so it's filled from layer ${layerText(source)}`,
     )
   })
-  return { firstLayer, layers, body, colors, read: to - from + 1 }
+  return { firstLayer, layers, body: bodyCells, share, colors }
 }
+type Grid = Awaited<ReturnType<typeof readLayers>>
 
-// Keeps the largest piece of body and crops the grid to its bounds
-function cropToBody(grid: Awaited<ReturnType<typeof readLayers>>, from: number, to: number): Volume {
-  const { cells: kept, size: bodyCount } = largestPiece(grid.body, nx, ny, grid.layers)
+// Keeps the largest piece of body and crops the field to its bounds plus a one-voxel margin on every face, which
+// gives the colour room to spread one voxel past the skin. Coverage carries the body decision: a body cell in the
+// piece stores at least 128, a body cell outside it 0, a non-body cell at most 127
+function cropToBody(grid: Grid, body: Body, level: Level, field: Field, from: number, to: number) {
+  const { nx, ny } = field
+  const { layers } = grid
+  const { cells: kept, size: bodyCount } = largestPiece(grid.body, nx, ny, layers)
   if (bodyCount === 0) throw new Error(`No body found in slices ${from} to ${to}`)
-  const low = [nx, ny, grid.layers]
+  const low = [nx, ny, layers]
   const high = [-1, -1, -1]
-  for (let k = 0; k < grid.layers; k++) {
+  for (let k = 0; k < layers; k++) {
     for (let j = 0; j < ny; j++) {
       for (let i = 0; i < nx; i++) {
         if (kept[i + nx * (j + ny * k)] === 0) continue
@@ -339,122 +326,125 @@ function cropToBody(grid: Awaited<ReturnType<typeof readLayers>>, from: number, 
     }
   }
 
-  const size: Triple = [high[0] - low[0] + 1, high[1] - low[1] + 1, high[2] - low[2] + 1]
-  const mask = new Uint8Array(maskBytes(size[0] * size[1] * size[2]))
-  const colors = new Uint8Array(bodyCount * 3)
-  let written = 0
+  // The grid's first voxel in the field, one before the body's bounds, which may be outside the field: nothing is there
+  const first = low.map((value) => value - 1)
+  const size: Triple = [high[0] - low[0] + 3, high[1] - low[1] + 3, high[2] - low[2] + 3]
+  const cells = size[0] * size[1] * size[2]
+  const red = new Uint8Array(cells)
+  const green = new Uint8Array(cells)
+  const blue = new Uint8Array(cells)
+  const coverage = new Uint8Array(cells)
+  const density = new Uint8Array(cells)
+  const inField = (fi: number, fj: number, fk: number) =>
+    fi >= 0 && fi < nx && fj >= 0 && fj < ny && fk >= 0 && fk < layers
+  const fieldIndex = (fi: number, fj: number, fk: number) => fi + nx * (fj + ny * fk)
+
   for (let k = 0; k < size[2]; k++) {
     for (let j = 0; j < size[1]; j++) {
       for (let i = 0; i < size[0]; i++) {
-        const source = i + low[0] + nx * (j + low[1] + ny * (k + low[2]))
-        if (kept[source] === 0) continue
+        const fi = first[0] + i
+        const fj = first[1] + j
+        const fk = first[2] + k
         const index = cellIndex(size, i, j, k)
-        mask[index >> 3] |= 1 << (index & 7)
-        colors.set(grid.colors.subarray(source * 3, source * 3 + 3), written * 3)
-        written++
-      }
-    }
-  }
-  return {
-    size,
-    spacing: [pixelsPerCell * pixelSize, pixelsPerCell * pixelSize, slicesPerLayer * sliceSpacing],
-    offset: [low[0], low[1], grid.firstLayer + low[2]],
-    firstSlice: from,
-    lastSlice: to,
-    mask,
-    colors,
-  }
-}
-
-// The previews, drawn through format.ts's scene axes so they show the body as the app will. Each view looks along one
-// scene axis (0 x, 1 y, 2 z): right and up are the scene axes across the image, with right's sign, and toward is the
-// side the view looks from. A plane view shows the cells in the middle of the grid along that axis; otherwise each
-// line of sight shows its nearest body cell
-interface PreviewView {
-  file: string
-  right: 0 | 1 | 2
-  rightSign: 1 | -1
-  up: 0 | 1 | 2
-  toward: 0 | 1 | 2
-  towardSign: 1 | -1
-  plane: boolean
-}
-const previewViews: readonly PreviewView[] = [
-  // From the front, which faces +z: the body's left (+x) on the right
-  { file: 'front.png', right: 0, rightSign: 1, up: 1, toward: 2, towardSign: 1, plane: false },
-  { file: 'coronal.png', right: 0, rightSign: 1, up: 1, toward: 2, towardSign: 1, plane: true },
-  // From the body's right (−x): the front (+z) on the right
-  { file: 'sagittal.png', right: 2, rightSign: 1, up: 1, toward: 0, towardSign: -1, plane: true },
-]
-
-async function drawPreviews(volume: Volume) {
-  const [sx, sy, sz] = volume.size
-  // The grid's bounds along the scene's axes, in whole cells
-  const corner = sceneCell(sx - 1, sy - 1, sz - 1)
-  const low = [0, 1, 2].map((axis) => Math.min(0, corner[axis]))
-  const high = [0, 1, 2].map((axis) => Math.max(0, corner[axis]))
-
-  for (const view of previewViews) {
-    const rightLow = view.rightSign > 0 ? low[view.right] : -high[view.right]
-    const width = high[view.right] - low[view.right] + 1
-    const height = high[view.up] - low[view.up] + 1
-    const middle = Math.floor((low[view.toward] + high[view.toward]) / 2)
-    const nearest = new Float64Array(width * height).fill(-Infinity)
-    const image = new PNG({ width: width * previewScale, height: height * previewScale })
-    // Black where no body is drawn, opaque throughout
-    for (let n = 3; n < image.data.length; n += 4) image.data[n] = 255
-
-    let body = 0
-    for (let k = 0; k < sz; k++) {
-      for (let j = 0; j < sy; j++) {
-        for (let i = 0; i < sx; i++) {
-          if (!isMaskedBody(volume.mask, cellIndex(volume.size, i, j, k))) continue
-          const color = body++ * 3
-          const at = sceneCell(i, j, k)
-          if (view.plane && at[view.toward] !== middle) continue
-          const u = at[view.right] * view.rightSign - rightLow
-          const v = high[view.up] - at[view.up]
-          const depth = at[view.toward] * view.towardSign
-          if (depth <= nearest[u + width * v]) continue
-          nearest[u + width * v] = depth
-          for (let dy = 0; dy < previewScale; dy++) {
-            for (let dx = 0; dx < previewScale; dx++) {
-              const offset = ((v * previewScale + dy) * image.width + u * previewScale + dx) * 4
-              image.data[offset] = volume.colors[color]
-              image.data[offset + 1] = volume.colors[color + 1]
-              image.data[offset + 2] = volume.colors[color + 2]
+        const inside = inField(fi, fj, fk)
+        const source = inside ? fieldIndex(fi, fj, fk) : -1
+        if (inside && kept[source] !== 0) {
+          coverage[index] = Math.max(bodyCoverage, grid.share[source])
+          red[index] = grid.colors[source * 3]
+          green[index] = grid.colors[source * 3 + 1]
+          blue[index] = grid.colors[source * 3 + 2]
+          // The colour stand-in, until the CT is registered; never 0, which means outside the body
+          density[index] = densityFromColor(red[index], green[index], blue[index])
+          continue
+        }
+        if (inside) coverage[index] = grid.body[source] !== 0 ? 0 : Math.min(bodyCoverage - 1, grid.share[source])
+        // Outside the body the colour is its body neighbours' mean, so a sample at the skin blends into tissue, not black
+        let count = 0
+        let r = 0
+        let g = 0
+        let b = 0
+        for (let dk = -1; dk <= 1; dk++) {
+          for (let dj = -1; dj <= 1; dj++) {
+            for (let di = -1; di <= 1; di++) {
+              if (!inField(fi + di, fj + dj, fk + dk)) continue
+              const neighbour = fieldIndex(fi + di, fj + dj, fk + dk)
+              if (kept[neighbour] === 0) continue
+              r += grid.colors[neighbour * 3]
+              g += grid.colors[neighbour * 3 + 1]
+              b += grid.colors[neighbour * 3 + 2]
+              count++
             }
           }
         }
+        if (count === 0) continue
+        red[index] = Math.round(r / count)
+        green[index] = Math.round(g / count)
+        blue[index] = Math.round(b / count)
       }
     }
-    const path = join(previewFolder, view.file)
-    await writeWhole(path, PNG.sync.write(image))
-    console.log(`Preview: ${path}`)
   }
+
+  // The slices of the layers that hold body, within the range read
+  const subs = body.naming.subSlices.length
+  const sliceOf = (index: number) => body.firstSlice + Math.floor(index / subs)
+  const firstSlice = Math.max(from, sliceOf((grid.firstLayer + low[2]) * level.slices))
+  const lastSlice = Math.min(to, sliceOf((grid.firstLayer + high[2] + 1) * level.slices - 1))
+  // The centre of the first voxel: cell column c spans pixels c·p to c·p + p − 1, and layer l slices l·s to l·s + s − 1,
+  // counted from the body's first slice
+  const { pixels: p, slices: s } = level
+  const fieldFirst: Triple = [first[0], first[1], grid.firstLayer + first[2]]
+  const origin: Triple = [
+    (fieldFirst[0] * p + (p - 1) / 2) * body.pixelSize,
+    (fieldFirst[1] * p + (p - 1) / 2) * body.pixelSize,
+    (fieldFirst[2] * s + (s - 1) / 2) * body.sliceSpacing,
+  ]
+  const volume: Volume = {
+    size,
+    spacing: [p * body.pixelSize, p * body.pixelSize, s * body.sliceSpacing],
+    origin,
+    firstSlice,
+    lastSlice,
+    axes: body.axes,
+    body: body.id,
+    red,
+    green,
+    blue,
+    coverage,
+    density,
+  }
+  return { volume, fieldFirst }
 }
 
+const mm = (value: number) => Number(value.toFixed(3)).toString()
+
 async function main() {
-  const { from, to, out, cache, previews } = options()
+  const { body, level, from, to, out, previews, root } = options()
   const started = performance.now()
   if (previews) {
-    await drawPreviews(readVolume(await readFile(out)))
+    for (const path of await drawPreviews(readVolume(await gunzipFile(out)))) console.log(`Preview: ${path}`)
     return
   }
 
-  console.log(`Reading slices ${from} to ${to}${cache ? `, keeping them in ${cacheFolder}` : ''}`)
-  const grid = await readLayers(from, to, cache)
-  const volume = cropToBody(grid, from, to)
-  const bytes = writeVolume(volume)
-  await writeWhole(out, bytes)
-  await drawPreviews(volume)
+  const field = fieldOf(body, level)
+  const frames = framesOf(body, from, to)
+  console.log(`Reading the ${body.id}'s slices ${from} to ${to} from ${setFolder(root, body.set)} at ${level.spacing} mm`)
+  const grid = await readLayers(body, level, field, frames, root)
+  const { volume, fieldFirst } = cropToBody(grid, body, level, field, from, to)
+  const raw = writeVolume(volume)
+  await writeWhole(out, gzipSync(raw, { level: 9 }))
+  for (const path of await drawPreviews(volume)) console.log(`Preview: ${path}`)
 
   const { size } = await stat(out)
   const seconds = (performance.now() - started) / 1000
-  console.log(`Slices read: ${grid.read} (${from} to ${to})`)
-  console.log(`Grid: ${volume.size.join(' × ')} cells, from cell ${volume.offset.join(', ')} of the full grid`)
-  console.log(`Body cells: ${(volume.colors.length / 3).toLocaleString('en')}`)
-  console.log(`Wrote ${out}: ${(size / 1e6).toFixed(2)} MB`)
+  const cells = volume.size[0] * volume.size[1] * volume.size[2]
+  console.log(`Slices read: ${frames.length} (${from} to ${to})`)
+  console.log(
+    `Grid: ${volume.size.join(' × ')} voxels at ${volume.spacing.map(mm).join(' × ')} mm, the body and a one-voxel margin, ` +
+      `from cell ${fieldFirst.join(', ')} of the ${field.nx} × ${field.ny} × ${grid.layers} field; ` +
+      `origin ${volume.origin.map(mm).join(', ')} mm; slices ${volume.firstSlice} to ${volume.lastSlice}`,
+  )
+  console.log(`Body voxels: ${countBody(volume.coverage).toLocaleString('en')} of ${cells.toLocaleString('en')}`)
+  console.log(`Wrote ${out}: ${(size / 1e6).toFixed(2)} MB, gzipped from ${(raw.length / 1e6).toFixed(1)} MB`)
   console.log(`Took ${Math.floor(seconds / 60)} min ${Math.round(seconds % 60)} s`)
 }
 

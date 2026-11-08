@@ -152,7 +152,7 @@ function layered(missing: readonly boolean[]) {
 void test('the gap filling fills the upper half of a gap from above and the lower half from below', () => {
   const missing = [false, true, true, true, true, false]
   const { cells, colors } = layered(missing)
-  assert.deepEqual(fillMissingLayers(cells, colors, 2, missing), [0, 0, 0, 5, 5, 5])
+  assert.deepEqual(fillMissingLayers([cells, colors], 2, missing), [0, 0, 0, 5, 5, 5])
   assert.deepEqual([...cells], Array.from({ length: 12 }, () => 1))
   assert.deepEqual([...colors], [1, 1, 1, 6, 6, 6].flatMap((value) => [value, value, value, value, value, value]))
 })
@@ -160,14 +160,14 @@ void test('the gap filling fills the upper half of a gap from above and the lowe
 void test('the gap filling fills the middle of an odd gap from above', () => {
   const missing = [false, true, true, true, false]
   const { cells, colors } = layered(missing)
-  assert.deepEqual(fillMissingLayers(cells, colors, 2, missing), [0, 0, 0, 4, 4])
+  assert.deepEqual(fillMissingLayers([cells, colors], 2, missing), [0, 0, 0, 4, 4])
   assert.deepEqual([...colors.subarray(12, 18)], [1, 1, 1, 1, 1, 1])
 })
 
 void test('the gap filling fills a gap at either end from the one side it has', () => {
   const missing = [true, false, false, true, true]
   const { cells, colors } = layered(missing)
-  assert.deepEqual(fillMissingLayers(cells, colors, 2, missing), [1, 1, 2, 2, 2])
+  assert.deepEqual(fillMissingLayers([cells, colors], 2, missing), [1, 1, 2, 2, 2])
   assert.deepEqual([...colors.subarray(0, 6)], [2, 2, 2, 2, 2, 2])
   assert.deepEqual([...colors.subarray(24, 30)], [3, 3, 3, 3, 3, 3])
 })
@@ -178,13 +178,13 @@ void test('the gap filling joins the body across a gap into one piece', () => {
   const cells = Uint8Array.from([1, 0, 0, 1])
   const colors = new Uint8Array(12)
   assert.equal(largestPiece(cells, 1, 1, 4).size, 1)
-  fillMissingLayers(cells, colors, 1, missing)
+  fillMissingLayers([cells, colors], 1, missing)
   assert.equal(largestPiece(cells, 1, 1, 4).size, 4)
 })
 
 void test('the gap filling leaves a grid with no read layer empty', () => {
   const missing = [true, true]
   const { cells, colors } = layered(missing)
-  assert.deepEqual(fillMissingLayers(cells, colors, 2, missing), [-1, -1])
+  assert.deepEqual(fillMissingLayers([cells, colors], 2, missing), [-1, -1])
   assert.deepEqual([...cells], [0, 0, 0, 0])
 })
