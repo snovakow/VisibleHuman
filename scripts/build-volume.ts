@@ -1,7 +1,7 @@
 // The data script: reads the Visible Human Male's colour slices from the NLM's server and writes the volume
 // file the app loads, with previews in .cache/preview/. Run by `npm run volume`, on Node's own TypeScript.
 //
-//   --from N, --to N   read slices N only (1001 to 2878, every one by default)
+//   --from A, --to B   read only slices A to B (by default 1001 to 2878, every one)
 //   --out PATH         write the file there rather than public/volume/male-4mm.bin
 //   --cache            keep the downloads in .cache/slices/, and read them from there next time
 //   --previews         redraw the previews from the existing file, downloading nothing
