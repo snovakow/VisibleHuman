@@ -15,8 +15,14 @@ const fallbackAttempts = 5
 const fallbackRetryDelay = 1000
 
 // The Canvas's renderer: WebGPU where the browser offers it and the GPU isn't known to fail it, and otherwise three's
-// WebGL 2 fallback, which forceWebGL also asks for. A WebGPU failure after the start calls fallBack
-export async function createRenderer(canvas: object, forceWebGL: boolean, fallBack: () => void) {
+// WebGL 2 fallback, which forceWebGL also asks for. A WebGPU failure after the start calls fallBack, and report is told
+// which backend is drawing, for the panel
+export async function createRenderer(
+  canvas: object,
+  forceWebGL: boolean,
+  fallBack: () => void,
+  report: (renderer: string) => void,
+) {
   if (!(canvas instanceof HTMLCanvasElement)) throw new Error('Expected an HTMLCanvasElement')
   const failingGPU = forceWebGL ? null : await knownFailingGPU()
   if (failingGPU) {
@@ -26,6 +32,8 @@ export async function createRenderer(canvas: object, forceWebGL: boolean, fallBa
     forceWebGL || failingGPU ? await startFallback(canvas) : await new WebGPURenderer({ canvas, antialias: true }).init()
   const webgpu = 'isWebGPUBackend' in renderer.backend
   console.info(`VisibleHuman: rendering with ${webgpu ? 'WebGPU' : 'the WebGL 2 fallback'}`)
+  // A Canvas replaced while its renderer was starting is off the page by then, and only the one on the page reports
+  if (canvas.isConnected) report(webgpu ? 'WebGPU' : failingGPU ? 'WebGL 2, as this GPU fails WebGPU' : 'WebGL 2')
   if (webgpu) watchForFailure(renderer, fallBack)
   return renderer
 }

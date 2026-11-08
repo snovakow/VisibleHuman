@@ -10,3 +10,35 @@ body,
 body {
   background-color: #000;
 }
+
+/* While the body loads, or why it couldn't, in the middle of the window */
+.load-status {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  max-width: min(36rem, calc(100vw - 32px));
+  transform: translate(-50%, -50%);
+  color: #d8dbe2;
+  font: 15px/1.5 system-ui, sans-serif;
+  text-align: center;
+}
+
+.load-failed {
+  color: #ff9c8f;
+}
+
+/* The NLM's credit, which its terms ask to be clear and conspicuous: at the bottom left, clear of the panel at the top
+   right and Stats at the top left, and readable against the black */
+.credit {
+  position: fixed;
+  bottom: 10px;
+  left: 12px;
+  color: #c4c8d2;
+  font: 12px/1.4 system-ui, sans-serif;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.credit:hover {
+  color: #fff;
+}
