@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { boneDensity, densityFromColor, xrayFloor } from '../src/volume/density.ts'
+import { boneDensity, densityFromColor, densityFromCt, xrayFloor } from '../src/volume/density.ts'
 
 // The colour stand-in for CT density, on colours sampled from the male's slices: bone pale and unsaturated, muscle red,
 // fat yellow. The targets are on the CT's (HU + 1000) / 16 scale, near its own values, with fat a little under its 56
@@ -60,4 +60,15 @@ void test('the thresholds sit between the tissues they divide', () => {
   // Bone above muscle and fat; the x-ray floor under the soft tissues, so they still haze the image
   assert.ok(boneDensity > 70 && boneDensity < 120)
   assert.ok(xrayFloor < 45)
+})
+
+void test('a CT pixel reads as its Hounsfield units on the file scale: air 0, water 63, bone over 100', () => {
+  assert.equal(densityFromCt(0), 0)
+  assert.equal(densityFromCt(24), 0)
+  assert.equal(densityFromCt(1024), 63)
+  // Muscle, about 40 HU
+  assert.equal(densityFromCt(1064), 65)
+  // Cortical bone, about 800 HU
+  assert.ok(densityFromCt(1800) > boneDensity)
+  assert.equal(densityFromCt(65535), 255)
 })

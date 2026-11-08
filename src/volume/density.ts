@@ -47,3 +47,13 @@ export function densityFromColor(r: number, g: number, b: number): number {
   const dark = clamp01(max / darkMax)
   return Math.max(1, Math.min(255, Math.round(1 + (density - 1) * dark)))
 }
+
+// The CT pixels of the male's and the female's sets hold the scanner's own numbers: 16-bit values where 0 stands for
+// −1024 HU, as every header's "Value to add to actual pixel data" field says. Air reads 0–100, water about 1024, bone
+// 1,600 and over
+export const ctPixelHounsfield = -1024
+
+// The density byte of a CT pixel: its Hounsfield units on the (HU + 1000) / 16 scale, 0 for air and anything below it
+export function densityFromCt(pixel: number): number {
+  return Math.max(0, Math.min(255, Math.round((pixel + ctPixelHounsfield + 1000) / 16)))
+}
