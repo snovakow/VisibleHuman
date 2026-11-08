@@ -42,9 +42,11 @@ and open the address it prints.
 
 ## The volume file
 
-The NLM's photographs can't be read by a page on another site, because its server doesn't allow it, and at 5.7 GB they'd be far too much to load anyway. So a Node script reads them once and writes a file of about 5.6 MB, [`public/volume/male-4mm.bin`](public/volume/male-4mm.bin), which the page loads. It holds every block of the box around the body: its colour, how much of it is body, and a density, gzipped so the empty space around the body costs next to nothing. The page finds it through [`public/volume/bodies.json`](public/volume/bodies.json), which lists each body and the levels of detail it can be built at. The 4 mm file is committed, so a clone runs, builds and deploys without the script.
+The NLM's photographs can't be read by a page on another site, because its server doesn't allow it, and at 5.7 GB they'd be far too much to load anyway. So a Node script reads them once and writes a file of about 5.7 MB, [`public/volume/male-4mm.bin`](public/volume/male-4mm.bin), which the page loads. It holds every block of the box around the body: its colour, how much of it is body, and a density, gzipped so the empty space around the body costs next to nothing. The page finds it through [`public/volume/bodies.json`](public/volume/bodies.json), which lists each body and the levels of detail it can be built at. The 4 mm file is committed, so a clone runs, builds and deploys without the script.
 
-The script reads all 1,878 colour cross-sections of the male body. It tells the body apart from the blue gel it was set in and from the frame, scale card and labels around it, then averages what's left into 4 mm blocks, each keeping the colour of the tissue in it. The few slices that are blank or hazy in the NLM's set are skipped, and their blocks are filled from their neighbours'. To rebuild the file:
+The script reads all 1,878 colour cross-sections of the male body. It tells the body apart from the blue gel it was set in and from the frame, scale card and labels around it, then averages what's left into 4 mm blocks, each keeping the colour of the tissue in it. The few slices that are blank or hazy in the NLM's set are skipped, and their blocks are filled from their neighbours'.
+
+Each block's density comes from the male's frozen CT, which was scanned before the sectioning and is numbered like the photographs. The CT is framed and scaled its own way, so `npm run register -- --body male` works out where each run of its slices sits on the photographs, by fitting the CT's bone onto the pale bone in them, and saves the fit in [`data/male/registration.json`](data/male/registration.json), with overlays to check it by in `.cache/preview/register/`. The fit is committed, so a rebuild needs only the CT's images, which `npm run fetch` gets with the rest. Where the CT doesn't reach, as at the crown of the head and the outer edges of the arms, the density is estimated from the colour instead. To rebuild the file:
 
 ```sh
 npm run volume -- --body male --spacing 4
@@ -54,6 +56,7 @@ It reads the slices from the local copy of the NLM's images that `npm run fetch`
 
 - `--spacing` picks how fine the blocks are, in millimetres: 4 for the file the page opens on, 2 for a finer one, several times the size. The finer file isn't committed: it's built before a deploy, and a host without it offers it as not built. A file written into `public/volume/` is entered in `bodies.json` as it's written.
 - `--previews` redraws the previews from the existing file, without reading any slice.
+- `--no-ct` estimates every block's density from its colour and reads no CT, for a local copy without the CT's images.
 - `--from` and `--to` read only a range of slices, numbered 1001 to 2878 from the head down; `--out` writes the file somewhere else; `--data` names the folder of the local copy, as it does for `npm run fetch`.
 
 ## Source data

@@ -7,14 +7,19 @@
 //                      public/volume/ also gets its entry in public/volume/bodies.json, which the page reads
 //   --from A, --to B   read only slices A to B (by default every slice of the body)
 //   --previews         redraw the previews from the existing file, reading no slice
+//   --no-ct            leave the density to the colour stand-in, reading no CT slice
 //   --data PATH        the data root, else VHP_DATA, else ~/Data/VisibleHuman
+//
+// The density channel comes from the body's CT where data/<body>/registration.json places it on the photographs:
+// each layer's CT slices are resampled into the layer's cells through the segment's similarity, and a cell no CT
+// covers, such as the crown's slices before the CT begins, keeps the density its colour suggests
 
 import { readFile, stat } from 'node:fs/promises'
 import { basename, relative, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
 import { gzipSync } from 'node:zlib'
 import { readBodies, withLevel, type BodiesFile, type BodyEntry, type LevelEntry } from '../src/volume/bodies.ts'
-import { densityFromColor } from '../src/volume/density.ts'
+import { densityFromColor, densityFromCt } from '../src/volume/density.ts'
 import { bodyCoverage, cellIndex, countBody, readVolume, writeVolume, type Triple, type Volume } from '../src/volume/format.ts'
 import {
   dipWindow,
@@ -25,11 +30,14 @@ import {
   missingReason,
   type MissingReason,
 } from '../src/volume/segment.ts'
-import { bodyOf, fileName, levelOf, type Body, type Level } from './lib/bodies.ts'
+import { apply, ctToCryo, invert, type Affine } from '../src/volume/similarity.ts'
+import { bodyOf, ctFileName, fileName, levelOf, type Body, type Level } from './lib/bodies.ts'
 import { dataRoot, requireDataFile, setFolder } from './lib/data.ts'
-import { gunzipFile, readRgb, type RawImage } from './lib/decode.ts'
+import { gunzipFile, readGray, readRgb, type RawImage } from './lib/decode.ts'
 import { writeWhole } from './lib/files.ts'
+import { insideCtField } from './lib/images.ts'
 import { drawPreviews } from './lib/previews.ts'
+import { loadRegistration, registrationPath, segmentOf, type Registration } from './lib/registration.ts'
 
 // Files are decoded this many at a time, within a layer
 const batchSize = 4
@@ -43,6 +51,7 @@ function options() {
       from: { type: 'string' },
       to: { type: 'string' },
       previews: { type: 'boolean', default: false },
+      'no-ct': { type: 'boolean', default: false },
       data: { type: 'string' },
     },
     strict: true,
@@ -66,7 +75,7 @@ function options() {
   const to = slice(values.to, body.lastSlice, 'to')
   if (from > to) throw new Error(`--from ${from} comes after --to ${to}`)
   const out = values.out ?? `public/volume/${body.id}-${spacing}mm.bin`
-  return { body, level, from, to, out, previews: values.previews, root: dataRoot(values.data) }
+  return { body, level, from, to, out, previews: values.previews, noCt: values['no-ct'], root: dataRoot(values.data) }
 }
 
 // The field of cells a slice divides into at a level, and where each pixel falls in it. The last column and row of
@@ -306,10 +315,113 @@ async function readLayers(body: Body, level: Level, field: Field, frames: readon
 }
 type Grid = Awaited<ReturnType<typeof readLayers>>
 
+// The CT's density for each cell of the field, where the registration covers it: per layer, the CT slice of each of
+// the layer's slices from A to B is read and sampled through its segment's inverse similarity at points spread over
+// the cell, as many across as the cell holds CT pixels, each bilinearly; the cell's density is the mean over its points
+// and its slices. A cell is covered when at least half its points, over those slices, fell inside the CT's
+// reconstruction circle. Returns the density per cell and which cells are covered, in the field's layout, and logs how
+// many CT slices it read. A slice the registration covers needs its CT file, as every slice needs its colour file: a
+// missing one stops the build, and --no-ct builds without the CT
+async function readCtDensity(
+  body: Body,
+  level: Level,
+  field: Field,
+  grid: Grid,
+  registration: Registration,
+  [from, to]: readonly [number, number],
+  root: string,
+) {
+  const { nx, layerCells } = field
+  const { layers, firstLayer } = grid
+  const density = new Uint8Array(layerCells * layers)
+  const covered = new Uint8Array(layerCells * layers)
+  const sum = new Float64Array(layerCells)
+  const inside = new Uint32Array(layerCells)
+  const points = new Uint32Array(layerCells)
+  const subs = body.naming.subSlices.length
+  let slicesRead = 0
+  let slicesWithoutCt = 0
+  const started = performance.now()
+  const cellMm = level.pixels * body.pixelSize
+
+  for (let layer = 0; layer < layers; layer++) {
+    sum.fill(0)
+    inside.fill(0)
+    points.fill(0)
+    const base = layer * layerCells
+    // The slice numbers of the layer's frames within the range read, each once
+    const firstFrame = (firstLayer + layer) * level.slices
+    const slices = new Set<number>()
+    for (let frame = firstFrame; frame < firstFrame + level.slices; frame++) {
+      const slice = body.firstSlice + Math.floor(frame / subs)
+      if (slice >= from && slice <= to) slices.add(slice)
+    }
+    for (const slice of slices) {
+      const segment = segmentOf(registration, slice)
+      if (!segment) {
+        slicesWithoutCt++
+        continue
+      }
+      const path = await requireDataFile(root, body.ct!.set, ctFileName(body, 'image', slice))
+      const image = await readGray(path)
+      slicesRead++
+      const { width, height, data } = image
+      if (width !== segment.ctSize[0] || height !== segment.ctSize[1]) {
+        throw new Error(`${path} is ${width} × ${height}, not the ${segment.ctSize.join(' × ')} its segment was fitted on`)
+      }
+      const size = [width, height] as const
+      const centre = [(segment.ctSize[0] - 1) / 2, (segment.ctSize[1] - 1) / 2] as const
+      const toCt: Affine = invert(ctToCryo(segment, centre))
+      // Sample points per cell side, so the points sit about a CT pixel apart
+      const across = Math.max(1, Math.ceil(cellMm / segment.ctPixelMm))
+      const bilinear = (u: number, v: number) => {
+        const u0 = Math.floor(u)
+        const v0 = Math.floor(v)
+        const fu = u - u0
+        const fv = v - v0
+        const u1 = Math.min(u0 + 1, width - 1)
+        const v1 = Math.min(v0 + 1, height - 1)
+        const row0 = v0 * width
+        const row1 = v1 * width
+        const top = data[row0 + u0] * (1 - fu) + data[row0 + u1] * fu
+        const bottom = data[row1 + u0] * (1 - fu) + data[row1 + u1] * fu
+        return densityFromCt(top * (1 - fv) + bottom * fv)
+      }
+      for (let cell = 0; cell < layerCells; cell++) {
+        // Only cells with body pixels get a density; the rest stay outside the body
+        if (grid.share[base + cell] === 0) continue
+        const column = cell % nx
+        const row = (cell - column) / nx
+        for (let sy = 0; sy < across; sy++) {
+          const y = (row + (sy + 0.5) / across) * level.pixels - 0.5
+          for (let sx = 0; sx < across; sx++) {
+            const x = (column + (sx + 0.5) / across) * level.pixels - 0.5
+            const [u, v] = apply(toCt, [x, y])
+            points[cell]++
+            if (!insideCtField(u, v, size)) continue
+            inside[cell]++
+            sum[cell] += bilinear(u, v)
+          }
+        }
+      }
+    }
+    for (let cell = 0; cell < layerCells; cell++) {
+      if (points[cell] === 0 || inside[cell] * 2 < points[cell]) continue
+      covered[base + cell] = 1
+      density[base + cell] = Math.round(sum[cell] / inside[cell])
+    }
+  }
+  const seconds = Math.round((performance.now() - started) / 1000)
+  console.log(`CT slices read: ${slicesRead}, slices without CT: ${slicesWithoutCt}, in ${seconds} s`)
+  return { density, covered }
+}
+type CtDensity = Awaited<ReturnType<typeof readCtDensity>>
+
 // Keeps the largest piece of body and crops the field to its bounds plus a one-voxel margin on every face, which
 // gives the colour room to spread one voxel past the skin. Coverage carries the body decision: a body cell in the
-// piece stores at least 128, a body cell outside it 0, a non-body cell at most 127
-function cropToBody(grid: Grid, body: Body, level: Level, field: Field, from: number, to: number) {
+// piece stores at least 128, a body cell outside it 0, a non-body cell at most 127. Density is written where the body
+// is: the CT's where it covers the cell, else the colour's, never 0, which means outside the body
+function cropToBody(grid: Grid, body: Body, level: Level, field: Field, from: number, to: number, ct: CtDensity | null) {
   const { nx, ny } = field
   const { layers } = grid
   const { cells: kept, size: bodyCount } = largestPiece(grid.body, nx, ny, layers)
@@ -341,6 +453,8 @@ function cropToBody(grid: Grid, body: Body, level: Level, field: Field, from: nu
   const inField = (fi: number, fj: number, fk: number) =>
     fi >= 0 && fi < nx && fj >= 0 && fj < ny && fk >= 0 && fk < layers
   const fieldIndex = (fi: number, fj: number, fk: number) => fi + nx * (fj + ny * fk)
+  let fromCt = 0
+  let fromColor = 0
 
   for (let k = 0; k < size[2]; k++) {
     for (let j = 0; j < size[1]; j++) {
@@ -356,8 +470,17 @@ function cropToBody(grid: Grid, body: Body, level: Level, field: Field, from: nu
           red[index] = grid.colors[source * 3]
           green[index] = grid.colors[source * 3 + 1]
           blue[index] = grid.colors[source * 3 + 2]
-          // The colour stand-in, until the CT is registered; never 0, which means outside the body
-          density[index] = densityFromColor(red[index], green[index], blue[index])
+          if (ct && ct.covered[source] !== 0) {
+            density[index] = Math.max(1, ct.density[source])
+            fromCt++
+          } else {
+            // The stand-in reads the cell's mean colour. Reading it per pixel and averaging was measured and left out:
+            // under the registered CT's bone the photographs' pixels have a saturation of 0.35–0.41 against the
+            // stand-in's unsaturated limit of 0.3, so they read as soft tissue pixel by pixel too, and the cell mean
+            // loses nothing
+            density[index] = densityFromColor(red[index], green[index], blue[index])
+            fromColor++
+          }
           continue
         }
         if (inside) coverage[index] = grid.body[source] !== 0 ? 0 : Math.min(bodyCoverage - 1, grid.share[source])
@@ -415,7 +538,7 @@ function cropToBody(grid: Grid, body: Body, level: Level, field: Field, from: nu
     coverage,
     density,
   }
-  return { volume, fieldFirst }
+  return { volume, fieldFirst, fromCt, fromColor }
 }
 
 const mm = (value: number) => Number(value.toFixed(3)).toString()
@@ -446,7 +569,7 @@ function levelEntry(body: Body, level: Level): LevelEntry {
 
 // Records a file just written into public/volume/ in bodies.json, measured, beside the body's other levels as they
 // were last built; a file written anywhere else is left out, as it isn't one the page loads
-async function recordLevel(out: string, body: Body, level: Level, volume: Volume, bytes: number) {
+async function recordLevel(out: string, body: Body, level: Level, volume: Volume, bytes: number, fromCt: boolean) {
   const path = resolve(out)
   if (relative(volumeFolder, path) !== basename(path)) return null
   let listed: BodiesFile | null = null
@@ -468,14 +591,14 @@ async function recordLevel(out: string, body: Body, level: Level, volume: Volume
     size: volume.size,
     bytes,
     textureBytes: volume.size[0] * volume.size[1] * volume.size[2] * 4,
-    density: 'colour',
+    density: fromCt ? 'ct' : 'colour',
   }
   await writeWhole(bodiesPath, new TextEncoder().encode(`${JSON.stringify(withLevel(listed, entry, built), null, 2)}\n`))
   return bodiesPath
 }
 
 async function main() {
-  const { body, level, from, to, out, previews, root } = options()
+  const { body, level, from, to, out, previews, noCt, root } = options()
   const started = performance.now()
   if (previews) {
     for (const path of await drawPreviews(readVolume(await gunzipFile(out)))) console.log(`Preview: ${path}`)
@@ -486,13 +609,26 @@ async function main() {
   const frames = framesOf(body, from, to)
   console.log(`Reading the ${body.id}'s slices ${from} to ${to} from ${setFolder(root, body.set)} at ${level.spacing} mm`)
   const grid = await readLayers(body, level, field, frames, root)
-  const { volume, fieldFirst } = cropToBody(grid, body, level, field, from, to)
+  let ct: CtDensity | null = null
+  if (noCt) console.log('Density from the colour alone, as --no-ct asks')
+  else if (!body.ct) console.log(`Density from the colour alone: the ${body.id} has no CT set`)
+  else {
+    const registration = await loadRegistration(body.id)
+    if (registration) {
+      console.log(`Resampling the CT through ${registrationPath(body.id)}, fitted ${registration.fitted}`)
+      ct = await readCtDensity(body, level, field, grid, registration, [from, to], root)
+    } else {
+      console.log(`Density from the colour alone: no ${registrationPath(body.id)}; npm run register -- --body ${body.id} fits one`)
+    }
+  }
+  const { volume, fieldFirst, fromCt, fromColor } = cropToBody(grid, body, level, field, from, to, ct)
   const raw = writeVolume(volume)
   await writeWhole(out, gzipSync(raw, { level: 9 }))
   for (const path of await drawPreviews(volume)) console.log(`Preview: ${path}`)
 
   const { size } = await stat(out)
-  const listed = await recordLevel(out, body, level, volume, size)
+  // A range the CT doesn't reach, such as the crown's first slices alone, is recorded as the colour's
+  const listed = await recordLevel(out, body, level, volume, size, fromCt > 0)
   if (listed) console.log(`Recorded the ${level.spacing} mm level in ${relative(process.cwd(), listed)}`)
   const seconds = (performance.now() - started) / 1000
   const cells = volume.size[0] * volume.size[1] * volume.size[2]
@@ -503,6 +639,10 @@ async function main() {
       `origin ${volume.origin.map(mm).join(', ')} mm; slices ${volume.firstSlice} to ${volume.lastSlice}`,
   )
   console.log(`Body voxels: ${countBody(volume.coverage).toLocaleString('en')} of ${cells.toLocaleString('en')}`)
+  console.log(
+    `Density from the CT: ${fromCt.toLocaleString('en')} voxels (${((100 * fromCt) / (fromCt + fromColor)).toFixed(1)} %), ` +
+      `from the colour: ${fromColor.toLocaleString('en')}`,
+  )
   console.log(`Wrote ${out}: ${(size / 1e6).toFixed(2)} MB, gzipped from ${(raw.length / 1e6).toFixed(1)} MB`)
   console.log(`Took ${Math.floor(seconds / 60)} min ${Math.round(seconds % 60)} s`)
 }
