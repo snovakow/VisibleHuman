@@ -10,18 +10,19 @@ VisibleHuman renders the [Visible Human Project](https://www.nlm.nih.gov/researc
 
 The page opens on the whole body, seen from the front. Drag to turn it, scroll or pinch to zoom, and right-drag or drag with two fingers to move it.
 
-The panel at the top right:
+The panel at the top right groups its controls in folders:
 
-- **Level** chooses the file the body is drawn from: 4 mm, which it opens on, or 2 mm, twice as fine along each axis and a larger download. Where the site doesn't have a level's file, the panel marks it not built and the body stays as it was.
+- **Body** chooses the body, so far only the male, and **Level** the file it's drawn from: 4 mm, which it opens on, or 2 mm, twice as fine along each axis and a larger download. Where the site doesn't have a level's file, the panel marks it not built and the body stays as it was.
+- **Style** chooses how the body is drawn: splats, volume, raytrace or surface. Only the splats are finished so far: the volume shows a grey placeholder until its ray march arrives, and the raytrace and the surface draw nothing yet. Adding `?style=` and a style's name to the address, as in `?style=volume`, opens the page on that style.
 - **Detail** sets the size of the blocks the body is drawn in: at the 4 mm level, 32 mm (about 4,500 splats), 16 mm (about 30,000), 8 mm (about 215,000, where it starts) or 4 mm (about 1.6 million, which has the most detail and runs slowest).
-- **Size** shrinks or grows every splat, from half to twice its starting size.
+- **Size** shrinks or grows every splat, from half to twice its starting size. Detail and Size show only while the splats are drawn.
 - **Opacity** fades the whole body, so you can see into it.
 - **Axial**, **Coronal** and **Sagittal** cut the body open. Axial cuts down from the head, coronal back from the front, and sagittal across from the body's right. At 0 nothing is cut, and at 1 the whole body is cut away.
-- **Splats shown** and **Renderer** tell you how many splats are being drawn, and whether WebGPU or WebGL 2 is drawing them.
+- **Renderer**, **Grid**, **Splats shown** and **Status** tell you whether WebGPU or WebGL 2 is drawing, how many voxels the loaded file holds along each axis, how many splats are being drawn, and whether the body is still loading, is ready, or failed and why.
 
 The counter at the top left shows the frame rate.
 
-VisibleHuman renders with WebGPU where the browser and the GPU can run it, and with WebGL 2 otherwise, including on GPUs known to fail at three.js's WebGPU splat sorting. Adding `?webgl` to the address forces WebGL 2. WebGL 2 sorts the splats on the CPU, so expect the finest Detail to turn slowly there.
+VisibleHuman renders with WebGPU where the browser and the GPU can run it, and with WebGL 2 otherwise, including on GPUs known to fail at three.js's WebGPU splat sorting. Adding `?webgl` to the address forces WebGL 2, and `?webgpu` tries WebGPU on those GPUs all the same, to test a shader there. WebGL 2 sorts the splats on the CPU, so expect the finest Detail to turn slowly there.
 
 ## Status
 
