@@ -26,6 +26,9 @@ export type DensitySource = 'ct' | 'colour'
 // half a voxel on WebGPU, or one named, each halving doubling the cost of a frame
 export type Quality = 'auto' | 'voxel' | 'half' | 'quarter'
 
+// Which surfaces the raytrace follows each ray to: the skin, the bone, or both, whichever a ray meets first
+export type Trace = 'skin' | 'bone' | 'both'
+
 // The panel's folders that hold options. Body holds the body and level choosers, which are the page's load state
 // rather than view options, and Info the read-outs; both are the panel's own
 export type Folder = 'Body' | 'Look' | 'Cuts' | 'Scene'
@@ -34,11 +37,12 @@ export type Folder = 'Body' | 'Look' | 'Cuts' | 'Scene'
 export type ShownFor = 'every' | { styles: readonly Style[] }
 
 // Another control that hides this one, by its key in the table: this one shows only while that control's value is
-// the one given, isn't it, or is above it
+// the one given, isn't it, is above it or is below it
 export type Dependence =
   | { option: string; is: boolean | string }
   | { option: string; isNot: string }
   | { option: string; above: number }
+  | { option: string; below: number }
 
 interface Control<T> {
   folder: Folder
@@ -88,9 +92,18 @@ const detailChoice = (entry: Omit<DetailChoice, 'kind'>): DetailChoice => ({ kin
 const every: ShownFor = 'every'
 const splats: ShownFor = { styles: ['splats'] }
 const volume: ShownFor = { styles: ['volume'] }
+const raytrace: ShownFor = { styles: ['raytrace'] }
+// The two styles that step through the body's texture from the ray quad
+const quad: ShownFor = { styles: ['volume', 'raytrace'] }
+// The two styles that draw the skin and the bone as surfaces
+const surfaces: ShownFor = { styles: ['raytrace', 'surface'] }
 
 // The volume's modes other than the x-ray, which reads the density above a floor of its own rather than the window
 const notXray: Dependence = { option: 'mode', isNot: 'xray' }
+// Below full Opacity, where a ray sees through the skin
+const translucent: Dependence = { option: 'opacity', below: 1 }
+// While the shadows are cast, which is all the light's direction is for
+const shadowed: Dependence = { option: 'shadows', is: true }
 
 // The sliders move in steps of a hundredth, the finest leva shows
 const hundredths = 0.01
@@ -144,10 +157,48 @@ export const viewOptions = {
     label: 'Quality',
     default: 'auto',
     choices: { auto: 'auto', '1 voxel': 'voxel', '½ voxel': 'half', '¼ voxel': 'quarter' },
-    shownFor: volume,
+    shownFor: quad,
   }),
   // Lights each step by the density's slope there, which costs six more reads a step, so it's off until asked for
   shading: toggle({ folder: 'Look', label: 'Shading', default: false, shownFor: volume, shownWhile: { option: 'mode', is: 'over' } }),
+  trace: choice<Trace>({
+    folder: 'Look',
+    label: 'Trace',
+    default: 'both',
+    choices: { skin: 'skin', bone: 'bone', both: 'both' },
+    shownFor: raytrace,
+  }),
+  // How many surfaces a ray lays over one another below full Opacity before it stops; it stops at bone regardless
+  layers: slider({ folder: 'Look', label: 'Layers', default: 2, min: 1, max: 4, step: 1, shownFor: raytrace, shownWhile: translucent }),
+  // Casts the body's shadow on its surfaces, by a second march from each hit toward the light, so it's off until asked for
+  shadows: toggle({ folder: 'Look', label: 'Shadows', default: false, shownFor: raytrace }),
+  // Where the light the shadows fall from is, in degrees from the camera's view: across, from the left to the right,
+  // and up, from below to above; it starts above and to the left of the camera
+  lightAzimuth: slider({
+    folder: 'Look',
+    label: 'Light azimuth',
+    default: -45,
+    min: -180,
+    max: 180,
+    step: 1,
+    shownFor: raytrace,
+    shownWhile: shadowed,
+  }),
+  lightElevation: slider({
+    folder: 'Look',
+    label: 'Light elevation',
+    default: 45,
+    min: -90,
+    max: 90,
+    step: 1,
+    shownFor: raytrace,
+    shownWhile: shadowed,
+  }),
+  // The density, on the file's scale, from which a voxel counts as bone. The default is the scale's, which the
+  // density channel was built to; the range runs from dense soft tissue to the densest bone
+  boneThreshold: slider({ folder: 'Look', label: 'Bone threshold', default: 110, min: 70, max: 200, step: 1, shownFor: surfaces }),
+  // How much a surface's edges light up where it turns away from the eye, which draws it as a glass shell
+  rim: slider({ folder: 'Look', label: 'Rim', default: 0, min: 0, max: 1, step: hundredths, shownFor: surfaces }),
   opacity: slider({ folder: 'Look', label: 'Opacity', default: 1, min: 0, max: 1, step: hundredths, shownFor: every }),
   // The cuts run from 0, nothing cut, to 1, the whole body cut away: down from the head, back from the front, and
   // across from the body's right
@@ -178,6 +229,13 @@ export const defaultOptions: ViewOptions = {
   windowHigh: viewOptions.windowHigh.default,
   quality: viewOptions.quality.default,
   shading: viewOptions.shading.default,
+  trace: viewOptions.trace.default,
+  layers: viewOptions.layers.default,
+  shadows: viewOptions.shadows.default,
+  lightAzimuth: viewOptions.lightAzimuth.default,
+  lightElevation: viewOptions.lightElevation.default,
+  boneThreshold: viewOptions.boneThreshold.default,
+  rim: viewOptions.rim.default,
   opacity: viewOptions.opacity.default,
   axial: viewOptions.axial.default,
   coronal: viewOptions.coronal.default,

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { defaultOptions, isOption, optionKeys, viewOptions, type Folder } from '../src/options.ts'
 import { styles } from '../src/viewer/styles.ts'
+import { boneDensity } from '../src/volume/density.ts'
 
 // The options table: the defaults the store opens on, the ranges and choices the panel is built from, and the splats'
 // defaults, which the page has always opened on and which the table must keep
@@ -68,4 +69,28 @@ void test('the keys come in the panel\'s order, the Look folder before the Cuts'
   const cutsStart = optionKeys.map((key) => viewOptions[key].folder).indexOf('Cuts')
   assert.ok(lookEnd < cutsStart)
   assert.equal(optionKeys[0], 'style')
+})
+
+void test('the raytrace traces both surfaces, lays two layers below full Opacity, casts no shadow until asked, and shares the bone threshold and the rim with the surface', () => {
+  const { trace, layers, shadows, lightAzimuth, lightElevation, boneThreshold, rim, quality } = viewOptions
+  assert.equal(trace.default, 'both')
+  assert.deepEqual(Object.values(trace.choices).sort(), ['bone', 'both', 'skin'])
+  assert.deepEqual([layers.min, layers.max, layers.step, layers.default], [1, 4, 1, 2])
+  // The layers matter only where a ray sees through the skin
+  assert.deepEqual(layers.shownWhile, { option: 'opacity', below: 1 })
+  assert.equal(shadows.default, false)
+  // The light starts above and to the left of the camera, and its sliders show only while shadows are cast
+  assert.ok(lightAzimuth.default < 0 && lightElevation.default > 0)
+  assert.deepEqual(lightAzimuth.shownWhile, { option: 'shadows', is: true })
+  assert.deepEqual(lightElevation.shownWhile, { option: 'shadows', is: true })
+  assert.deepEqual([boneThreshold.min, boneThreshold.max, boneThreshold.step, boneThreshold.default], [70, 200, 1, boneDensity])
+  assert.deepEqual([rim.min, rim.max, rim.step, rim.default], [0, 1, 0.01, 0])
+  for (const entry of [trace, layers, shadows, lightAzimuth, lightElevation]) assert.deepEqual(entry.shownFor, { styles: ['raytrace'] })
+  for (const entry of [boneThreshold, rim]) assert.deepEqual(entry.shownFor, { styles: ['raytrace', 'surface'] })
+  // The raytrace steps at the volume's Quality
+  assert.deepEqual(quality.shownFor, { styles: ['volume', 'raytrace'] })
+  assert.deepEqual(
+    [trace.label, layers.label, shadows.label, lightAzimuth.label, lightElevation.label, boneThreshold.label, rim.label],
+    ['Trace', 'Layers', 'Shadows', 'Light azimuth', 'Light elevation', 'Bone threshold', 'Rim'],
+  )
 })

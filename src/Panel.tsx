@@ -40,7 +40,8 @@ function shownForStyle(shownFor: ShownFor, style: Style) {
 function shownWhile(dependence: Dependence, value: unknown) {
   if ('is' in dependence) return value === dependence.is
   if ('isNot' in dependence) return value !== dependence.isNot
-  return typeof value === 'number' && value > dependence.above
+  if ('above' in dependence) return typeof value === 'number' && value > dependence.above
+  return typeof value === 'number' && value < dependence.below
 }
 
 // leva calls a control's onChange when it's built and rebuilt, with initial set and the value it held before, as well

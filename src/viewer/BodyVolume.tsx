@@ -3,9 +3,9 @@ import { useEffect, useRef } from 'react'
 import { CustomBlending, OneFactor, OneMinusSrcAlphaFactor } from 'three'
 import { NodeMaterial, type Mesh } from 'three/webgpu'
 import { useShallow } from 'zustand/react/shallow'
-import type { Quality } from '../options.ts'
 import { useStore } from '../store.ts'
 import { cutBox, type Cuts } from './cuts.ts'
+import { stepShare } from './quality.ts'
 import { createRayQuad } from './rayQuad.ts'
 import { asWebGPU } from './renderer.ts'
 import { modeIndex, sourceIndex, volumeMarch, windowEnds, type VolumeMarch } from './volumeMarch.ts'
@@ -15,11 +15,6 @@ import { acquireVolumeTexture, releaseVolumeTexture } from './volumeTexture.ts'
 
 // The quad is drawn after everything else, so that what the march lays over is all there
 const quadRenderOrder = 1000
-
-// The march's step as a share of a voxel, by Quality: the automatic step is a whole voxel on the WebGL 2 fallback,
-// which shades every pixel of the window on this project's slowest machines, and half a voxel on WebGPU
-const stepShares: Record<Exclude<Quality, 'auto'>, number> = { voxel: 1, half: 0.5, quarter: 0.25 }
-const autoStepShare = (webgpu: boolean) => (webgpu ? stepShares.half : stepShares.voxel)
 
 // The quad, its material and the march its material draws
 interface Drawn {
@@ -96,7 +91,7 @@ export function BodyVolume() {
     const current = drawn.current
     if (!current) return
     const webgpu = 'isWebGPUBackend' in asWebGPU(get().gl).backend
-    current.march.setStep(quality === 'auto' ? autoStepShare(webgpu) : stepShares[quality])
+    current.march.setStep(stepShare(quality, webgpu))
   }, [get, quality])
 
   // The mode, and the blending it needs: over, x-ray and MIP lay a premultiplied colour over what's behind, and the
