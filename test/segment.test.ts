@@ -149,12 +149,24 @@ function layered(missing: readonly boolean[]) {
   return { cells, colors }
 }
 
+const sixOf = (value: number) => [value, value, value, value, value, value]
+
 void test('the gap filling fills the upper half of a gap from above and the lower half from below', () => {
   const missing = [false, true, true, true, true, false]
   const { cells, colors } = layered(missing)
   assert.deepEqual(fillMissingLayers([cells, colors], 2, missing), [0, 0, 0, 5, 5, 5])
   assert.deepEqual([...cells], Array.from({ length: 12 }, () => 1))
-  assert.deepEqual([...colors], [1, 1, 1, 6, 6, 6].flatMap((value) => [value, value, value, value, value, value]))
+  assert.deepEqual([...colors], [1, 1, 1, 6, 6, 6].flatMap(sixOf))
+})
+
+void test('the gap filling blends the colour across a gap, from the colour above to the colour below', () => {
+  // The same gap: its cells still come from the nearer layer, its colour a fifth of the way further at each layer,
+  // from 1 to 6
+  const missing = [false, true, true, true, true, false]
+  const { cells, colors } = layered(missing)
+  assert.deepEqual(fillMissingLayers([cells, colors], 2, missing, { colors, body: cells }), [0, 0, 0, 5, 5, 5])
+  assert.deepEqual([...cells], Array.from({ length: 12 }, () => 1))
+  assert.deepEqual([...colors], [1, 2, 3, 4, 5, 6].flatMap(sixOf))
 })
 
 void test('the gap filling fills the middle of an odd gap from above', () => {
@@ -164,12 +176,45 @@ void test('the gap filling fills the middle of an odd gap from above', () => {
   assert.deepEqual([...colors.subarray(12, 18)], [1, 1, 1, 1, 1, 1])
 })
 
+void test('a three-layer gap takes a quarter, a half and three quarters of the way, channel by channel', () => {
+  // Two cells a layer, each with its own colour per channel, above and below a gap of three layers. Cell 0 is body on
+  // both sides and blends; cell 1 is body above only, so it keeps the colour above, whose layer it's body in
+  const missing = [false, true, true, true, false]
+  const cells = Uint8Array.from([1, 1, 0, 0, 0, 0, 0, 0, 1, 0])
+  const colors = new Uint8Array(30)
+  colors.set([0, 100, 200, 40, 50, 60], 0)
+  colors.set([200, 100, 0, 90, 90, 90], 24)
+  const shares = Uint8Array.from([250, 240, 0, 0, 0, 0, 0, 0, 230, 20])
+  const sources = fillMissingLayers([cells, shares, colors], 2, missing, { colors, body: cells })
+  assert.deepEqual(sources, [0, 0, 0, 4, 4])
+  // The cells and every other plane from the nearer layer: above for the first two, the middle included, below for
+  // the third
+  assert.deepEqual([...cells], [1, 1, 1, 1, 1, 1, 1, 0, 1, 0])
+  assert.deepEqual([...shares], [250, 240, 250, 240, 250, 240, 230, 20, 230, 20])
+  assert.deepEqual(
+    [...colors.subarray(6, 24)],
+    [
+      // A quarter of the way: cell 0 blends, cell 1 keeps its colour above
+      [50, 100, 150, 40, 50, 60],
+      [100, 100, 100, 40, 50, 60],
+      [150, 100, 50, 40, 50, 60],
+    ].flat(),
+  )
+})
+
 void test('the gap filling fills a gap at either end from the one side it has', () => {
   const missing = [true, false, false, true, true]
   const { cells, colors } = layered(missing)
-  assert.deepEqual(fillMissingLayers([cells, colors], 2, missing), [1, 1, 2, 2, 2])
+  assert.deepEqual(fillMissingLayers([cells, colors], 2, missing, { colors, body: cells }), [1, 1, 2, 2, 2])
   assert.deepEqual([...colors.subarray(0, 6)], [2, 2, 2, 2, 2, 2])
-  assert.deepEqual([...colors.subarray(24, 30)], [3, 3, 3, 3, 3, 3])
+  assert.deepEqual([...colors.subarray(18, 30)], [3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3])
+})
+
+void test('the gap filling blends only a plane it fills, by a body of a byte a cell', () => {
+  const missing = [false, true, false]
+  const { cells, colors } = layered(missing)
+  assert.throws(() => fillMissingLayers([cells], 2, missing, { colors, body: cells }), /not a plane filled/)
+  assert.throws(() => fillMissingLayers([cells, colors], 2, missing, { colors, body: colors }), /more than a byte/)
 })
 
 void test('the gap filling joins the body across a gap into one piece', () => {

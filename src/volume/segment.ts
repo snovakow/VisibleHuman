@@ -46,21 +46,40 @@ export function missingReason(body: number, before: readonly number[], after: re
   return body < reference * dipShare ? 'short' : null
 }
 
-// Fills each layer made only of missing slices from its nearest read layer, so the body stays one piece across the
+// The planes a gap's colour is blended in: the colour, one of the planes filled, and the body decision it's blended
+// by, a byte per cell, non-zero for body
+export interface GapBlend {
+  colors: Uint8Array
+  body: Uint8Array
+}
+
+// Fills each layer made only of missing slices from its nearest read layers, so the body stays one piece across the
 // gap: in a run of missing layers, the upper half copies the read layer above it and the lower half the one below
 // (the middle one, in an odd run, from above). A run at either end of the grid copies the one read layer beside it.
 // Each plane holds the whole grid, layer after layer of layerCells cells, with any whole number of bytes per cell (one
-// for a cell's body or coverage, three for its colour), and every plane is filled the same way. Returns each layer's
-// source: itself when read, the layer it was filled from, or -1 when no layer was read at all
-export function fillMissingLayers(planes: readonly Uint8Array[], layerCells: number, missing: readonly boolean[]) {
+// for a cell's body or coverage, three for its colour), and every plane is filled the same way, except the colour
+// where blend names it: in a run between two read layers, the layer a fraction t of the way from the one above to the
+// one below takes (1 − t) of the colour above and t of the colour below, in a cell that's body in both, so the gap
+// steps evenly from one side's colour to the other's instead of jumping halfway; a cell that's body on one side only
+// takes that side's colour, and one that's body on neither the nearer side's. Returns each layer's source: itself when
+// read, the layer its cells were filled from, or -1 when no layer was read at all
+export function fillMissingLayers(
+  planes: readonly Uint8Array[],
+  layerCells: number,
+  missing: readonly boolean[],
+  blend?: GapBlend,
+) {
   const layers = missing.length
-  const strides = planes.map((plane) => {
+  const strideOf = (plane: Uint8Array) => {
     const stride = plane.length / (layers * layerCells)
     if (!Number.isInteger(stride) || stride < 1) {
       throw new Error(`fillMissingLayers: a plane of ${plane.length} bytes for ${layers} layers of ${layerCells} cells`)
     }
     return stride
-  })
+  }
+  const strides = planes.map(strideOf)
+  if (blend && !planes.includes(blend.colors)) throw new Error('fillMissingLayers: the colour blended is not a plane filled')
+  if (blend && strideOf(blend.body) !== 1) throw new Error('fillMissingLayers: the body blended by has more than a byte a cell')
   const sources = missing.map((gap, layer) => (gap ? -1 : layer))
   for (let layer = 0; layer < layers; layer++) {
     if (!missing[layer]) continue
@@ -76,6 +95,23 @@ export function fillMissingLayers(planes: readonly Uint8Array[], layerCells: num
       const bytes = layerCells * strides[n]
       plane.copyWithin(layer * bytes, source * bytes, (source + 1) * bytes)
     })
+    if (!blend || above < 0 || !hasBelow) continue
+    const { colors, body } = blend
+    const stride = strideOf(colors)
+    const t = (layer - above) / (below - above)
+    for (let cell = 0; cell < layerCells; cell++) {
+      const inAbove = body[above * layerCells + cell] !== 0
+      const inBelow = body[below * layerCells + cell] !== 0
+      if (!inAbove && !inBelow) continue
+      const to = (layer * layerCells + cell) * stride
+      const fromAbove = (above * layerCells + cell) * stride
+      const fromBelow = (below * layerCells + cell) * stride
+      for (let c = 0; c < stride; c++) {
+        const a = colors[fromAbove + c]
+        const b = colors[fromBelow + c]
+        colors[to + c] = !inBelow ? a : !inAbove ? b : Math.round((1 - t) * a + t * b)
+      }
+    }
   }
   return sources
 }
