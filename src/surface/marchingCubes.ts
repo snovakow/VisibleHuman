@@ -1,18 +1,20 @@
 import { edgeTable, triTable } from 'three/addons/objects/MarchingCubes.js'
 import type { SceneAxes, Triple } from '../volume/format.ts'
 
-// Marching cubes over a byte field on the volume's grid, with the tables and conventions of three's MarchingCubes:
+// Marching cubes over a field on the volume's grid, of bytes or of floats, with the tables and conventions of three's MarchingCubes:
 // i varies fastest, then j, then k, as the file's blocks are laid out; corners in Paul Bourke's order; a corner's
 // bit is set where its value is below the isolevel, so the triangles face outward, toward the lower values. A
 // vertex sits where the field crosses the isolevel along a cube's edge, found by the straight line between the two
 // ends, and neighbouring cubes share it. Its normal is minus the field's slope there, which falls outward, taken as
 // central differences over each axis's own spacing and mixed between the edge's ends. Positions and normals come out
 // in the scene's frame, through the volume's axes; where that mapping turns the grid inside out, the triangles are
-// wound the other way round, so they still face outward. Pure, so a worker runs it and the tests prove it
+// wound the other way round, so they still face outward. Given colours on the same grid, each vertex takes the colour
+// where it lies along its edge. Pure, so a worker runs it and the tests prove it
 
 export interface IsosurfaceInput {
-  // One byte per voxel in index order i + nx·(j + ny·k), such as the file's coverage or density block
-  field: Uint8Array
+  // One value per voxel in index order i + nx·(j + ny·k): a byte, such as the file's coverage or density block, or a
+  // float, such as a distance from the skin
+  field: Uint8Array | Float32Array
   // The grid's size along i, j and k, and the spacing of its voxels in millimetres
   size: Triple
   spacing: Triple
@@ -23,6 +25,9 @@ export interface IsosurfaceInput {
   isolevel: number
   // Which grid axis each scene axis follows, and whether against it
   axes: SceneAxes
+  // R, G and B per voxel, interleaved, on the field's grid, where the mesh is to carry a colour per vertex. A voxel
+  // whose three are 0 carries none, as outside the body's dilated colour
+  colors?: Uint8Array
 }
 
 // Its arrays have their own buffers, so a worker can transfer them
@@ -30,6 +35,9 @@ export interface IsosurfaceMesh {
   positions: Float32Array<ArrayBuffer>
   normals: Float32Array<ArrayBuffer>
   indices: Uint32Array<ArrayBuffer>
+  // R, G and B per vertex, where the input had colours: the colours at the two ends of the vertex's edge mixed as the
+  // vertex lies between them, where both carry one, else the one that does
+  colors?: Uint8Array<ArrayBuffer>
 }
 
 // Marks an edge whose vertex hasn't been made yet
@@ -47,15 +55,18 @@ function mappingOf(axes: SceneAxes) {
   return { order, reversed: determinant < 0 }
 }
 
-export function meshIsosurface({ field, size, spacing, origin, isolevel, axes }: IsosurfaceInput): IsosurfaceMesh {
+export function meshIsosurface({ field, size, spacing, origin, isolevel, axes, colors }: IsosurfaceInput): IsosurfaceMesh {
   const [nx, ny, nz] = size
   const nxy = nx * ny
   if (field.length !== nxy * nz) {
-    throw new Error(`The field has ${field.length} bytes, but a ${size.join(' × ')} grid needs ${nxy * nz}`)
+    throw new Error(`The field has ${field.length} values, but a ${size.join(' × ')} grid needs ${nxy * nz}`)
   }
-  if (nx < 2 || ny < 2 || nz < 2) return emptyMesh()
+  if (colors && colors.length !== field.length * 3) {
+    throw new Error(`The colours have ${colors.length} bytes, but a ${size.join(' × ')} grid needs ${field.length * 3}`)
+  }
+  if (nx < 2 || ny < 2 || nz < 2) return emptyMesh(colors !== undefined)
   const { order, reversed } = mappingOf(axes)
-  const builder = new MeshBuilder()
+  const builder = new MeshBuilder(colors !== undefined)
 
   // The field's slope at a grid point along each axis, per millimetre: the difference between the neighbours either
   // side over the two voxels between them, or, at the grid's border, between the point and its one neighbour over one
@@ -99,7 +110,23 @@ export function meshIsosurface({ field, size, spacing, origin, isolevel, axes }:
       const { source, sign } = order[scene]
       return origin[scene] + sign * grid[source] * spacing[source]
     }
-    return builder.addVertex(position(0), position(1), position(2), normal[0], normal[1], normal[2])
+    const vertex = builder.addVertex(position(0), position(1), position(2), normal[0], normal[1], normal[2])
+    if (colors) {
+      const ca = a * 3
+      const cb = b * 3
+      const aColoured = (colors[ca] | colors[ca + 1] | colors[ca + 2]) !== 0
+      const bColoured = (colors[cb] | colors[cb + 1] | colors[cb + 2]) !== 0
+      // Where one end lies outside the colour, the other's is the vertex's whole, so the surface never darkens toward
+      // the uncoloured outside
+      const share = aColoured && bColoured ? t : bColoured ? 1 : 0
+      builder.setColour(
+        vertex,
+        Math.round(colors[ca] + share * (colors[cb] - colors[ca])),
+        Math.round(colors[ca + 1] + share * (colors[cb + 1] - colors[ca + 1])),
+        Math.round(colors[ca + 2] + share * (colors[cb + 2] - colors[ca + 2])),
+      )
+    }
+    return vertex
   }
 
   // Vertices on x and y edges are cached for the layer of cells below and above, and on z edges for the current one,
@@ -168,13 +195,20 @@ class MeshBuilder {
   private positions = new Float32Array(3 << 12)
   private normals = new Float32Array(3 << 12)
   private indices = new Uint32Array(3 << 13)
+  // Only where the mesh is coloured
+  private colors: Uint8Array<ArrayBuffer> | null
   private vertexCount = 0
   private indexCount = 0
+
+  constructor(coloured: boolean) {
+    this.colors = coloured ? new Uint8Array(3 << 12) : null
+  }
 
   addVertex(x: number, y: number, z: number, normalX: number, normalY: number, normalZ: number) {
     if (this.vertexCount * 3 === this.positions.length) {
       this.positions = growFloats(this.positions)
       this.normals = growFloats(this.normals)
+      if (this.colors) this.colors = growBytes(this.colors)
     }
     const v = this.vertexCount * 3
     this.positions[v] = x
@@ -186,6 +220,14 @@ class MeshBuilder {
     return this.vertexCount++
   }
 
+  setColour(vertex: number, r: number, g: number, b: number) {
+    if (!this.colors) return
+    const v = vertex * 3
+    this.colors[v] = r
+    this.colors[v + 1] = g
+    this.colors[v + 2] = b
+  }
+
   addTriangle(a: number, b: number, c: number) {
     if (this.indexCount + 3 > this.indices.length) this.indices = growIndices(this.indices)
     this.indices[this.indexCount++] = a
@@ -195,16 +237,24 @@ class MeshBuilder {
 
   // Each array cut to what's filled, in a buffer of its own
   finish(): IsosurfaceMesh {
-    return {
+    const mesh: IsosurfaceMesh = {
       positions: this.positions.slice(0, this.vertexCount * 3),
       normals: this.normals.slice(0, this.vertexCount * 3),
       indices: this.indices.slice(0, this.indexCount),
     }
+    if (this.colors) mesh.colors = this.colors.slice(0, this.vertexCount * 3)
+    return mesh
   }
 }
 
 function growFloats(array: Float32Array<ArrayBuffer>) {
   const larger = new Float32Array(array.length * 2)
+  larger.set(array)
+  return larger
+}
+
+function growBytes(array: Uint8Array<ArrayBuffer>) {
+  const larger = new Uint8Array(array.length * 2)
   larger.set(array)
   return larger
 }
@@ -215,6 +265,8 @@ function growIndices(array: Uint32Array<ArrayBuffer>) {
   return larger
 }
 
-function emptyMesh(): IsosurfaceMesh {
-  return { positions: new Float32Array(0), normals: new Float32Array(0), indices: new Uint32Array(0) }
+function emptyMesh(coloured: boolean): IsosurfaceMesh {
+  const mesh: IsosurfaceMesh = { positions: new Float32Array(0), normals: new Float32Array(0), indices: new Uint32Array(0) }
+  if (coloured) mesh.colors = new Uint8Array(0)
+  return mesh
 }

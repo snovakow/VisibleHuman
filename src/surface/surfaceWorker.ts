@@ -1,20 +1,45 @@
 import type { SceneAxes, Triple } from '../volume/format.ts'
 import type { IsosurfaceMesh } from './marchingCubes.ts'
 
-// The surfaces the worker meshes, each from its own field: the skin from the coverage and the bone from the density,
-// with the brain, from a body's MRI, still to come
-export type SurfaceKind = 'skin' | 'bone' | 'brain'
-
-// What the worker is asked for: a surface of the kind, meshed from the field at the isolevel, on the grid given
-export interface SurfaceRequest {
-  kind: SurfaceKind
-  field: Uint8Array
+// The grid a surface is meshed on, and its colours there where the mesh is to carry them per vertex
+interface GridRequest {
   size: Triple
   spacing: Triple
   // The scene's position of voxel (0, 0, 0)
   origin: Triple
   axes: SceneAxes
+  // R, G and B per voxel, interleaved
+  colors?: Uint8Array
+}
+
+// A surface meshed from a field at an isolevel: the skin from the coverage and the bone from the density, with the
+// brain, from a body's MRI, still to come
+export interface FieldRequest extends GridRequest {
+  kind: 'skin' | 'bone' | 'brain'
+  field: Uint8Array
   isolevel: number
+}
+
+// The closed shell a depth under the skin, meshed from each body voxel's distance to the outside, which the worker
+// computes from the coverage and keeps under the key, so that the next shell on the grid of the same key reuses it
+export interface ShellRequest extends GridRequest {
+  kind: 'shell'
+  coverage: Uint8Array
+  key: string
+  // How far under the skin, in the grid's voxels
+  depth: number
+}
+
+// What the worker is asked for: a surface of the kind, on the grid given
+export type SurfaceRequest = FieldRequest | ShellRequest
+
+// The surfaces the worker meshes, each from its own field
+export type SurfaceKind = SurfaceRequest['kind']
+
+// For a shell, how long its distance field took, or that it was the one kept from the shell before
+export interface DistanceTiming {
+  reused: boolean
+  milliseconds: number
 }
 
 export interface SurfaceResult {
@@ -22,6 +47,7 @@ export interface SurfaceResult {
   mesh: IsosurfaceMesh
   // How long the worker took to mesh it
   milliseconds: number
+  distance?: DistanceTiming
 }
 
 // The worker's reply: the mesh, or why it failed
@@ -38,23 +64,39 @@ interface Job {
 const graceMilliseconds = 1000
 
 // Surfaces are meshed off the main thread, one at a time. A newer request for a kind replaces one of that kind still
-// waiting, so dragging the Bone threshold meshes the latest value next instead of every step on the way, while a
-// request for another kind keeps its turn: the skin and the bone are asked for together when a volume loads
+// waiting, so dragging the Bone threshold or the Depth meshes the latest value next instead of every step on the way,
+// while a request for another kind keeps its turn: the skin and the bone are asked for together when a volume loads.
+// A worker cut off loses the distance field it kept, and the next shell computes it again
 let worker: Worker | null = null
 let running: Job | null = null
 let startedAt = 0
 let cutoff: ReturnType<typeof setTimeout> | undefined
 const waiting = new Map<SurfaceKind, Job>()
 
+// The request with its arrays copied, so that the worker can take the copies' buffers and the caller's stay whole
+function copied(request: SurfaceRequest): SurfaceRequest {
+  const colors = request.colors ? { colors: request.colors.slice() } : {}
+  if (request.kind === 'shell') return { ...request, coverage: request.coverage.slice(), ...colors }
+  return { ...request, field: request.field.slice(), ...colors }
+}
+
+// The buffers the worker takes with a request
+function transferOf(request: SurfaceRequest) {
+  const buffers = [request.kind === 'shell' ? request.coverage.buffer : request.field.buffer]
+  if (request.colors) buffers.push(request.colors.buffer)
+  return buffers
+}
+
 // Resolves with the mesh, or never settles if it's replaced or cancelled before it starts, or cut off. A cancelled
-// request already meshing still resolves if it finishes within its grace. The field is copied, so that the worker
-// can take the copy's buffer and the caller's block stays whole
+// request already meshing still resolves if it finishes within its grace. Its arrays are copied as it starts, not
+// when it's asked for, so that one replaced or cancelled while it waits, as most of a drag's steps are, copies
+// nothing; the caller's arrays mustn't change in the meantime, and the volume's and its block grids' never do
 export function requestSurface(request: SurfaceRequest) {
   let settle: Pick<Job, 'resolve' | 'reject'> = { resolve: () => undefined, reject: () => undefined }
   const result = new Promise<SurfaceResult>((resolve, reject) => {
     settle = { resolve, reject }
   })
-  const job: Job = { request: { ...request, field: request.field.slice() }, ...settle }
+  const job: Job = { request, ...settle }
   waiting.set(request.kind, job)
   startNext()
   return {
@@ -75,7 +117,8 @@ function startNext() {
   running = job
   startedAt = performance.now()
   worker ??= createWorker()
-  worker.postMessage(job.request, { transfer: [job.request.field.buffer] })
+  const request = copied(job.request)
+  worker.postMessage(request, { transfer: transferOf(request) })
 }
 
 // Ends the running job, and any cut-off waiting on it, and returns the job
