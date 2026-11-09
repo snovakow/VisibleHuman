@@ -1,8 +1,8 @@
 import { isBodyVoxel, scenePosition, sceneSpacing, type Triple, type Volume } from './format.ts'
 
 // The body as splat levels: every body voxel, and the blocks of 2 × 2 × 2, 4 × 4 × 4 and 8 × 8 × 8 voxels that hold
-// body. A block's cell sits at the centre of its body voxels, coloured by their mean. Every level is in the scene's
-// axes and millimetres, centred on the body's bounds
+// body. A block's cell sits at the centre of its body voxels, coloured by their mean, and covered by the mean coverage
+// of all its voxels, body or not. Every level is in the scene's axes and millimetres, centred on the body's bounds
 
 // The blocks a level may merge, in voxels along each axis, finest first. A level's Detail is its block
 export const blocks = [1, 2, 4, 8] as const
@@ -36,6 +36,10 @@ export interface Level {
   centers: Float32Array
   // Each cell's colour, R, G and B, as photographed
   colors: Uint8Array
+  // Each cell's coverage, the share of it that's body scaled to 255: a body voxel's own, at least 128, and a block's
+  // the mean over every voxel it spans, so a block the skin runs through is partly covered. The splats' alpha is
+  // weighted by it, so a partly covered cell fades instead of standing a whole cell proud of the surface
+  coverage: Uint8Array
 }
 
 // Finest first
@@ -128,23 +132,25 @@ export function buildLevel(
   indices = bodyIndices(volume),
   extent = extentOf(volume, indices),
 ): Level {
-  const [nx, ny] = volume.size
-  const { red, green, blue } = volume
+  const [nx, ny, nz] = volume.size
+  const { red, green, blue, coverage } = volume
   const { low, high } = extent
   const bx = Math.floor((high[0] - low[0]) / block) + 1
-  const layerBlocks = bx * (Math.floor((high[1] - low[1]) / block) + 1)
+  const by = Math.floor((high[1] - low[1]) / block) + 1
+  const layerBlocks = bx * by
   const blockLayers = Math.floor((high[2] - low[2]) / block) + 1
   const layerCells = nx * ny
   // A level has at most one cell per body voxel, and one per block
   const most = Math.min(indices.length, layerBlocks * blockLayers)
   const centers = new Float32Array(most * 3)
   const levelColors = new Uint8Array(most * 3)
+  const levelCoverage = new Uint8Array(most)
   const [cx, cy, cz] = bounds.center
   const [ei, ej, ek] = sceneBasis(volume)
   let count = 0
 
-  // Adds a cell at a place in the grid, in voxels, which needn't be whole, with its colour
-  const emit = (i: number, j: number, k: number, r: number, g: number, b: number) => {
+  // Adds a cell at a place in the grid, in voxels, which needn't be whole, with its colour and coverage
+  const emit = (i: number, j: number, k: number, r: number, g: number, b: number, covered: number) => {
     const at = count * 3
     centers[at] = i * ei[0] + j * ej[0] + k * ek[0] - cx
     centers[at + 1] = i * ei[1] + j * ej[1] + k * ek[1] - cy
@@ -152,6 +158,7 @@ export function buildLevel(
     levelColors[at] = r
     levelColors[at + 1] = g
     levelColors[at + 2] = b
+    levelCoverage[count] = covered
     count++
   }
 
@@ -161,13 +168,27 @@ export function buildLevel(
       const k = Math.floor(index / layerCells)
       const inLayer = index - k * layerCells
       const j = Math.floor(inLayer / nx)
-      emit(inLayer - j * nx, j, k, red[index], green[index], blue[index])
+      emit(inLayer - j * nx, j, k, red[index], green[index], blue[index], coverage[index])
     }
   } else {
     // Per block of the layer: the sums of its body voxels' i, j and k, and of their R, G and B, then how many there are
     const sums = new Float64Array(layerBlocks * 6)
     const counts = new Uint32Array(layerBlocks)
-    const flush = () => {
+    // And the coverage of every voxel each block spans, body or not. A block past the grid's last voxel along an axis
+    // spans voxels that aren't there, which count as uncovered, as the margin's voxels are
+    const coverageSums = new Uint32Array(layerBlocks)
+    const blockVoxels = block * block * block
+    const iEnd = Math.min(nx, low[0] + bx * block)
+    const jEnd = Math.min(ny, low[1] + by * block)
+    const flush = (blockLayer: number) => {
+      const kStart = low[2] + blockLayer * block
+      for (let k = kStart; k < Math.min(nz, kStart + block); k++) {
+        for (let j = low[1]; j < jEnd; j++) {
+          const row = bx * Math.floor((j - low[1]) / block)
+          const start = nx * (j + ny * k)
+          for (let i = low[0]; i < iEnd; i++) coverageSums[row + Math.floor((i - low[0]) / block)] += coverage[start + i]
+        }
+      }
       for (let b = 0; b < layerBlocks; b++) {
         const n = counts[b]
         if (n === 0) continue
@@ -179,10 +200,12 @@ export function buildLevel(
           Math.round(sums[s + 3] / n),
           Math.round(sums[s + 4] / n),
           Math.round(sums[s + 5] / n),
+          Math.round(coverageSums[b] / blockVoxels),
         )
       }
       sums.fill(0)
       counts.fill(0)
+      coverageSums.fill(0)
     }
     let layer = -1
     for (let n = 0; n < indices.length; n++) {
@@ -193,7 +216,7 @@ export function buildLevel(
       const i = inLayer - j * nx
       const blockLayer = Math.floor((k - low[2]) / block)
       if (blockLayer !== layer) {
-        if (layer >= 0) flush()
+        if (layer >= 0) flush(layer)
         layer = blockLayer
       }
       const b = Math.floor((i - low[0]) / block) + bx * Math.floor((j - low[1]) / block)
@@ -206,7 +229,7 @@ export function buildLevel(
       sums[s + 5] += blue[index]
       counts[b]++
     }
-    flush()
+    flush(layer)
   }
 
   const [sx, sy, sz] = volume.spacing
@@ -217,6 +240,7 @@ export function buildLevel(
     count,
     centers: count === most ? centers : centers.slice(0, count * 3),
     colors: count === most ? levelColors : levelColors.slice(0, count * 3),
+    coverage: count === most ? levelCoverage : levelCoverage.slice(0, count),
   }
 }
 

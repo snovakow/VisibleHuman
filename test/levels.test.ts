@@ -187,3 +187,37 @@ void test('a level over the cap is left out, and the default is the finest withi
   assert.equal(counts({ maxCells: 12, defaultCells: 1 }).blocks.length, 4)
   assert.throws(() => buildBody(volume, { maxCells: 1, defaultCells: 1 }), /more than 1 cells/)
 })
+
+void test('a cell\'s coverage is its voxel\'s, and a block\'s the mean over all eight of its voxels', () => {
+  // One 2 × 2 × 2 block, with three body voxels and five under the body's 128, all of whose coverages count; and a
+  // second block along i with one body voxel, past the grid's edge: its four voxels outside the grid count as uncovered
+  const volume = volumeOf(
+    [3, 2, 2],
+    [
+      { at: [0, 0, 0], rgb: [0, 0, 0] },
+      { at: [1, 1, 0], rgb: [0, 0, 0] },
+      { at: [0, 1, 1], rgb: [0, 0, 0] },
+      { at: [2, 0, 0], rgb: [0, 0, 0] },
+    ],
+  )
+  const set = (at: Triple, value: number) => {
+    volume.coverage[cellIndex(volume.size, ...at)] = value
+  }
+  set([0, 0, 0], 255)
+  set([1, 1, 0], 128)
+  set([0, 1, 1], 200)
+  set([1, 0, 0], 127)
+  set([0, 1, 0], 10)
+  set([1, 0, 1], 0)
+  set([0, 0, 1], 40)
+  set([1, 1, 1], 1)
+  set([2, 0, 0], 240)
+  set([2, 1, 0], 100)
+  set([2, 0, 1], 20)
+  set([2, 1, 1], 0)
+  const bounds = bodyBounds(volume)
+  assert.deepEqual([...buildLevel(volume, bounds, 1).coverage], [255, 240, 128, 200])
+  const merged = buildLevel(volume, bounds, 2)
+  // (255 + 127 + 10 + 128 + 40 + 0 + 200 + 1) / 8 = 95.125, and (240 + 100 + 20 + 0) / 8 = 45
+  assert.deepEqual([...merged.coverage], [95, 45])
+})

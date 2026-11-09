@@ -55,12 +55,14 @@ export function createCellTable({ count, colors }: Level): CellTable {
   return { texture: new DataTexture(bytes, tableWidth, rows, RGBAFormat, UnsignedByteType), bytes, painted: null }
 }
 
-// Paints every cell's alpha: none on a cut's far side, and Opacity's share of full elsewhere. Each cut's plane runs
-// across the body's bounds, from the side it starts on at 0 to the opposite side at 1. The centres are centred on the
-// bounds, so half holds the bounds' half extents along x, y and z
-export function paintCellTable(table: CellTable, { count, centers }: Level, half: Triple, paint: TablePaint) {
+// Paints every cell's alpha: none on a cut's far side, and elsewhere Opacity's share of the cell's coverage, so a cell
+// the skin runs through is as opaque as it's covered and the surface's lattice of whole cells fades at its steps
+// instead of showing them as contour rings. Each cut's plane runs across the body's bounds, from the side it starts on
+// at 0 to the opposite side at 1. The centres are centred on the bounds, so half holds the bounds' half extents along
+// x, y and z
+export function paintCellTable(table: CellTable, { count, centers, coverage }: Level, half: Triple, paint: TablePaint) {
   const { bytes } = table
-  const alpha = Math.round(paint.opacity * fullByte)
+  const { opacity } = paint
   // Axial cuts down from the head, at +y; Coronal back from the front, at +z; Sagittal across from the body's right,
   // at −x
   const top = half[1] - paint.axial * 2 * half[1]
@@ -70,7 +72,7 @@ export function paintCellTable(table: CellTable, { count, centers }: Level, half
     const x = centers[n * 3]
     const y = centers[n * 3 + 1]
     const z = centers[n * 3 + 2]
-    bytes[n * bytesPerCell + 3] = y > top || z > front || x < right ? 0 : alpha
+    bytes[n * bytesPerCell + 3] = y > top || z > front || x < right ? 0 : Math.round(opacity * coverage[n])
   }
   table.texture.needsUpdate = true
   table.painted = paint
