@@ -43,7 +43,7 @@ import { bisectionSteps, sceneToTexture, textureBox, type Mapped } from './rays.
 // over the far skin is ordered pixel by pixel with no sort. Shadows send a second march from each lit point toward
 // the light, through the whole grid, so that what the cuts take away still throws its shadow onto what they leave
 
-// The skin lies where the coverage crosses the body decision, where the surface style, still to come, will mesh it
+// The skin lies where the coverage crosses the body decision, where the surface style meshes it too
 const skinIso = bodyCoverage / 255
 // The light: a hemisphere's share of a surface's colour, from the sky's at one facing up to the ground's at one facing
 // down; the headlight's share at one facing the camera; and a highlight's strength and sharpness, where the surface

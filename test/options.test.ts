@@ -94,3 +94,18 @@ void test('the raytrace traces both surfaces, lays two layers below full Opacity
     ['Trace', 'Layers', 'Shadows', 'Light azimuth', 'Light elevation', 'Bone threshold', 'Rim'],
   )
 })
+
+void test('the surface draws the skin and the bone, no back shell until asked below full Opacity, and caps its cuts', () => {
+  const { skin, bone, backShell, caps, boneThreshold, rim } = viewOptions
+  assert.deepEqual([skin.kind, bone.kind, backShell.kind, caps.kind], ['switch', 'switch', 'switch', 'switch'])
+  assert.deepEqual([skin.default, bone.default, backShell.default, caps.default], [true, true, false, true])
+  for (const entry of [skin, bone, backShell]) assert.deepEqual([entry.folder, entry.shownFor], ['Look', { styles: ['surface'] }])
+  assert.deepEqual([caps.folder, caps.shownFor], ['Cuts', { styles: ['surface'] }])
+  // The far side shows only under a see-through near side
+  assert.deepEqual(backShell.shownWhile, { option: 'opacity', below: 1 })
+  // The bone threshold and the rim serve the surface as they serve the raytrace
+  for (const entry of [boneThreshold, rim]) assert.deepEqual(entry.shownFor, { styles: ['raytrace', 'surface'] })
+  // The switches come before the shared sliders, and Caps after the cuts
+  assert.ok(optionKeys.indexOf('backShell') < optionKeys.indexOf('boneThreshold'))
+  assert.ok(optionKeys.indexOf('caps') > optionKeys.indexOf('sagittal'))
+})

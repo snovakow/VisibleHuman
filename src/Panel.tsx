@@ -79,7 +79,7 @@ export function PanelRoot() {
 
 // The leva panel: the view options go to the store as they change, Size when a drag or an edit ends, since a new
 // Size rebuilds every splat. The Body, Level and Detail selects list what the store has loaded, and the renderer, the
-// grid, the splats shown and the load's status come back read-only
+// grid, the splats shown, the surface's triangles and the load's status come back read-only
 export function Panel({ renderer }: { renderer: string }) {
   const { level, detail, style, notBuilt, status, error } = useStore(
     useShallow((s) => ({
@@ -95,8 +95,16 @@ export function Panel({ renderer }: { renderer: string }) {
   const body = useStore((s) => s.bodies?.find((candidate) => candidate.id === s.body))
   const levels = useStore((s) => s.levels)
   const grid = useStore((s) => s.volume?.size)
+  const triangles = useStore((s) => s.triangles)
   // The splats shown, while the splats are the style drawn
   const shown = levels && style === 'splats' ? levelOf(levels, detail)?.count : undefined
+  // The surface's triangles, each mesh's by name, while the surface is the style drawn
+  const meshed =
+    style === 'surface'
+      ? Object.entries(triangles)
+          .map(([kind, count]) => `${count.toLocaleString('en')} ${kind}`)
+          .join(', ')
+      : ''
 
   // The selects' options: the bodies, the body's levels, each marked where the host hasn't got its file, and its
   // splat levels by their spacing, coarsest first
@@ -223,6 +231,7 @@ export function Panel({ renderer }: { renderer: string }) {
         renderer: { label: 'Renderer', value: '', editable: false },
         grid: { label: 'Grid', value: '', editable: false },
         shown: { label: 'Splats shown', value: '', editable: false },
+        triangles: { label: 'Triangles', value: '', editable: false },
         status: { label: 'Status', value: '', editable: false },
       }),
     }
@@ -245,9 +254,10 @@ export function Panel({ renderer }: { renderer: string }) {
       renderer: renderer || 'Starting…',
       grid: grid ? `${grid.join(' × ')} voxels` : '',
       shown: shown === undefined ? '' : shown.toLocaleString('en'),
+      triangles: meshed,
       status: error ?? statusText[status],
     })
-  }, [set, renderer, grid, shown, status, error])
+  }, [set, renderer, grid, shown, meshed, status, error])
 
   return null
 }

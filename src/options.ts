@@ -97,6 +97,7 @@ const raytrace: ShownFor = { styles: ['raytrace'] }
 const quad: ShownFor = { styles: ['volume', 'raytrace'] }
 // The two styles that draw the skin and the bone as surfaces
 const surfaces: ShownFor = { styles: ['raytrace', 'surface'] }
+const surface: ShownFor = { styles: ['surface'] }
 
 // The volume's modes other than the x-ray, which reads the density above a floor of its own rather than the window
 const notXray: Dependence = { option: 'mode', isNot: 'xray' }
@@ -194,6 +195,11 @@ export const viewOptions = {
     shownFor: raytrace,
     shownWhile: shadowed,
   }),
+  // The surface's two meshes, each a switch, and the far side of the skin drawn under its near side below full
+  // Opacity, so that the body reads as a hollow shell
+  skin: toggle({ folder: 'Look', label: 'Skin', default: true, shownFor: surface }),
+  bone: toggle({ folder: 'Look', label: 'Bone', default: true, shownFor: surface }),
+  backShell: toggle({ folder: 'Look', label: 'Back shell', default: false, shownFor: surface, shownWhile: translucent }),
   // The density, on the file's scale, from which a voxel counts as bone. The default is the scale's, which the
   // density channel was built to; the range runs from dense soft tissue to the densest bone
   boneThreshold: slider({ folder: 'Look', label: 'Bone threshold', default: 110, min: 70, max: 200, step: 1, shownFor: surfaces }),
@@ -205,6 +211,8 @@ export const viewOptions = {
   axial: slider({ folder: 'Cuts', label: 'Axial', default: 0, min: 0, max: 1, step: hundredths, shownFor: every }),
   coronal: slider({ folder: 'Cuts', label: 'Coronal', default: 0, min: 0, max: 1, step: hundredths, shownFor: every }),
   sagittal: slider({ folder: 'Cuts', label: 'Sagittal', default: 0, min: 0, max: 1, step: hundredths, shownFor: every }),
+  // The section through the body shown on each of the surface's cuts
+  caps: toggle({ folder: 'Cuts', label: 'Caps', default: true, shownFor: surface }),
 }
 
 // Each option's value, of the type its entry's default has: a slider's is any number, and a choice's one of its values
@@ -234,10 +242,14 @@ export const defaultOptions: ViewOptions = {
   shadows: viewOptions.shadows.default,
   lightAzimuth: viewOptions.lightAzimuth.default,
   lightElevation: viewOptions.lightElevation.default,
+  skin: viewOptions.skin.default,
+  bone: viewOptions.bone.default,
+  backShell: viewOptions.backShell.default,
   boneThreshold: viewOptions.boneThreshold.default,
   rim: viewOptions.rim.default,
   opacity: viewOptions.opacity.default,
   axial: viewOptions.axial.default,
   coronal: viewOptions.coronal.default,
   sagittal: viewOptions.sagittal.default,
+  caps: viewOptions.caps.default,
 }

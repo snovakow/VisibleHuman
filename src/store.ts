@@ -4,6 +4,7 @@ import { defaultOptions, type ViewOptions } from './options.ts'
 import { defaultLevel, type BodyEntry } from './volume/bodies.ts'
 import type { Volume } from './volume/format.ts'
 import { buildBody, levelOf, type Bounds, type Levels } from './volume/levels.ts'
+import type { SurfaceKind } from './surface/surfaceWorker.ts'
 import { isAbort, loadBodies, loadVolume, NotBuiltError } from './volume/loadVolume.ts'
 
 export type Status = 'loading' | 'ready' | 'failed'
@@ -33,6 +34,9 @@ interface State {
   // The view options, as the panel sets them from the table in options.ts
   options: ViewOptions
   setOptions: (changes: Partial<ViewOptions>) => void
+  // The triangles in each of the surface style's meshes, while it's drawn, for the panel
+  triangles: Partial<Record<SurfaceKind, number>>
+  setTriangles: (kind: SurfaceKind, count: number | undefined) => void
 }
 
 const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error))
@@ -57,6 +61,15 @@ export const useStore = create<State>()((set, get) => ({
     set((state) => {
       const options = { ...state.options, ...changes }
       return shallow(options, state.options) ? state : { options }
+    }),
+  triangles: {},
+  setTriangles: (kind, count) =>
+    set((state) => {
+      if (state.triangles[kind] === count) return state
+      const triangles = { ...state.triangles }
+      if (count === undefined) delete triangles[kind]
+      else triangles[kind] = count
+      return { triangles }
     }),
   load: async (bodyId, levelId, signal) => {
     current?.abort()
