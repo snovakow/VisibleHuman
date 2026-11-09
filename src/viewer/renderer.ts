@@ -1,5 +1,11 @@
 import { WebGPURenderer } from 'three/webgpu'
 
+// R3F types its renderer as a WebGLRenderer, though the Canvas's factory always makes a WebGPURenderer
+export function asWebGPU(renderer: unknown): WebGPURenderer {
+  if (!(renderer instanceof WebGPURenderer)) throw new Error('Expected a WebGPURenderer')
+  return renderer
+}
+
 // GPUs that offer WebGPU but can't compile the splat sort's shaders, and take Chrome's GPU process down trying.
 // Haswell's Intel Iris (gen-7) fails on CountingSortReset
 const failingGPUs = [{ vendor: 'intel', architecture: 'gen-7' }] as const
@@ -8,17 +14,22 @@ const failingGPUs = [{ vendor: 'intel', architecture: 'gen-7' }] as const
 const fallbackAttempts = 5
 const fallbackRetryDelay = 1000
 
+// Which backend the Canvas's renderer is to use: WebGPU where the browser offers it and the GPU isn't known to fail it,
+// the WebGL 2 fallback whatever the GPU, or WebGPU on a GPU known to fail it, to try a shader on it all the same
+export type Backend = 'auto' | 'webgl' | 'webgpu'
+
 // The Canvas's renderer: WebGPU where the browser offers it and the GPU isn't known to fail it, and otherwise three's
-// WebGL 2 fallback, which forceWebGL also asks for. A WebGPU failure after the start calls fallBack, and report is told
-// which backend is drawing, for the panel
+// WebGL 2 fallback, which the webgl backend also asks for. A WebGPU failure after the start calls fallBack, and report
+// is told which backend is drawing, for the panel, and whether it's WebGPU
 export async function createRenderer(
   canvas: object,
-  forceWebGL: boolean,
+  backend: Backend,
   fallBack: () => void,
-  report: (renderer: string) => void,
+  report: (renderer: string, webgpu: boolean) => void,
 ) {
   if (!(canvas instanceof HTMLCanvasElement)) throw new Error('Expected an HTMLCanvasElement')
-  const failingGPU = forceWebGL ? null : await knownFailingGPU()
+  const forceWebGL = backend === 'webgl'
+  const failingGPU = backend === 'auto' ? await knownFailingGPU() : null
   if (failingGPU) {
     console.info(`VisibleHuman: this GPU (${failingGPU}) is known to fail WebGPU, so starting on the WebGL 2 fallback`)
   }
@@ -27,7 +38,7 @@ export async function createRenderer(
   const webgpu = 'isWebGPUBackend' in renderer.backend
   console.info(`VisibleHuman: rendering with ${webgpu ? 'WebGPU' : 'the WebGL 2 fallback'}`)
   // A Canvas replaced while its renderer was starting is off the page by then, and only the one on the page reports
-  if (canvas.isConnected) report(webgpu ? 'WebGPU' : failingGPU ? 'WebGL 2, as this GPU fails WebGPU' : 'WebGL 2')
+  if (canvas.isConnected) report(webgpu ? 'WebGPU' : failingGPU ? 'WebGL 2, as this GPU fails WebGPU' : 'WebGL 2', webgpu)
   if (webgpu) watchForFailure(renderer, fallBack)
   return renderer
 }
