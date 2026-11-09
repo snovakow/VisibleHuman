@@ -25,8 +25,13 @@ void test('every entry sits in a folder, with a slider\'s default inside its ran
       assert.ok(entry.default >= entry.min && entry.default <= entry.max, `${key}'s default is in its range`)
       assert.ok(entry.step > 0, `${key}'s step`)
     } else if (entry.kind === 'style') {
-      // The one choice the table holds so far, whose choices are the styles
+      // The style's choices are the styles themselves
       assert.ok(styles.some((style) => style.id === entry.default), `${key}'s default is a style`)
+    } else if (entry.kind === 'choice') {
+      assert.ok(Object.values(entry.choices).includes(entry.default), `${key}'s default is among its choices`)
+      assert.ok(Object.keys(entry.choices).length > 1, `${key} has choices to make`)
+    } else if (entry.kind === 'switch') {
+      assert.equal(typeof entry.default, 'boolean', `${key} is on or off`)
     }
     if (entry.shownFor !== 'every') {
       assert.ok(entry.shownFor.styles.length > 0, `${key} is shown for some style`)

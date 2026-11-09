@@ -174,6 +174,13 @@ export function Panel({ renderer }: { renderer: string }) {
           },
         }
       }
+      if (entry.kind === 'switch') {
+        return { ...common, value: typeof current === 'boolean' ? current : entry.default, onChange }
+      }
+      if (entry.kind === 'choice') {
+        const choices: readonly unknown[] = Object.values(entry.choices)
+        return { ...common, options: entry.choices, value: choices.includes(current) ? current : entry.default, onChange }
+      }
       return { ...common, options: styleOptions, value: isStyle(current) ? current : entry.default, onChange }
     }
     // A folder's controls, in the table's order, as leva's schema, so that the keys set below stay typed by name
