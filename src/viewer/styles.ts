@@ -5,9 +5,9 @@ import type { Blend } from '../options.ts'
 export type Style = 'splats' | 'volume' | 'raytrace' | 'surface'
 
 // The ways the panel's Style chooser can draw the body, in its order; an entry added here, with its id in Style,
-// appears there. The splats draw one Gaussian per cell of a level, and the volume marches a ray through the body's 3D
-// texture from a full-screen quad; the others are still to come: the raytrace is to trace the skin and bone surfaces
-// from the same quad, and the surface to mesh them by marching cubes
+// appears there. The splats draw one Gaussian per cell of a level, the volume marches a ray through the body's 3D
+// texture from a full-screen quad, and the raytrace follows the same ray to the skin and bone surfaces; the surface,
+// still to come, is to mesh them by marching cubes
 interface StyleEntry {
   id: Style
   label: string

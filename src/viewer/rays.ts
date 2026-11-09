@@ -94,3 +94,23 @@ export function textureBox(volume: Mapped, center: Triple): { min: Triple; max: 
   })
   return { min: [min[0], min[1], min[2]], max: [max[0], max[1], max[2]] }
 }
+
+// How many times the tracer halves the span between the last sample outside a surface and the first inside it, which
+// finds the crossing within the step over 2⁶
+export const bisectionSteps = 5
+
+// The distance along a ray at which a field crosses zero, between a distance before the crossing and one after it, by
+// halving the span: each halving keeps the half whose ends lie on opposite sides, judged by whether the field is at
+// or above zero as it was at the near end. The crossing is the last span's midpoint. The TSL tracer does the same
+// with the field read from the texture
+export function bisect(field: (t: number) => number, before: number, after: number, steps = bisectionSteps): number {
+  let low = before
+  let high = after
+  const insideAtLow = field(low) >= 0
+  for (let n = 0; n < steps; n++) {
+    const mid = (low + high) / 2
+    if ((field(mid) >= 0) === insideAtLow) low = mid
+    else high = mid
+  }
+  return (low + high) / 2
+}

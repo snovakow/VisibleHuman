@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { Matrix4, PerspectiveCamera, Vector3 } from 'three'
-import { cameraRay, sceneToTexture, slab, textureBox, textureCoordinate, type Mapped } from '../src/viewer/rays.ts'
+import { bisect, bisectionSteps, cameraRay, sceneToTexture, slab, textureBox, textureCoordinate, type Mapped } from '../src/viewer/rays.ts'
 import { axesFromBytes, type Triple } from '../src/volume/format.ts'
 import { bodyBounds } from '../src/volume/levels.ts'
 
@@ -122,4 +122,26 @@ void test('the texture box is the grid\'s outer faces in the scene, centred on t
   // The texture coordinates of the box's corners are 0 and 1
   closeVector(textureCoordinate(grid, center, new Vector3(...box.min)), [0, 0, 1])
   closeVector(textureCoordinate(grid, center, new Vector3(...box.max)), [1, 1, 0])
+})
+
+void test('the bisection finds a field\'s crossing within a thirty-second of the step in five steps, rising or falling', () => {
+  assert.equal(bisectionSteps, 5)
+  // A field that rises through zero at 3.3 along a ray sampled every millimetre: the samples at 3 and 4 bracket it
+  const crossingAt = 3.3
+  const rising = bisect((t) => t - crossingAt, 3, 4)
+  assert.ok(Math.abs(rising - crossingAt) <= 1 / 32, `${rising}`)
+  // A field that falls through zero, as a ray leaving a surface sees, is found the same way
+  const falling = bisect((t) => crossingAt - t, 3, 4)
+  assert.ok(Math.abs(falling - crossingAt) <= 1 / 32, `${falling}`)
+  // Five halvings leave a span of a thirty-second, whose midpoint is within a sixty-fourth of any crossing in the step
+  for (let n = 1; n <= 100; n++) {
+    const at = 3 + n / 100
+    const found = bisect((t) => t - at, 3, 4)
+    assert.ok(Math.abs(found - at) <= 1 / 64 + 1e-12, `${at} found at ${found}`)
+  }
+  // A coarser step is halved to the same share of itself
+  const coarse = bisect((t) => t - 10.9, 8, 12)
+  assert.ok(Math.abs(coarse - 10.9) <= 4 / 64)
+  // More steps come nearer
+  assert.ok(Math.abs(bisect((t) => t - crossingAt, 3, 4, 10) - crossingAt) <= 1 / 1024)
 })

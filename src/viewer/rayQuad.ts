@@ -51,8 +51,14 @@ export function createRayQuad(material: NodeMaterial) {
 }
 
 // A fragment of the quad: the ray through its pixel, clipped to the box between cutMin and cutMax, discarded where it
-// misses the box, and otherwise handed to the style's fragment
-export function rayQuad(cutMin: Node<'vec3'>, cutMax: Node<'vec3'>, fragment: (ray: QuadRay) => Node<'vec4'>): Node<'vec4'> {
+// misses the box, and otherwise handed to the style's fragment, whose result, a colour or a depth, is the quad's
+export function rayQuad(cutMin: Node<'vec3'>, cutMax: Node<'vec3'>, fragment: (ray: QuadRay) => Node<'vec4'>): Node<'vec4'>
+export function rayQuad(cutMin: Node<'vec3'>, cutMax: Node<'vec3'>, fragment: (ray: QuadRay) => Node<'float'>): Node<'float'>
+export function rayQuad(
+  cutMin: Node<'vec3'>,
+  cutMax: Node<'vec3'>,
+  fragment: (ray: QuadRay) => Node<'vec4'> | Node<'float'>,
+): Node<'vec4'> | Node<'float'> {
   return Fn(() => {
     // The pixel's place in clip space, from −1 to 1 across and up, from the quad's corners
     const ndc = varying(positionGeometry.xy, 'vQuadNdc')
