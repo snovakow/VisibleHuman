@@ -53,7 +53,7 @@ export interface Body {
 }
 
 // The lowest and highest i, j and k of any body voxel
-interface Extent {
+export interface Extent {
   low: Triple
   high: Triple
 }
@@ -69,7 +69,7 @@ export function bodyIndices(volume: Volume): Uint32Array {
   return indices
 }
 
-function extentOf(volume: Volume, indices: Uint32Array): Extent {
+export function extentOf(volume: Volume, indices = bodyIndices(volume)): Extent {
   if (indices.length === 0) throw new Error('The volume holds no body voxels')
   const [nx, ny] = volume.size
   let lowI = nx
@@ -115,7 +115,7 @@ function sceneBasis(volume: Volume) {
 
 // The panel's name for a level: the voxels' mean spacing to a tenth of a millimetre, times the block, so the male's
 // 3.96 × 3.96 × 4 mm voxels make "4 mm", "8 mm" and so on
-function labelOf(volume: Volume, block: number) {
+export function labelOf(volume: Volume, block: number) {
   const [sx, sy, sz] = volume.spacing
   const nominal = Math.round(((sx + sy + sz) / 3) * 10) / 10
   return `${Number((nominal * block).toFixed(1))} mm`
