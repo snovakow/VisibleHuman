@@ -15,7 +15,7 @@ import {
   vec3,
   vec4,
 } from 'three/tsl'
-import type { ViewOptions } from '../store.ts'
+import type { ViewOptions } from '../options.ts'
 import type { Triple } from '../volume/format.ts'
 import type { Level } from '../volume/levels.ts'
 

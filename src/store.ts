@@ -1,29 +1,12 @@
 import { create } from 'zustand'
 import { shallow } from 'zustand/shallow'
+import { defaultOptions, type ViewOptions } from './options.ts'
 import { defaultLevel, type BodyEntry } from './volume/bodies.ts'
 import type { Volume } from './volume/format.ts'
-import { buildBody, levelOf, type Bounds, type Detail, type Levels } from './volume/levels.ts'
+import { buildBody, levelOf, type Bounds, type Levels } from './volume/levels.ts'
 import { isAbort, loadBodies, loadVolume, NotBuiltError } from './volume/loadVolume.ts'
 
 export type Status = 'loading' | 'ready' | 'failed'
-
-// What the panel sets. The cuts run from 0, nothing cut, to 1, the whole body cut away
-export interface ViewOptions {
-  // The splat level, by the block of voxels each splat stands for
-  detail: Detail
-  // The splats' size, as a share of the grid spacing's
-  size: number
-  opacity: number
-  // Down from the head
-  axial: number
-  // Back from the front
-  coronal: number
-  // Across from the body's right
-  sagittal: number
-}
-
-// Detail 2 is the 8 mm level of the male's 4 mm file, which is where a load opens it; each load picks its own default
-export const defaultOptions: ViewOptions = { detail: 2, size: 1, opacity: 1, axial: 0, coronal: 0, sagittal: 0 }
 
 // A level by its body and its id, as notBuilt lists it
 export const levelKey = (body: string, level: string) => `${body}/${level}`
@@ -47,6 +30,7 @@ interface State {
   // A load replaces any still in progress, and an older load never overwrites a newer one. Aborting the signal
   // stops the load and leaves the status to the load that takes over
   load: (body: string | null, level: string | null, signal?: AbortSignal) => Promise<void>
+  // The view options, as the panel sets them from the table in options.ts
   options: ViewOptions
   setOptions: (changes: Partial<ViewOptions>) => void
 }
