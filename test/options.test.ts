@@ -59,7 +59,8 @@ void test('the splats open as they always have: block 2 at Size 1 and Opacity 1,
     ['Size', 'Opacity', 'Axial', 'Coronal', 'Sagittal', 'Detail', 'Style'],
   )
   assert.deepEqual([axial.folder, coronal.folder, sagittal.folder], ['Cuts', 'Cuts', 'Cuts'])
-  assert.deepEqual(viewOptions.detail.shownFor, { styles: ['splats'] })
+  // The surface meshes its skin at the splats' Detail, so it shows the Detail too, at the same default
+  assert.deepEqual(viewOptions.detail.shownFor, { styles: ['splats', 'surface'] })
   assert.deepEqual(viewOptions.size.shownFor, { styles: ['splats'] })
   assert.equal(viewOptions.opacity.shownFor, 'every')
 })
@@ -108,4 +109,12 @@ void test('the surface draws the skin and the bone, no back shell until asked be
   // The switches come before the shared sliders, and Caps after the cuts
   assert.ok(optionKeys.indexOf('backShell') < optionKeys.indexOf('boneThreshold'))
   assert.ok(optionKeys.indexOf('caps') > optionKeys.indexOf('sagittal'))
+})
+
+void test('the surface colours from the texture and draws no shell until a Depth is asked for, up to 100 mm in whole millimetres', () => {
+  const { colour, depth } = viewOptions
+  assert.equal(colour.default, 'texture')
+  assert.deepEqual(Object.values(colour.choices).sort(), ['cells', 'texture'])
+  assert.deepEqual([depth.min, depth.max, depth.step, depth.default], [0, 100, 1, 0])
+  for (const entry of [colour, depth]) assert.deepEqual([entry.folder, entry.shownFor], ['Look', { styles: ['surface'] }])
 })

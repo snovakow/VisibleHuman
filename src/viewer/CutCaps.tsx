@@ -13,11 +13,13 @@ import { acquireCoverageTexture, acquireVolumeTexture, releaseCoverageTexture, r
 
 // The caps on the surface style's cuts: a quad in each active cut's plane, sized to the box the cuts leave, showing
 // the section through the body in the photographs' colours, read from the 3D texture at each pixel's place. Outside
-// the skin the cap is see-through: it ends where the coverage crosses the skin's isolevel, which is the line the skin
-// mesh is cut along, so the section is flush with the mesh's edge. The density's own edge, which is 0 outside the
-// body, would end half a voxel out in steps along the grid. The bone's section is solid while the tissue's takes the
-// skin's Opacity, so a see-through skin shows a see-through section. The caps stay outside the clipping group, since
-// their size already keeps them within the other cuts
+// the skin the cap is see-through: it ends where the loaded grid's coverage crosses the skin's isolevel, which at the
+// loaded grid's Detail is the line the skin mesh is cut along, so the section is flush with the mesh's edge. At a
+// coarser Detail the skin is meshed from the blocks' coverage, so its edge strays from the cap's, by more the coarser
+// the blocks are. The density's own edge, which is 0 outside the body, would end half a voxel out in steps along the
+// grid. The bone's section is solid while the tissue's takes the skin's Opacity, so a see-through skin shows a
+// see-through section. The caps stay outside the clipping group, since their size already keeps them within the
+// other cuts
 
 // Drawn ahead of the skin's see-through passes, so that a see-through section is laid over the bone inside before the
 // skin is laid over it; among the opaque things the order doesn't matter, since each tests its depth

@@ -29,6 +29,13 @@ export type Quality = 'auto' | 'voxel' | 'half' | 'quarter'
 // Which surfaces the raytrace follows each ray to: the skin, the bone, or both, whichever a ray meets first
 export type Trace = 'skin' | 'bone' | 'both'
 
+// Where the surface's colour comes from: the body's texture just inside the surface, at the loaded grid's resolution
+// whatever the Detail, or the colour of the blocks either side of each vertex on its mesh's grid, the Detail's for the
+// skin and the shell and the loaded grid's for the bone, mixed as the vertex lies between them. On the skin that's
+// much the splats' own colour at that Detail: a block's colour takes in the band dilated around the body as well as
+// its body voxels, and a splat's its body voxels alone
+export type SurfaceColour = 'texture' | 'cells'
+
 // The panel's folders that hold options. Body holds the body and level choosers, which are the page's load state
 // rather than view options, and Info the read-outs; both are the panel's own
 export type Folder = 'Body' | 'Look' | 'Cuts' | 'Scene'
@@ -91,6 +98,8 @@ const detailChoice = (entry: Omit<DetailChoice, 'kind'>): DetailChoice => ({ kin
 
 const every: ShownFor = 'every'
 const splats: ShownFor = { styles: ['splats'] }
+// The two styles drawn at the Detail's blocks: the splats as one per block, the surface's skin meshed on their grid
+const blocky: ShownFor = { styles: ['splats', 'surface'] }
 const volume: ShownFor = { styles: ['volume'] }
 const raytrace: ShownFor = { styles: ['raytrace'] }
 // The two styles that step through the body's texture from the ray quad
@@ -111,8 +120,9 @@ const hundredths = 0.01
 
 export const viewOptions = {
   style: styleChoice({ folder: 'Look', label: 'Style', default: 'splats', shownFor: every }),
-  // Block 2 is the 8 mm level of the male's 4 mm file, which is where a load opens it; each load picks its own default
-  detail: detailChoice({ folder: 'Look', label: 'Detail', default: 2, shownFor: splats }),
+  // Block 2 is the 8 mm level of the male's 4 mm file, which is where a load opens it; each load picks its own default.
+  // The surface meshes its skin on the same blocks, so that the mesh and the splats agree on the body
+  detail: detailChoice({ folder: 'Look', label: 'Detail', default: 2, shownFor: blocky }),
   // The splats' size, as a share of the grid spacing's. A new Size rebuilds every splat, so it's committed when a
   // drag or an edit ends
   size: slider({ folder: 'Look', label: 'Size', default: 1, min: 0.5, max: 2, step: hundredths, deferred: true, shownFor: splats }),
@@ -200,6 +210,17 @@ export const viewOptions = {
   skin: toggle({ folder: 'Look', label: 'Skin', default: true, shownFor: surface }),
   bone: toggle({ folder: 'Look', label: 'Bone', default: true, shownFor: surface }),
   backShell: toggle({ folder: 'Look', label: 'Back shell', default: false, shownFor: surface, shownWhile: translucent }),
+  colour: choice<SurfaceColour>({
+    folder: 'Look',
+    label: 'Colour',
+    default: 'texture',
+    choices: { texture: 'texture', cells: 'cells' },
+    shownFor: surface,
+  }),
+  // How far under the skin the shell inside it lies, in millimetres: the closed surface that far in from the skin
+  // everywhere, which shows the tissue at that depth through a see-through skin or with the skin off. At 0 there is
+  // no shell
+  depth: slider({ folder: 'Look', label: 'Depth (mm)', default: 0, min: 0, max: 100, step: 1, shownFor: surface }),
   // The density, on the file's scale, from which a voxel counts as bone. The default is the scale's, which the
   // density channel was built to; the range runs from dense soft tissue to the densest bone
   boneThreshold: slider({ folder: 'Look', label: 'Bone threshold', default: 110, min: 70, max: 200, step: 1, shownFor: surfaces }),
@@ -245,6 +266,8 @@ export const defaultOptions: ViewOptions = {
   skin: viewOptions.skin.default,
   bone: viewOptions.bone.default,
   backShell: viewOptions.backShell.default,
+  colour: viewOptions.colour.default,
+  depth: viewOptions.depth.default,
   boneThreshold: viewOptions.boneThreshold.default,
   rim: viewOptions.rim.default,
   opacity: viewOptions.opacity.default,
