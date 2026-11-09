@@ -2,8 +2,8 @@ import { Matrix4, Vector3, Vector4 } from 'three'
 import type { SceneAxes, Triple, Volume } from '../volume/format.ts'
 
 // The camera rays the quad styles march, and the mapping from the scene to the body's 3D texture, on the CPU: the
-// TSL in rayQuad.ts mirrors the ray and the slab test, and the march is to mirror the mapping, so that what the tests
-// prove here is what the shaders do
+// TSL in rayQuad.ts mirrors the ray and the slab test, and the march reads the mapping as the matrix built here, so
+// that what the tests prove here is what the shaders do
 
 // A direction's components are kept at least this far from zero, so that a face parallel to the ray is never a
 // division by zero

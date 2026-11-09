@@ -1,78 +1,130 @@
 import { useThree } from '@react-three/fiber'
 import { useEffect, useRef } from 'react'
-import { Vector3 } from 'three'
-import { cameraPosition, clamp, float, length, mix, uniform, vec4 } from 'three/tsl'
-import { NodeMaterial, type Mesh, type UniformNode } from 'three/webgpu'
+import { CustomBlending, OneFactor, OneMinusSrcAlphaFactor } from 'three'
+import { NodeMaterial, type Mesh } from 'three/webgpu'
 import { useShallow } from 'zustand/react/shallow'
+import type { Quality } from '../options.ts'
 import { useStore } from '../store.ts'
 import { cutBox, type Cuts } from './cuts.ts'
-import { createRayQuad, rayQuad } from './rayQuad.ts'
+import { createRayQuad } from './rayQuad.ts'
+import { asWebGPU } from './renderer.ts'
+import { modeIndex, sourceIndex, volumeMarch, windowEnds, type VolumeMarch } from './volumeMarch.ts'
+import { acquireVolumeTexture, releaseVolumeTexture } from './volumeTexture.ts'
 
-// The Volume style, as a placeholder until the ray march arrives: the quad draws how far along each pixel's ray the
-// box the cuts leave is entered, as a grey ramp, darker nearer, and nothing else, so that the quad, its rays and the
-// cuts are proven before anything is sampled along them
+// The Volume style: the body's 3D texture marched from the ray quad, in the mode, window and quality the panel sets
 
-// The ramp's grey at the nearest the box can come, above black so that the box's edge shows against the background
-const rampFloor = 0.1
+// The quad is drawn after everything else, so that what the march lays over is all there
+const quadRenderOrder = 1000
 
-// The quad, its material and the uniforms the fragment reads
+// The march's step as a share of a voxel, by Quality: the automatic step is a whole voxel on the WebGL 2 fallback,
+// which shades every pixel of the window on this project's slowest machines, and half a voxel on WebGPU
+const stepShares: Record<Exclude<Quality, 'auto'>, number> = { voxel: 1, half: 0.5, quarter: 0.25 }
+const autoStepShare = (webgpu: boolean) => (webgpu ? stepShares.half : stepShares.voxel)
+
+// The quad, its material and the march its material draws
 interface Drawn {
   quad: Mesh
   material: NodeMaterial
-  cutMin: UniformNode<'vec3'>
-  cutMax: UniformNode<'vec3'>
-  radius: UniformNode<'float'>
+  march: VolumeMarch
 }
 
 export function BodyVolume() {
   const get = useThree((s) => s.get)
+  const volume = useStore((s) => s.volume)
   const bounds = useStore((s) => s.bounds)
   const cuts = useStore(
     useShallow((s): Cuts => ({ axial: s.options.axial, coronal: s.options.coronal, sagittal: s.options.sagittal })),
   )
+  const mode = useStore((s) => s.options.mode)
+  const density = useStore((s) => s.options.density)
+  const opacity = useStore((s) => s.options.opacity)
+  const windowLow = useStore((s) => s.options.windowLow)
+  const windowHigh = useStore((s) => s.options.windowHigh)
+  const quality = useStore((s) => s.options.quality)
+  const shading = useStore((s) => s.options.shading)
   const drawn = useRef<Drawn | null>(null)
 
-  // Owns the quad for as long as the style is shown. The material tests and writes no depth, since the ramp is a
-  // check of the rays alone, and is hidden until the body's bounds give it a box
+  // Owns the quad for as long as the style is shown. The march lays what it gathers over what's behind, with its
+  // colour already multiplied by what it covers, so it tests and writes no depth and is drawn last, and it's hidden
+  // until a volume gives it a texture
   useEffect(() => {
     const { scene } = get()
-    const cutMin = uniform(new Vector3())
-    const cutMax = uniform(new Vector3())
-    // The radius of the sphere about the body's centre that holds its bounds
-    const radius = uniform(0)
+    const march = volumeMarch()
     const material = new NodeMaterial()
+    material.colorNode = march.colorNode
+    material.transparent = true
     material.depthTest = false
     material.depthWrite = false
-    material.colorNode = rayQuad(cutMin, cutMax, ({ tEnter }) => {
-      // The nearest the box can be entered is the sphere's near side, and the ramp reaches white a diameter past it
-      const nearest = length(cameraPosition).sub(radius)
-      const ramp = clamp(tEnter.sub(nearest).div(radius.mul(2)), 0, 1)
-      const grey = mix(float(rampFloor), float(1), ramp)
-      return vec4(grey, grey, grey, 1)
-    })
+    material.fog = false
     const quad = createRayQuad(material)
+    quad.renderOrder = quadRenderOrder
     quad.visible = false
     scene.add(quad)
-    drawn.current = { quad, material, cutMin, cutMax, radius }
+    drawn.current = { quad, material, march }
     return () => {
       scene.remove(quad)
       quad.geometry.dispose()
       material.dispose()
+      march.dispose()
       drawn.current = null
     }
   }, [get])
 
-  // The box the cuts leave of the bounds goes to the fragment as two corners
+  // The volume's texture, held while the volume is shown and let go when it changes or this unmounts
+  useEffect(() => {
+    const current = drawn.current
+    if (!current || !volume || !bounds) return undefined
+    const texture = acquireVolumeTexture(volume)
+    current.march.show(texture, volume, bounds.center)
+    current.quad.visible = true
+    return () => {
+      current.quad.visible = false
+      releaseVolumeTexture(volume)
+    }
+  }, [volume, bounds])
+
+  // The box the cuts leave of the bounds clips every ray and bounds its steps
+  useEffect(() => {
+    const current = drawn.current
+    if (!current || !bounds) return
+    const box = cutBox(bounds.half, cuts)
+    current.march.setCuts(box.min, box.max)
+  }, [bounds, cuts])
+
+  // The step, by Quality and, for the automatic step, by the backend drawing
   useEffect(() => {
     const current = drawn.current
     if (!current) return
-    current.quad.visible = bounds !== null
-    if (!bounds) return
-    const box = cutBox(bounds.half, cuts)
-    current.cutMin.value.fromArray(box.min)
-    current.cutMax.value.fromArray(box.max)
-    current.radius.value = Math.hypot(...bounds.half)
-  }, [bounds, cuts])
+    const webgpu = 'isWebGPUBackend' in asWebGPU(get().gl).backend
+    current.march.setStep(quality === 'auto' ? autoStepShare(webgpu) : stepShares[quality])
+  }, [get, quality])
+
+  // The mode, and the blending it needs: over, x-ray and MIP lay a premultiplied colour over what's behind, and the
+  // glow is added to it whole. three's additive blending would scale the glow by its alpha first, so the factors are
+  // given outright
+  useEffect(() => {
+    const current = drawn.current
+    if (!current) return
+    current.march.mode.value = modeIndex[mode]
+    const { material } = current
+    material.blending = CustomBlending
+    material.blendSrc = OneFactor
+    material.blendDst = mode === 'glow' ? OneFactor : OneMinusSrcAlphaFactor
+    material.needsUpdate = true
+  }, [mode])
+
+  // The rest of the panel's settings go straight to the march's uniforms
+  useEffect(() => {
+    const current = drawn.current
+    if (!current) return
+    const { march } = current
+    march.densitySource.value = sourceIndex[density]
+    march.opacity.value = opacity
+    const [low, high] = windowEnds(windowLow, windowHigh)
+    march.windowLow.value = low
+    march.windowHigh.value = high
+    march.shading.value = shading
+  }, [density, opacity, windowLow, windowHigh, shading])
 
   return null
 }

@@ -11,18 +11,20 @@ export const boneDensity = 110
 // Below this density the x-ray mode sees nothing, so soft tissue's faint haze doesn't hide the bone
 export const xrayFloor = 40
 
+// The rule's thresholds, exported so that the shader's reading of the same colours, in the volume march, is built
+// from the same numbers.
 // Pure red tissue, such as muscle (about 40 HU)
-const muscleDensity = 65
+export const muscleDensity = 65
 // Pure yellow tissue, such as fat: about −200 HU, a little under the CT's 56 for fat (about −100 HU)
-const fatDensity = 50
+export const fatDensity = 50
 // A pale, unsaturated pixel, such as cortical bone (about 1,900 HU)
-const whiteDensity = 180
+export const whiteDensity = 180
 // How pale a pixel must be, in luminance from 0 to 1, before it starts to count as bone, and where it counts fully
-const paleFrom = 0.5
-const paleTo = 0.9
+export const paleFrom = 0.5
+export const paleTo = 0.9
 // How unsaturated, in saturation from 0 to 1: fully bone at or below the first, not at all at or above the second
-const unsaturatedTo = 0.05
-const unsaturatedFrom = 0.3
+export const unsaturatedTo = 0.05
+export const unsaturatedFrom = 0.3
 
 const clamp01 = (value: number) => Math.min(1, Math.max(0, value))
 
