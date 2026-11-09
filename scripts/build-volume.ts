@@ -8,7 +8,16 @@
 //   --from A, --to B   read only slices A to B (by default every slice of the body)
 //   --previews         redraw the previews from the existing file, reading no slice
 //   --no-ct            leave the density to the colour stand-in, reading no CT slice
+//   --match card|body  give each cryo block a colour gain that matches it to the block before, by the grey strip
+//                      photographed beside the slices or by the body's own colour; by default no block takes one
 //   --data PATH        the data root, else VHP_DATA, else ~/Data/VisibleHuman
+//
+// A pre-pass first measures the colour step where each cryo block meets the next, on the slices either side of the
+// boundary: on the grey strip photographed beside them, which reads the exposure, and on the body. Neither explains
+// the male's steps as exposure: across two of its boundaries the strip reads brighter while the body reads darker. So
+// by default the steps are only reported, and every block is recorded with a gain of 1; --match applies one of them as
+// a gain per channel, which scales the block's slices' colour before it's averaged into cells. The body decision reads
+// the pixels as photographed, so no gain changes which cells are body.
 //
 // The density channel comes from the body's CT where data/<body>/registration.json places it on the photographs:
 // each layer's CT slices are resampled into the layer's cells through the segment's similarity, and a cell no CT
@@ -18,7 +27,8 @@ import { readFile, stat } from 'node:fs/promises'
 import { basename, relative, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
 import { gzipSync } from 'node:zlib'
-import { readBodies, withLevel, type BodiesFile, type BodyEntry, type LevelEntry } from '../src/volume/bodies.ts'
+import { readBodies, withLevel, type BlockGainEntry, type BodiesFile, type BodyEntry, type LevelEntry } from '../src/volume/bodies.ts'
+import { blockGains, boundaryRatio, deadBand, maxGain, minGain, type BoundaryWindows } from '../src/volume/blocks.ts'
 import { densityFromColor, densityFromCt } from '../src/volume/density.ts'
 import { bodyCoverage, cellIndex, countBody, readVolume, writeVolume, type Triple, type Volume } from '../src/volume/format.ts'
 import {
@@ -32,10 +42,11 @@ import {
 } from '../src/volume/segment.ts'
 import { apply, ctToCryo, invert, type Affine } from '../src/volume/similarity.ts'
 import { bodyOf, ctFileName, fileName, levelOf, type Body, type Level } from './lib/bodies.ts'
+import { readGrayScale, referencePatch, type CardReading } from './lib/card.ts'
 import { dataRoot, requireDataFile, setFolder } from './lib/data.ts'
 import { gunzipFile, readGray, readRgb, type RawImage } from './lib/decode.ts'
 import { writeWhole } from './lib/files.ts'
-import { insideCtField } from './lib/images.ts'
+import { insideCtField, keepPieces, minPieceMm2 } from './lib/images.ts'
 import { drawPreviews } from './lib/previews.ts'
 import { loadRegistration, registrationPath, segmentOf, type Registration } from './lib/registration.ts'
 
@@ -52,6 +63,7 @@ function options() {
       to: { type: 'string' },
       previews: { type: 'boolean', default: false },
       'no-ct': { type: 'boolean', default: false },
+      match: { type: 'string' },
       data: { type: 'string' },
     },
     strict: true,
@@ -75,7 +87,23 @@ function options() {
   const to = slice(values.to, body.lastSlice, 'to')
   if (from > to) throw new Error(`--from ${from} comes after --to ${to}`)
   const out = values.out ?? `public/volume/${body.id}-${spacing}mm.bin`
-  return { body, level, from, to, out, previews: values.previews, noCt: values['no-ct'], root: dataRoot(values.data) }
+  const isMatch = (value: string): value is Match => value === 'card' || value === 'body'
+  let match: Match | null = null
+  if (values.match !== undefined) {
+    if (!isMatch(values.match)) throw new Error(`--match takes card or body, not ${values.match}`)
+    match = values.match
+  }
+  return {
+    body,
+    level,
+    from,
+    to,
+    out,
+    previews: values.previews,
+    noCt: values['no-ct'],
+    match,
+    root: dataRoot(values.data),
+  }
 }
 
 // The field of cells a slice divides into at a level, and where each pixel falls in it. The last column and row of
@@ -176,28 +204,276 @@ const emptySums = (frame: Frame, position: number, field: Field): SliceSums => (
   total: 0,
 })
 
-// A slice's sums, read from its file in the data root. A file that can't be decoded stops the build, unless the body
-// lists it as blank, when it's read as one
-async function readFrame(frame: Frame, position: number, body: Body, field: Field, root: string, blanks: ReadonlySet<string>) {
+// A slice's pixels, read from its file in the data root. A file that can't be decoded stops the build, unless the body
+// lists it as blank, when it's read as an empty slice, null
+async function readSlice(frame: Frame, body: Body, root: string, blanks: ReadonlySet<string>): Promise<RawImage | null> {
   const path = await requireDataFile(root, body.set, frame.name)
   let image: RawImage
   try {
     image = await readRgb(path)
   } catch (error) {
     if (!blanks.has(frame.name)) throw new Error(`${path} can't be decoded: ${String(error)}`, { cause: error })
-    return emptySums(frame, position, field)
+    return null
   }
   if (image.width !== body.width || image.height !== body.height) {
     throw new Error(`${path} is ${image.width} × ${image.height}, not ${body.width} × ${body.height}`)
   }
-  return sliceSums(frame, position, image, body, field)
+  return image
+}
+
+// A slice's sums, read from its file in the data root
+async function readFrame(frame: Frame, position: number, body: Body, field: Field, root: string, blanks: ReadonlySet<string>) {
+  const image = await readSlice(frame, body, root, blanks)
+  return image ? sliceSums(frame, position, image, body, field) : emptySums(frame, position, field)
+}
+
+// The window either side of a boundary between cryo blocks that its step is measured on: this many slices kept
+// before the boundary, and as many after it, past the first few kept after it, which the frost a block starts with
+// still tints (slices 2021 to 2024 of the male, after the four its frost leaves short)
+const gainWindow = 8
+const frostSkip = 4
+// Gains are recorded to this many decimals, and applied as recorded
+const gainDecimals = 4
+// A window whose strip readings range over more than this share of their mean is suspect: read on its white patch,
+// the male's strip held to 1.3 % or better within a block
+const suspectSpread = 0.02
+
+// What a block's colour is matched to the block before it by, if anything: the grey strip photographed beside each
+// slice, or the body's own colour either side of the boundary
+type Match = 'card' | 'body'
+
+// A cryo block's gain per channel, from its first slice to its last
+interface BlockGains {
+  blocks: readonly (readonly [number, number])[]
+  gains: readonly Triple[]
+}
+
+// A window's slices summed into the field's cells, as a layer is: per cell, its body pixels' channels and count, and
+// its pixels
+function windowSums(field: Field) {
+  const { layerCells } = field
+  return {
+    red: new Float64Array(layerCells),
+    green: new Float64Array(layerCells),
+    blue: new Float64Array(layerCells),
+    body: new Uint32Array(layerCells),
+    pixels: new Uint32Array(layerCells),
+  }
+}
+type WindowSums = ReturnType<typeof windowSums>
+
+const luminanceOf = ([r, g, b]: Triple) => 0.299 * r + 0.587 * g + 0.114 * b
+const meanTriple = (values: readonly Triple[]): Triple => {
+  const mean = (c: number) => values.reduce((sum, value) => sum + value[c], 0) / values.length
+  return [mean(0), mean(1), mean(2)]
+}
+
+// Measures the colour step at each boundary between the body's cryo blocks two ways, from the windows either side of
+// it, and gives each block a gain from one of them if `match` asks, else 1. The grey strip (card.ts) reads the
+// exposure: its reference patch's mean over each window's slices, a slice whose strip isn't found named and left out.
+// The body reads everything that changed: its colour over the cells that are body in both windows, in pieces large
+// enough to be body, so both sides are the same stretch of it, since the tags and the cards pass the body rule too
+// and come and go from block to block (the male's legs start beside a card of coloured patches, 2436 to 2443). A slice
+// is kept or missing by the same rule as the build's (segment.ts), judged among the body's slices whatever --from and
+// --to say, so a range takes the gains the whole body does; only the boundaries before the range's last block are
+// measured. Prints both, per boundary, and the gains each would give
+async function measureBlocks(body: Body, level: Level, field: Field, to: number, root: string, match: Match | null): Promise<BlockGains> {
+  const blocks = body.cryoBlocks.filter(([first]) => first <= to)
+  const unit = blocks.map((): Triple => [1, 1, 1])
+  if (blocks.length < 2) return { blocks, gains: unit }
+  const started = performance.now()
+  const frames = framesOf(body, body.firstSlice, body.lastSlice)
+  const blanks = new Set(body.blankFiles)
+  const { layerCells, cellPixels } = field
+  // Every pixel each slice read has that the rule passes, which is what judges it kept or missing
+  const totals = new Map<number, Promise<number>>()
+  let decoded = 0
+  const totalAt = (position: number) => {
+    let total = totals.get(position)
+    if (!total) {
+      decoded++
+      total = readFrame(frames[position], position, body, field, root, blanks).then((sums) => sums.total)
+      totals.set(position, total)
+    }
+    return total
+  }
+  // Reads a run of slices ahead of their judging, a batch at a time
+  const prefetch = async (first: number, last: number) => {
+    const wanted: number[] = []
+    for (let p = Math.max(0, first); p <= Math.min(frames.length - 1, last); p++) if (!totals.has(p)) wanted.push(p)
+    for (let n = 0; n < wanted.length; n += batchSize) await Promise.all(wanted.slice(n, n + batchSize).map(totalAt))
+  }
+  const nonBlank = async (start: number, step: 1 | -1) => {
+    const found: number[] = []
+    for (let p = start; p >= 0 && p < frames.length && found.length < dipWindow; p += step) {
+      const total = await totalAt(p)
+      if (total > 0) found.push(total)
+    }
+    return found
+  }
+  const isKept = async (position: number) =>
+    missingReason(await totalAt(position), await nonBlank(position - 1, -1), await nonBlank(position + 1, 1)) === null
+  const positionOf = (slice: number) => frames.findIndex((frame) => frame.slice === slice)
+  const lastPositionOf = (slice: number) => frames.findLastIndex((frame) => frame.slice === slice)
+
+  // The kept slices of a block from one end, by step, after skipping some
+  const keptRun = async (from: number, until: number, step: 1 | -1, skip: number) => {
+    const run: number[] = []
+    let skipped = 0
+    for (let p = from; step > 0 ? p <= until : p >= until; p += step) {
+      if (!(await isKept(p))) continue
+      if (skipped < skip) skipped++
+      else run.push(p)
+      if (run.length === gainWindow) return run
+    }
+    throw new Error(`Only ${run.length} slices kept from ${frames[from].name} for a window of ${gainWindow}`)
+  }
+  // The window's slices, read again for their cells' sums and their strip, neither kept while the slices are judged
+  const readWindow = async (positions: readonly number[]) => {
+    const sums = windowSums(field)
+    const strips: CardReading[] = []
+    const missed: number[] = []
+    for (let n = 0; n < positions.length; n += batchSize) {
+      const batch = positions.slice(n, n + batchSize)
+      decoded += batch.length
+      const images = await Promise.all(batch.map((p) => readSlice(frames[p], body, root, blanks)))
+      images.forEach((image, m) => {
+        if (!image) return
+        const slice = sliceSums(frames[batch[m]], batch[m], image, body, field)
+        for (let cell = 0; cell < layerCells; cell++) {
+          sums.red[cell] += slice.red[cell]
+          sums.green[cell] += slice.green[cell]
+          sums.blue[cell] += slice.blue[cell]
+          sums.body[cell] += slice.body[cell]
+          sums.pixels[cell] += cellPixels[cell]
+        }
+        const strip = readGrayScale(image)
+        if (strip) strips.push(strip)
+        else missed.push(batch[m])
+      })
+    }
+    if (strips.length === 0) throw new Error(`No grey strip found in ${positions.map((p) => frames[p].name).join(', ')}`)
+    const reference = strips.map((strip) => strip.patches[referencePatch])
+    const luminances = reference.map(luminanceOf)
+    const mean = luminances.reduce((a, b) => a + b, 0) / luminances.length
+    const card = {
+      reference: meanTriple(reference),
+      white: meanTriple(strips.map((strip) => strip.patches[0])),
+      whiteClipped: strips.reduce((sum, strip) => sum + strip.whiteClipped, 0) / strips.length,
+      pixels: Math.round(strips.reduce((sum, strip) => sum + strip.pixels, 0) / strips.length),
+      slices: strips.length,
+      spread: (Math.max(...luminances) - Math.min(...luminances)) / mean,
+      missed,
+    }
+    return { sums, card }
+  }
+  // A piece of the cells both windows hold as body smaller than this many cells is not the body
+  const cellMm = level.pixels * body.pixelSize
+  const minPieceCells = Math.ceil(minPieceMm2 / (cellMm * cellMm))
+  const matched = (before: WindowSums, after: WindowSums) => {
+    const both = new Uint8Array(layerCells)
+    for (let cell = 0; cell < layerCells; cell++) {
+      if (isBodyCell(before.body[cell], before.pixels[cell]) && isBodyCell(after.body[cell], after.pixels[cell])) both[cell] = 1
+    }
+    return keepPieces(both, field.nx, field.ny, minPieceCells)
+  }
+  const meanOver = (window: WindowSums, cells: Uint8Array): Triple => {
+    let red = 0
+    let green = 0
+    let blue = 0
+    let count = 0
+    for (let cell = 0; cell < layerCells; cell++) {
+      if (cells[cell] === 0) continue
+      red += window.red[cell]
+      green += window.green[cell]
+      blue += window.blue[cell]
+      count += window.body[cell]
+    }
+    return [red / count, green / count, blue / count]
+  }
+
+  const rgb = (values: Triple, digits: number) => values.map((value) => value.toFixed(digits)).join(' ')
+  const percent = (share: number) => `${(100 * share).toFixed(1)} %`
+  const span = (positions: readonly number[]) => `${frameText(body, positions[0])}–${frameText(body, positions[positions.length - 1])}`
+  const cardWindows: BoundaryWindows[] = []
+  const bodyWindows: BoundaryWindows[] = []
+  console.log(`Block boundaries, read on the grey strip's patch ${referencePatch} from its white and on the body:`)
+  for (let n = 0; n + 1 < blocks.length; n++) {
+    const end = lastPositionOf(blocks[n][1])
+    const start = positionOf(blocks[n + 1][0])
+    const reach = gainWindow + frostSkip + 2 * dipWindow
+    await Promise.all([prefetch(end - reach, end), prefetch(start, start + reach)])
+    const before = (await keptRun(end, positionOf(blocks[n][0]), -1, 0)).toReversed()
+    const after = await keptRun(start, lastPositionOf(blocks[n + 1][1]), 1, frostSkip)
+    const sides = { before: await readWindow(before), after: await readWindow(after) }
+    const cells = matched(sides.before.sums, sides.after.sums)
+    const cardWindow = { before: sides.before.card.reference, after: sides.after.card.reference }
+    const bodyWindow = { before: meanOver(sides.before.sums, cells), after: meanOver(sides.after.sums, cells) }
+    cardWindows.push(cardWindow)
+    bodyWindows.push(bodyWindow)
+    console.log(`  ${blocks[n][1]}/${blocks[n + 1][0]}: windows ${span(before)} and ${span(after)}`)
+    for (const [side, { card }] of [['before', sides.before], ['after', sides.after]] as const) {
+      const suspect = card.spread > suspectSpread ? `, past ${percent(suspectSpread)}: suspect` : ''
+      const missed = card.missed.length > 0 ? `; no strip found in ${card.missed.map((p) => frames[p].name).join(', ')}` : ''
+      console.log(
+        `    strip ${side.padEnd(6)} patch ${referencePatch} ${rgb(card.reference, 1)} over ${card.slices} slices of ` +
+          `${card.pixels.toLocaleString('en')} px, spread ${percent(card.spread)}${suspect}; white ${rgb(card.white, 1)}, ` +
+          `${percent(card.whiteClipped)} of it at the clip${missed}`,
+      )
+    }
+    console.log(
+      `    body over ${cells.reduce((a, b) => a + b, 0).toLocaleString('en')} cells: before ${rgb(bodyWindow.before, 1)}, ` +
+        `after ${rgb(bodyWindow.after, 1)}`,
+    )
+    console.log(`    ratio before/after: strip ${rgb(boundaryRatio(cardWindow), 4)}, body ${rgb(boundaryRatio(bodyWindow), 4)}`)
+  }
+  const round = (gain: Triple): Triple => [
+    Number(gain[0].toFixed(gainDecimals)),
+    Number(gain[1].toFixed(gainDecimals)),
+    Number(gain[2].toFixed(gainDecimals)),
+  ]
+  const byCard = blockGains(cardWindows)
+  const byBody = blockGains(bodyWindows)
+  const applied = match === 'card' ? byCard : match === 'body' ? byBody : null
+  const gains = applied ? applied.map(({ gain }) => round(gain)) : unit
+  const held = (gain: { clamped: boolean }) => (gain.clamped ? ` (held to ${minGain}–${maxGain})` : '')
+  console.log(
+    `Gains per block, cumulative, by the strip and by the body (a step within ${percent(deadBand)} on every channel ` +
+      `takes none); ${match ? `the ${match === 'card' ? 'strip' : 'body'}'s applied, as --match ${match} asks` : 'none applied, as no --match asks'}:`,
+  )
+  blocks.forEach(([first, last], n) => {
+    console.log(
+      `  ${`${first}–${last}`.padEnd(10)} strip ${rgb(round(byCard[n].gain), 4)}${held(byCard[n])}, ` +
+        `body ${rgb(round(byBody[n].gain), 4)}${held(byBody[n])}`,
+    )
+  })
+  console.log(`Measured in ${Math.round((performance.now() - started) / 1000)} s from ${decoded} slice decodes`)
+  return { blocks, gains }
+}
+
+// The gain of a slice's block; a slice between blocks takes the block's before it, and one before every block 1
+function gainOfSlice(gains: BlockGains, slice: number): Triple {
+  let gain: Triple = [1, 1, 1]
+  gains.blocks.forEach(([first], n) => {
+    if (first <= slice) gain = gains.gains[n]
+  })
+  return gain
 }
 
 // The field of every layer read: for each cell, whether it's body by the rule, the share of its pixels that are body
-// scaled to 255, and the mean colour of its body pixels. Each slice is decided once the dipWindow non-blank slices
-// after it are read: a missing one adds nothing to its layer (segment.ts). Memory holds the sums of the layer being
-// built and of the slices waiting on that decision, never the slices themselves
-async function readLayers(body: Body, level: Level, field: Field, frames: readonly Frame[], root: string) {
+// scaled to 255, the mean colour of its body pixels, each slice's scaled by its block's gain, and the density the
+// colour stand-in gives that mean as photographed, without the gain, so matching the blocks changes no density. Each
+// slice is decided once the dipWindow non-blank slices after it are read: a missing one adds nothing to its layer
+// (segment.ts). Memory holds the sums of the layer being built and of the slices waiting on that decision, never the
+// slices themselves
+async function readLayers(
+  body: Body,
+  level: Level,
+  field: Field,
+  frames: readonly Frame[],
+  root: string,
+  gains: BlockGains,
+) {
   const { layerCells, cellPixels } = field
   const layerOf = (index: number) => Math.floor(index / level.slices)
   const firstLayer = layerOf(frames[0].index)
@@ -205,6 +481,9 @@ async function readLayers(body: Body, level: Level, field: Field, frames: readon
   const bodyCells = new Uint8Array(layerCells * layers)
   const share = new Uint8Array(layerCells * layers)
   const colors = new Uint8Array(layerCells * layers * 3)
+  const colorDensity = new Uint8Array(layerCells * layers)
+  // Channels whose mean the gain took past 255, held there
+  let saturated = 0
   // Each frame's body pixels, once read, by its position in frames
   const counts = new Int32Array(frames.length)
   const missing: Record<MissingReason, number[]> = { blank: [], short: [] }
@@ -214,25 +493,38 @@ async function readLayers(body: Body, level: Level, field: Field, frames: readon
   let read = 0
   const started = performance.now()
 
-  // The layer being built, from the slices kept so far
+  // The layer being built, from the slices kept so far: the colour sums with each slice's gain, then without
   const layer = {
     index: 0,
     kept: 0,
-    red: new Uint32Array(layerCells),
-    green: new Uint32Array(layerCells),
-    blue: new Uint32Array(layerCells),
+    red: new Float64Array(layerCells),
+    green: new Float64Array(layerCells),
+    blue: new Float64Array(layerCells),
+    rawRed: new Uint32Array(layerCells),
+    rawGreen: new Uint32Array(layerCells),
+    rawBlue: new Uint32Array(layerCells),
     body: new Uint32Array(layerCells),
     pixels: new Uint32Array(layerCells),
   }
   const keep = (sums: SliceSums) => {
+    const [gr, gg, gb] = gainOfSlice(gains, sums.frame.slice)
     for (let cell = 0; cell < layerCells; cell++) {
-      layer.red[cell] += sums.red[cell]
-      layer.green[cell] += sums.green[cell]
-      layer.blue[cell] += sums.blue[cell]
+      layer.red[cell] += sums.red[cell] * gr
+      layer.green[cell] += sums.green[cell] * gg
+      layer.blue[cell] += sums.blue[cell] * gb
+      layer.rawRed[cell] += sums.red[cell]
+      layer.rawGreen[cell] += sums.green[cell]
+      layer.rawBlue[cell] += sums.blue[cell]
       layer.body[cell] += sums.body[cell]
       layer.pixels[cell] += cellPixels[cell]
     }
     layer.kept++
+  }
+  const channelMean = (sum: number, count: number) => {
+    const mean = Math.round(sum / count)
+    if (mean <= 255) return mean
+    saturated++
+    return 255
   }
   const finishLayer = () => {
     const base = layer.index * layerCells
@@ -243,9 +535,14 @@ async function readLayers(body: Body, level: Level, field: Field, frames: readon
       if (pixels > 0) share[base + cell] = Math.round((255 * count) / pixels)
       if (isBodyCell(count, pixels)) bodyCells[base + cell] = 1
       if (count === 0) continue
-      colors[(base + cell) * 3] = Math.round(layer.red[cell] / count)
-      colors[(base + cell) * 3 + 1] = Math.round(layer.green[cell] / count)
-      colors[(base + cell) * 3 + 2] = Math.round(layer.blue[cell] / count)
+      colors[(base + cell) * 3] = channelMean(layer.red[cell], count)
+      colors[(base + cell) * 3 + 1] = channelMean(layer.green[cell], count)
+      colors[(base + cell) * 3 + 2] = channelMean(layer.blue[cell], count)
+      colorDensity[base + cell] = densityFromColor(
+        Math.round(layer.rawRed[cell] / count),
+        Math.round(layer.rawGreen[cell] / count),
+        Math.round(layer.rawBlue[cell] / count),
+      )
     }
     // Progress every ten layers, and at the last, which stands in for a tenth within ten of it
     if (layer.index === layers - 1 || (layer.index % 10 === 9 && layers - 1 - layer.index >= 10)) {
@@ -254,7 +551,9 @@ async function readLayers(body: Body, level: Level, field: Field, frames: readon
         `Read slices to ${frameText(body, frames[read - 1].index)}: ${read} of ${frames.length}, about ${Math.ceil(left / 60)} min left`,
       )
     }
-    for (const sums of [layer.red, layer.green, layer.blue, layer.body, layer.pixels]) sums.fill(0)
+    for (const sums of [layer.red, layer.green, layer.blue, layer.rawRed, layer.rawGreen, layer.rawBlue, layer.body, layer.pixels]) {
+      sums.fill(0)
+    }
     layer.kept = 0
     layer.index++
   }
@@ -294,7 +593,9 @@ async function readLayers(body: Body, level: Level, field: Field, frames: readon
   }
   while (layer.index < layers) finishLayer()
 
-  // A layer made only of missing slices is filled from its nearest read layers, so the body stays one piece
+  if (saturated > 0) console.log(`Cell channels the block gains took past 255, held there: ${saturated.toLocaleString('en')}`)
+  // A layer made only of missing slices is filled from its nearest read layers, so the body stays one piece, and its
+  // colour blended between them
   const layerText = (index: number) => {
     const first = Math.max(frames[0].index, (firstLayer + index) * level.slices)
     const last = Math.min(frames[frames.length - 1].index, (firstLayer + index + 1) * level.slices - 1)
@@ -302,16 +603,19 @@ async function readLayers(body: Body, level: Level, field: Field, frames: readon
   }
   if (missing.blank.length > 0) console.log(`Blank slices, read as missing: ${runsText(body, missing.blank)}`)
   if (missing.short.length > 0) console.log(`Short slices, read as missing: ${runsText(body, missing.short)}`)
-  const sources = fillMissingLayers([bodyCells, share, colors], layerCells, missingLayers)
+  const sources = fillMissingLayers([bodyCells, share, colors, colorDensity], layerCells, missingLayers, {
+    colors,
+    body: bodyCells,
+  })
   sources.forEach((source, index) => {
     if (source === index) return
     console.log(
       source < 0
         ? `Layer ${layerText(index)} has no slice and nothing to fill it from`
-        : `Layer ${layerText(index)} has no slice, so it's filled from layer ${layerText(source)}`,
+        : `Layer ${layerText(index)} has no slice, so its cells are filled from layer ${layerText(source)}`,
     )
   })
-  return { firstLayer, layers, body: bodyCells, share, colors }
+  return { firstLayer, layers, body: bodyCells, share, colors, colorDensity }
 }
 type Grid = Awaited<ReturnType<typeof readLayers>>
 
@@ -478,7 +782,7 @@ function cropToBody(grid: Grid, body: Body, level: Level, field: Field, from: nu
             // under the registered CT's bone the photographs' pixels have a saturation of 0.35–0.41 against the
             // stand-in's unsaturated limit of 0.3, so they read as soft tissue pixel by pixel too, and the cell mean
             // loses nothing
-            density[index] = densityFromColor(red[index], green[index], blue[index])
+            density[index] = grid.colorDensity[source]
             fromColor++
           }
           continue
@@ -569,7 +873,15 @@ function levelEntry(body: Body, level: Level): LevelEntry {
 
 // Records a file just written into public/volume/ in bodies.json, measured, beside the body's other levels as they
 // were last built; a file written anywhere else is left out, as it isn't one the page loads
-async function recordLevel(out: string, body: Body, level: Level, volume: Volume, bytes: number, fromCt: boolean) {
+async function recordLevel(
+  out: string,
+  body: Body,
+  level: Level,
+  volume: Volume,
+  bytes: number,
+  fromCt: boolean,
+  gains: BlockGains,
+) {
   const path = resolve(out)
   if (relative(volumeFolder, path) !== basename(path)) return null
   let listed: BodiesFile | null = null
@@ -593,12 +905,13 @@ async function recordLevel(out: string, body: Body, level: Level, volume: Volume
     textureBytes: volume.size[0] * volume.size[1] * volume.size[2] * 4,
     density: fromCt ? 'ct' : 'colour',
   }
+  built.blockGains = gains.blocks.map(([first, last], n): BlockGainEntry => ({ slices: [first, last], gain: gains.gains[n] }))
   await writeWhole(bodiesPath, new TextEncoder().encode(`${JSON.stringify(withLevel(listed, entry, built), null, 2)}\n`))
   return bodiesPath
 }
 
 async function main() {
-  const { body, level, from, to, out, previews, noCt, root } = options()
+  const { body, level, from, to, out, previews, noCt, match, root } = options()
   const started = performance.now()
   if (previews) {
     for (const path of await drawPreviews(readVolume(await gunzipFile(out)))) console.log(`Preview: ${path}`)
@@ -607,8 +920,9 @@ async function main() {
 
   const field = fieldOf(body, level)
   const frames = framesOf(body, from, to)
+  const gains = await measureBlocks(body, level, field, to, root, match)
   console.log(`Reading the ${body.id}'s slices ${from} to ${to} from ${setFolder(root, body.set)} at ${level.spacing} mm`)
-  const grid = await readLayers(body, level, field, frames, root)
+  const grid = await readLayers(body, level, field, frames, root, gains)
   let ct: CtDensity | null = null
   if (noCt) console.log('Density from the colour alone, as --no-ct asks')
   else if (!body.ct) console.log(`Density from the colour alone: the ${body.id} has no CT set`)
@@ -628,7 +942,7 @@ async function main() {
 
   const { size } = await stat(out)
   // A range the CT doesn't reach, such as the crown's first slices alone, is recorded as the colour's
-  const listed = await recordLevel(out, body, level, volume, size, fromCt > 0)
+  const listed = await recordLevel(out, body, level, volume, size, fromCt > 0, gains)
   if (listed) console.log(`Recorded the ${level.spacing} mm level in ${relative(process.cwd(), listed)}`)
   const seconds = (performance.now() - started) / 1000
   const cells = volume.size[0] * volume.size[1] * volume.size[2]

@@ -57,6 +57,7 @@ It reads the slices from the local copy of the NLM's images that `npm run fetch`
 - `--spacing` picks how fine the blocks are, in millimetres: 4 for the file the page opens on, 2 for a finer one, several times the size. The finer file isn't committed: it's built before a deploy, and a host without it offers it as not built. A file written into `public/volume/` is entered in `bodies.json` as it's written.
 - `--previews` redraws the previews from the existing file, without reading any slice.
 - `--no-ct` estimates every block's density from its colour and reads no CT, for a local copy without the CT's images.
+- `--match card` or `--match body` evens out the colour where one frozen block of the body meets the next, by the grey scale card photographed beside every slice or by the body's own colour either side of the join. Without it each block keeps its colour as photographed. The script measures and reports both steps either way: on the male the card doesn't explain them, since across two of the joins it reads brighter where the body reads darker.
 - `--from` and `--to` read only a range of slices, numbered 1001 to 2878 from the head down; `--out` writes the file somewhere else; `--data` names the folder of the local copy, as it does for `npm run fetch`.
 
 ## Source data

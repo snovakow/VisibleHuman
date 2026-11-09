@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { defaultLevel, readBodies, withLevel, type BodyEntry, type LevelEntry } from '../src/volume/bodies.ts'
+import { defaultLevel, readBodies, withLevel, type BlockGainEntry, type BodyEntry, type LevelEntry } from '../src/volume/bodies.ts'
 
 // bodies.json: the page's reading of it, and the script's update of one level's entry
 
@@ -50,4 +50,18 @@ void test('a built level replaces its entry and keeps the others as last built',
   const fine: LevelEntry = { ...twoMm, size: [286, 164, 942], bytes: 39000000, textureBytes: 176_734_272, density: 'colour' }
   const second = withLevel({ bodies: [female, ...first.bodies] }, male, fine)
   assert.deepEqual(second, { bodies: [female, { ...male, levels: [built, fine] }] })
+})
+
+void test('a level built with block gains reads them back, and a malformed gain is refused', () => {
+  const blockGains: BlockGainEntry[] = [
+    { slices: [1001, 1505], gain: [1, 1, 1] },
+    { slices: [1506, 2016], gain: [1.0412, 1.0503, 1.0611] },
+  ]
+  const built: LevelEntry = { ...fourMm, size: [144, 83, 472], bytes: 5653887, density: 'ct', blockGains }
+  const file = { bodies: [{ ...male, levels: [built, twoMm] }] }
+  assert.deepEqual(readBodies(JSON.parse(JSON.stringify(file))), file)
+  const withGains = (gains: unknown) => ({ bodies: [{ ...male, levels: [{ ...fourMm, blockGains: gains }] }] })
+  assert.throws(() => readBodies(withGains({ slices: [1001, 1505] })), /isn't a list/)
+  assert.throws(() => readBodies(withGains([{ slices: [1505, 1001], gain: [1, 1, 1] }])), /slices/)
+  assert.throws(() => readBodies(withGains([{ slices: [1001, 1505], gain: [1, 0, 1] }])), /gain/)
 })

@@ -8,6 +8,14 @@ import type { Triple } from './format.ts'
 // Where a level's density comes from: the colour stand-in, or the registered CT
 export type DensitySource = 'colour' | 'ct'
 
+// The colour gain one cryo block's slices took, per channel, R, G and B, to even out the colour step at the block's
+// boundary with the block before it; the first block's is 1
+export interface BlockGainEntry {
+  // The block's first and last slice numbers
+  slices: readonly [number, number]
+  gain: Triple
+}
+
 export interface LevelEntry {
   // Such as "4mm", unique within the body
   id: string
@@ -26,6 +34,8 @@ export interface LevelEntry {
   bytes?: number
   textureBytes?: number
   density?: DensitySource
+  // The gains its colour took, block by block, when it was built with them
+  blockGains?: BlockGainEntry[]
 }
 
 export interface BodyEntry {
@@ -58,6 +68,16 @@ function triple(record: Record<string, unknown>, key: string, where: string): Tr
   return [a, b, c]
 }
 
+function readBlockGain(value: unknown, where: string): BlockGainEntry {
+  if (!isRecord(value)) throw new Error(`${where} isn't an object`)
+  const { slices } = value
+  const [first, last]: unknown[] = Array.isArray(slices) && slices.length === 2 ? slices : []
+  if (typeof first !== 'number' || typeof last !== 'number' || !Number.isInteger(first) || !Number.isInteger(last) || first > last) {
+    throw new Error(`${where}'s slices aren't a first and a last slice number`)
+  }
+  return { slices: [first, last], gain: triple(value, 'gain', where) }
+}
+
 function readLevel(value: unknown, where: string): LevelEntry {
   if (!isRecord(value)) throw new Error(`${where} isn't an object`)
   const id = text(value, 'id', where)
@@ -80,6 +100,10 @@ function readLevel(value: unknown, where: string): LevelEntry {
   const { density } = value
   if (density === 'colour' || density === 'ct') level.density = density
   else if (density !== undefined) throw new Error(`${at}'s density ${JSON.stringify(density)} isn't colour or ct`)
+  const { blockGains } = value
+  if (Array.isArray(blockGains)) {
+    level.blockGains = blockGains.map((gain: unknown, n) => readBlockGain(gain, `${at}'s block gain ${n + 1}`))
+  } else if (blockGains !== undefined) throw new Error(`${at}'s blockGains isn't a list`)
   return level
 }
 
