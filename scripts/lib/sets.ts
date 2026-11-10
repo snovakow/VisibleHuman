@@ -203,6 +203,16 @@ export function ruleNames(rule: NameRule): string[] {
   return names
 }
 
+// Every file name of a set whose names all follow rules, in the table's order
+export function setNames(id: string): string[] {
+  const set = sets.find((candidate) => candidate.id === id)
+  if (!set) throw new Error(`No set is called ${id}`)
+  return set.sources.flatMap((source) => {
+    if (!source.names) throw new Error(`The set ${id} takes whatever its folder lists, so its names aren't known ahead`)
+    return ruleNames(source.names)
+  })
+}
+
 const byNumber = (a: string, b: string) => a.localeCompare(b, 'en', { numeric: true })
 
 // The files a set wants, from its folders' listings: a rule's names in its order, or every listed name in number order.

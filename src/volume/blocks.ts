@@ -5,8 +5,9 @@ import type { Triple } from './format.ts'
 // one. A block can take one gain per channel that carries a reference colour across the boundary before it: the
 // reference in the slices just before the boundary over that in the slices just after it, times the gain of the block
 // before, from 1 at the first block. The reference may be the grey card photographed beside each slice, which reads
-// the exposure, or the body's own colour, which also carries the tissue's change across the boundary. Exposure within
-// a block is flat, so no slice takes a gain of its own
+// the exposure, or the body's own colour, which also carries the tissue's change across the boundary. A gain is a
+// block's, never a slice's: within a block the card holds steady from one slice to the next, and what does change
+// from slice to slice there is the frost and the gel, which a gain would print onto the body
 
 // The gains a block may take: a larger step than this is not an exposure step but something the windows got wrong,
 // such as a window on the frost of a block's first slices, and is held at the limit and reported

@@ -280,17 +280,17 @@ async function readFrame(frame: Frame, position: number, body: Body, field: Fiel
 const unreadableOf = (body: Body) => new Set([...body.blankFiles, ...body.emptyFiles])
 
 // The window either side of a boundary between cryo blocks that its step is measured on: the slices kept over this
-// many millimetres before the boundary, and as many after it, past those kept over the first few millimetres after
-// it, which the frost a block starts with still tints (slices 2021 to 2024 of the male, after the four its frost
-// leaves short; the female's 1497c to 1499b). Counted in millimetres, as the short rule's window is, so the windows
-// span as much of every body; kept here means kept by the blank and short rules, the frosted slices after a boundary
-// lying within the skip
+// many millimetres on each side, past those kept over the few millimetres nearest the boundary, which the frost on a
+// block's two faces still tints (slice 2016 of the male before a boundary, and 2021 to 2024 after it, past the four
+// its frost leaves short). Counted in millimetres, as the short rule's window is, so the windows span as much of
+// every body; kept here means kept by the blank and short rules, the frosted slices either side of a boundary lying
+// within the skip
 const gainWindowMm = 8
 const frostSkipMm = 4
 // Gains are recorded to this many decimals, and applied as recorded
 const gainDecimals = 4
-// A window whose strip readings range over more than this share of their mean is suspect: read on its white patch,
-// the male's strip held to 1.3 % or better within a block
+// A window whose strip readings range over more than this share of their mean is suspect: read on the first patch
+// that the scan doesn't clip, the male's strip holds to 0.2 to 0.5 % within a window
 const suspectSpread = 0.02
 
 // What a block's colour is matched to the block before it by, if anything: the grey strip photographed beside each
@@ -467,7 +467,7 @@ async function measureBlocks(body: Body, level: Level, field: Field, to: number,
     const start = positionOf(blocks[n + 1][0])
     const reach = gainWindow + frostSkip + 2 * dipWindow
     await Promise.all([prefetch(end - reach, end), prefetch(start, start + reach)])
-    const before = (await keptRun(end, positionOf(blocks[n][0]), -1, 0)).toReversed()
+    const before = (await keptRun(end, positionOf(blocks[n][0]), -1, frostSkip)).toReversed()
     const after = await keptRun(start, lastPositionOf(blocks[n + 1][1]), 1, frostSkip)
     const sides = { before: await readWindow(before), after: await readWindow(after) }
     const cells = matched(sides.before.sums, sides.after.sums)
@@ -958,8 +958,8 @@ async function readScans(body: Body, level: Level, field: Field, grid: Grid, reg
   const { scans } = body
   if (!scans) throw new Error(`The ${body.id} has no whole scans`)
   const started = performance.now()
-  const cat = await readDicomSeries(setFolder(root, scans.ct.set))
-  const mri = await readDicomSeries(setFolder(root, scans.mri.set))
+  const cat = await readDicomSeries(root, scans.ct.set)
+  const mri = await readDicomSeries(root, scans.mri.set)
   for (const [name, scan, saved] of [['CAT', cat, registration.cat], ['MRI', mri, registration.mri]] as const) {
     if (scan.frameUID !== saved.frameUID || scan.size.some((value, n) => value !== saved.size[n])) {
       throw new Error(`The ${name} in the data root isn't the one ${registrationPath(body.id)} was fitted on; npm run register -- --body ${body.id} fits it again`)

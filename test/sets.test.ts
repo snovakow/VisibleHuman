@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { missingRuns } from '../scripts/lib/data.ts'
 import type { ListedFile } from '../scripts/lib/listing.ts'
-import { ruleNames, selectSets, sets, wantedFiles, type DataSet } from '../scripts/lib/sets.ts'
+import { ruleNames, selectSets, setNames, sets, wantedFiles, type DataSet } from '../scripts/lib/sets.ts'
 
 // The set table against the counts the data root was verified at on 2026-11-08, and the choosing of files from
 // listings, on small sets built here
@@ -102,4 +102,18 @@ void test('the missing names are given as runs in the set order', () => {
   const names = ['a1', 'a2', 'a3', 'a4', 'a5', 'a6']
   assert.deepEqual(missingRuns(names, new Set(['a2', 'a3', 'a4', 'a6'])), ['a2–a4', 'a6'])
   assert.deepEqual(missingRuns(names, new Set()), [])
+})
+
+void test('a set whose names all follow rules gives them ahead of any listing, and one that takes its listing does not', () => {
+  const cat = setNames('head-cat-dicom')
+  assert.equal(cat.length, 463)
+  assert.equal(cat[0], 'J.001.gz')
+  assert.equal(cat.at(-1), 'J.463.gz')
+  const series = setNames('head-mri-dicom/T2_512')
+  assert.equal(series.length, 229)
+  assert.equal(series[10], 'I.011.gz')
+  // Images and headers, each by its own rule
+  assert.equal(setNames('male-ct').length, 1877 * 2)
+  assert.throws(() => setNames('male-mri'), /takes whatever its folder lists/)
+  assert.throws(() => setNames('head-mri-dicom'), /No set is called head-mri-dicom/)
 })

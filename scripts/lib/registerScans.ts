@@ -35,6 +35,7 @@ import { setFolder } from './data.ts'
 import { gunzipFile, writePng } from './decode.ts'
 import { readDicomSeries, type DicomVolume } from './dicom.ts'
 import { previewFolder } from './previews.ts'
+import { registrationPath } from './registration.ts'
 import {
   boneHounsfield,
   catHeadFrame,
@@ -309,8 +310,8 @@ export async function registerScans(body: Body, root: string, preview: boolean) 
   const { path: gridPath, volume } = await loadGrid(body)
   const scale = scans.ct.hounsfieldScale
   console.log(`Reading the ${body.id}'s CAT from ${setFolder(root, scans.ct.set)} and its MRI from ${setFolder(root, scans.mri.set)}`)
-  const cat = await readDicomSeries(setFolder(root, scans.ct.set))
-  const mri = await readDicomSeries(setFolder(root, scans.mri.set))
+  const cat = await readDicomSeries(root, scans.ct.set)
+  const mri = await readDicomSeries(root, scans.mri.set)
   console.log(describe('CAT', cat))
   console.log(describe('MRI', mri))
   console.log(`Photographs: ${gridPath}, ${volume.size.join(' × ')} voxels at ${volume.spacing.map((value) => fixed(value)).join(' × ')} mm`)
@@ -340,6 +341,12 @@ export async function registerScans(body: Body, root: string, preview: boolean) 
     return
   }
 
+  if (saved?.manual) {
+    throw new Error(
+      `${registrationPath(body.id)} says its transform was edited by hand, and a fit would replace it; ` +
+        'set its "manual" to false to fit again, or run with --preview to draw it as it stands',
+    )
+  }
   const kept: Hand = saved?.hand ?? 'same'
   console.log(
     `CAT bone points: ${(points.bone.length / 3).toLocaleString('en')}, silhouette points: ${points.head.length.toLocaleString('en')}; ` +

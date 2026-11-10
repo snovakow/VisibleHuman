@@ -71,7 +71,8 @@ export interface Body {
   sliceSpacing: number
   levels: readonly Level[]
   axes: SceneAxes
-  // The runs of slices photographed from one frozen block, kept for evening out the colour steps between them
+  // The runs of slices photographed from one frozen block: the colour steps from one to the next, their faces lie
+  // under frost, and a CT segment never runs across one
   cryoBlocks: readonly (readonly [number, number])[]
   // Files known to hold no image. They're still read when they decode, so the build measures them; one that can't be
   // decoded is read as missing instead of stopping the build, and named in the log

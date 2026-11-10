@@ -7,11 +7,11 @@
 //
 //   origin + i · spacing[0] · orientation[0] + j · spacing[1] · orientation[1] + k · spacing[2] · orientation[2]
 
-import { readdir } from 'node:fs/promises'
-import { join } from 'node:path'
 import dicomParser from 'dicom-parser'
 import type { Triple } from '../../src/volume/format.ts'
+import { requireDataFile, setFolder } from './data.ts'
 import { gunzipFile } from './decode.ts'
+import { setNames } from './sets.ts'
 
 export interface DicomVolume {
   // CT or MR, and the scanner's own description of the series, where it gives one
@@ -222,10 +222,11 @@ export function assembleSeries(unordered: readonly DicomSlice[], folder: string)
   }
 }
 
-// The series in a folder of the data root, every file of it one gzipped slice
-export async function readDicomSeries(folder: string): Promise<DicomVolume> {
-  const names = (await readdir(folder)).filter((name) => !name.startsWith('.')).sort()
+// A set of the data root as one series, every file of it one gzipped slice. The files are the set's by name, so that
+// one missing from the local copy stops the read and says how to fetch it, where a folder's listing would leave a gap
+// that reads like the layers a series really lacks, and a download left half done isn't taken for a slice
+export async function readDicomSeries(root: string, id: string): Promise<DicomVolume> {
   const slices: DicomSlice[] = []
-  for (const name of names) slices.push(parseDicomSlice(name, await gunzipFile(join(folder, name))))
-  return assembleSeries(slices, folder)
+  for (const name of setNames(id)) slices.push(parseDicomSlice(name, await gunzipFile(await requireDataFile(root, id, name))))
+  return assembleSeries(slices, setFolder(root, id))
 }
