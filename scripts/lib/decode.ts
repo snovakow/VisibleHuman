@@ -18,9 +18,11 @@ export interface RawImage {
   data: Uint8Array
 }
 
-// A colour image's pixels, 8 bits a channel, three channels for an RGB file and four where the file has alpha
+// A colour image's pixels, 8 bits a channel, three channels for an RGB file and four where the file has alpha. A
+// gzipped file, as the head's .tiff.gz slices are, is decoded from its bytes once the gzip is undone
 export async function readRgb(path: string): Promise<RawImage> {
-  const { data, info } = await sharp(path).raw().toBuffer({ resolveWithObject: true })
+  const source = path.endsWith('.gz') ? await gunzipFile(path) : path
+  const { data, info } = await sharp(source).raw().toBuffer({ resolveWithObject: true })
   if (info.channels < 3) throw new Error(`${path} has ${info.channels} channel(s), not a colour image's three`)
   return { width: info.width, height: info.height, channels: info.channels, data }
 }
@@ -54,5 +56,17 @@ export async function writePng(path: string, image: RawImage) {
   }
   const { width, height, channels, data } = image
   const bytes = await sharp(data, { raw: { width, height, channels } }).png().toBuffer()
+  await writeWhole(path, bytes)
+}
+
+// Writes raw colour pixels as a PNG with an SVG of the same size drawn over them: the labels and lines of a sheet,
+// which libvips renders with the system's fonts
+export async function writeAnnotatedPng(path: string, image: RawImage, svg: string) {
+  const { width, height, channels, data } = image
+  if (channels !== 3) throw new Error(`An annotated PNG takes 3 channels, not ${channels}`)
+  const bytes = await sharp(data, { raw: { width, height, channels } })
+    .composite([{ input: Buffer.from(svg) }])
+    .png()
+    .toBuffer()
   await writeWhole(path, bytes)
 }

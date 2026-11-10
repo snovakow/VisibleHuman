@@ -1,8 +1,9 @@
 // The bodies the volume script builds, one entry each: where a body's slices are in the data root, how they're named,
-// their geometry, the levels it can be built at, its scene axes and the quirks of its set. The male and the female are
-// here; the head follows, an entry of the same shape.
+// their geometry, the levels it can be built at, its scene axes and the quirks of its set: the male, the female and
+// the head.
 
 import type { SceneAxes } from '../../src/volume/format.ts'
+import { isTissueOnIce } from '../../src/volume/segment.ts'
 
 // One level a body can be built at: the voxel's nominal spacing in millimetres, the pixels it spans across a slice
 // and the slices it spans along the body
@@ -35,6 +36,23 @@ export interface CtSet {
   inAir?: true
 }
 
+// The small JPEGs the NLM offers of a body's slices, where it has them: the set they're in, the extension that takes
+// the place of the slice's own, and the slices a contact sheet shows, spread from the first to the last
+export interface Thumbnails {
+  set: string
+  extension: string
+  sheet: readonly number[]
+}
+
+// The scans of a whole body, each one grid in its scanner's frame, which a rigid transform places on the photographs:
+// a CT, which the density channel is resampled from, and an MRI, which fills a channel of its own. Each is a set of
+// DICOM files, a slice a file
+export interface Scans {
+  // The CT's set, and what its files' values are multiplied by to give Hounsfield units
+  ct: { set: string; hounsfieldScale: number }
+  mri: { set: string }
+}
+
 export interface Body {
   id: string
   // As the page names it, and the credit for it the NLM's terms ask for
@@ -62,10 +80,29 @@ export interface Body {
   emptyFiles: readonly string[]
   // Names in the body's sequence the NLM's set doesn't have: read as missing without looking for a file
   absentFiles: readonly string[]
+  // Files with more rows than the body's slices have, read from their top: a file of any other size stops the build
+  tallFiles?: readonly string[]
+  // How many pixels in from each side of a slice never count as body, where the frame's edge can't be told from
+  // tissue; they still count among their cells' pixels, so a cell wholly inside the strip is never body
+  frameInset?: { left?: number; top?: number; right?: number; bottom?: number }
   // A pixel rule of the body's own, where the male's blue-gel rule doesn't fit its background
   segmentRule?: (r: number, g: number, b: number) => boolean
+  // The cells its body encloses are filled in as body, in the colour of all their pixels: for a body whose pixel rule
+  // misses tissue that looks like its background, where that tissue lies inside tissue the rule finds
+  fillsEnclosed?: true
   // The CT scanned slice for slice with the photographs, which the density channel is resampled from
   ct?: CtSet
+  // The CT and the MRI scanned of the body whole, where it has them instead of a CT slice for slice
+  scans?: Scans
+  // The slices as small JPEGs, which a contact sheet is drawn from to read the body's orientation and background
+  thumbnails?: Thumbnails
+}
+
+// The name of a slice's small JPEG
+export function thumbnailName(body: Body, slice: number) {
+  if (!body.thumbnails) throw new Error(`The ${body.id} has no set of small JPEGs`)
+  const { prefix, digits } = body.naming
+  return `${prefix}${String(slice).padStart(digits, '0')}${body.thumbnails.extension}`
 }
 
 // The name of a CT slice's image or header file
@@ -218,7 +255,62 @@ const female: Body = {
   },
 }
 
-export const bodies: readonly Body[] = [male, female]
+// The head: 1,477 slices 0.147 mm apart, 1056 × 1528 pixels of 0.147 mm, gzipped TIFFs, from one frozen block, with
+// every slice also offered as a JPEG a quarter the size. Read from the contact sheet of those: the crown is at slice 1
+// and the throat under the chin at 1477, so slices run down as the male's; the face is at the top of the image, the
+// male's turned half a turn, so rows run from the front to the back; and columns run from the subject's left to its
+// right, as a block cut from the crown down shows from above. The CAT, whose own left and right the scanner records,
+// bears that out: fitted under both hands it scores higher this way, and its frontal sinuses, the larger on the
+// subject's left, lie on the photographs' only this way (register.ts).
+// It's set in ice, not gel: white frost over the crown and grey ice below, which a pixel rule of its own tells from
+// tissue, and the tissue that rule can't tell, inside tissue it can, is filled back in. Slices 500 to 508 are under
+// a film of frost, and the builder reads 502 to 507 as short. The frame is narrower than the head: the subject's
+// right side passes out of it over slices 233 to 1288 and the left over 353 to 1216, and the tip of the nose and the
+// back of the head touch its top and bottom
+// The head's CAT files hold half of Hounsfield units, by the rescale they state themselves: air beside the head
+// reads −490 where air is −1000, fat −45 where fat is about −100, the frontal bone's outer table 956 and the teeth's
+// enamel 1065 to 1365, where cortical bone is 1200 to 1900 and enamel 2500 and over; soft tissue reads 0 to 10. A
+// line through the air and the fat gives 2.01 times the file's value less 9, so the values are doubled
+const headCatHounsfieldScale = 2
+
+const head: Body = {
+  id: 'head',
+  label: 'Head',
+  credit: 'Visible Human Project additional head images, courtesy of the U.S. National Library of Medicine',
+  set: 'head-cryo',
+  firstSlice: 1,
+  lastSlice: 1477,
+  naming: { prefix: '', digits: 4, subSlices: [''], extension: '.tiff.gz' },
+  width: 1056,
+  height: 1528,
+  pixelSize: 0.147,
+  sliceSpacing: 0.147,
+  // 8 × 8 pixels and eight slices is 1.18 mm a side; 7 × 7 and seven 1.03 mm; 4 × 4 and four 0.59 mm
+  levels: [
+    { spacing: 1.2, pixels: 8, slices: 8, default: true },
+    { spacing: 1, pixels: 7, slices: 7 },
+    { spacing: 0.6, pixels: 4, slices: 4 },
+  ],
+  axes: { x: { source: 0, sign: -1 }, y: { source: 2, sign: -1 }, z: { source: 1, sign: -1 } },
+  cryoBlocks: [[1, 1477]],
+  blankFiles: [],
+  emptyFiles: [],
+  absentFiles: [],
+  // 0293 has a 1,529th row, a copy of its first; its first 1,528 line up with its neighbours'
+  tallFiles: ['0293.tiff.gz'],
+  // The frame's right edge lies in the block holder's shadow, dark and a little red, which the pixel rule takes for
+  // tissue: built without this, the last three columns of 8-pixel cells were body from the top of the frame to the
+  // bottom through slices 590 to 1150, a wall joined to the head where the head leaves the frame, and a fourth in part
+  frameInset: { right: 32 },
+  segmentRule: isTissueOnIce,
+  fillsEnclosed: true,
+  // The CAT, 463 slices half a millimetre apart, and of the four MRI series the T2 at 512 × 512, 229 slices a
+  // millimetre apart; both taken before the head was frozen
+  scans: { ct: { set: 'head-cat-dicom', hounsfieldScale: headCatHounsfieldScale }, mri: { set: 'head-mri-dicom/T2_512' } },
+  thumbnails: { set: 'head-cryo-jpeg', extension: '.04.jpg', sheet: [1, 300, 600, 740, 900, 1200, 1477] },
+}
+
+export const bodies: readonly Body[] = [male, female, head]
 
 export function bodyOf(id: string): Body {
   const body = bodies.find((candidate) => candidate.id === id)

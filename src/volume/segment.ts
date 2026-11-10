@@ -21,6 +21,29 @@ export function isBodyPixel(r: number, g: number, b: number) {
   return max - Math.min(r, g, b) >= greyRange
 }
 
+// The head is set in ice instead of gel: white frost over the crown and smooth grey ice below it, a little warm of
+// neutral and lit unevenly, so that one frame's ice runs from a brightness of about 80 to over 200. Its channels
+// spread with its brightness, as a cast does, which is why the rule above, a spread in levels, fits it badly: bright
+// frost spreads as many levels as dim tissue. Tissue is told from it by the spread as a share of the brightest
+// channel: a pixel is body when that share is at least this. The ice's share reaches 0.12 and the frost's 0.15 where
+// the scalp shows through it; the palest tissue, bone and white matter, starts at 0.18.
+// Tuned two ways. On patches labelled by hand on slices 1, 20, 60, 300, 600, 740, 900, 1200 and 1420, it keeps 0.3 %
+// of the ice and 0.8 % of the frost the scalp shows through, and drops 3.5 % of whole stretches of tissue; a spread of
+// 24 levels keeps 6.1 % of that ice, 40 % of that frost, and drops 7.8 % of that tissue. On 865,000 pixels of the
+// six slices 20 to 400, labelled by the registered CT as 3 mm or more inside the head or outside it, it keeps 0.5 %
+// of the ice and drops 4.6 % of the tissue, where 24 levels keeps 7.9 % and drops 4.6 %. At 0.14 the frost over the
+// forehead joins the scalp as a cloud; at 0.18 the tissue dropped passes a tenth and the scalp starts to pit.
+// What it drops is tissue with little colour of its own, the eye's vitreous and tissue under the grey streaks the
+// knife leaves, which the head's build fills back in where tissue encloses it
+export const iceSpreadShare = 0.16
+
+// The head has no blue gel, so its blue veins count, and its darkest pixels are told from tissue as the male's are
+export function isTissueOnIce(r: number, g: number, b: number) {
+  const max = Math.max(r, g, b)
+  if (max < darkMax) return false
+  return max - Math.min(r, g, b) >= iceSpreadShare * max
+}
+
 export const isBodyCell = (bodyPixels: number, pixels: number) => bodyPixels > pixels * bodyShare
 
 // Some slices are missing in effect, and are read as if they weren't there: they add nothing to their cells.
@@ -171,4 +194,56 @@ export function largestPiece(cells: Uint8Array, nx: number, ny: number, nz: numb
     kept[index] = 1
   })
   return { cells: kept, size: bestSize }
+}
+
+// The cells outside the body that the body encloses: those from which no path of cells outside it, stepping across
+// faces as the pieces join, reaches a face of the grid. The grid is one byte a cell (non-zero for body), indexed
+// i + nx·(j + ny·k); a grid one layer deep gives what a single slice encloses within itself. Returns a grid of 0s and
+// 1s and how many it marks. A body that fills them counts tissue the pixel rule can't tell from the background, where
+// it lies inside tissue the rule can
+export function enclosedCells(cells: Uint8Array, nx: number, ny: number, nz: number) {
+  const count = nx * ny * nz
+  if (cells.length !== count) throw new Error(`enclosedCells: ${cells.length} cells for a ${nx} × ${ny} × ${nz} grid`)
+  const layer = nx * ny
+  // Every cell outside the body that the faces reach, found from the faces inward
+  const reached = new Uint8Array(count)
+  const queue = new Int32Array(count)
+  let head = 0
+  let tail = 0
+  const step = (index: number) => {
+    if (cells[index] === 0 && reached[index] === 0) {
+      reached[index] = 1
+      queue[tail++] = index
+    }
+  }
+  for (let k = 0; k < nz; k++) {
+    // A grid one layer deep has no faces along k to start from: its one layer is searched within itself
+    const endLayer = nz > 1 && (k === 0 || k === nz - 1)
+    for (let j = 0; j < ny; j++) {
+      const endRow = j === 0 || j === ny - 1
+      for (let i = 0; i < nx; i++) {
+        if (endLayer || endRow || i === 0 || i === nx - 1) step(i + nx * (j + ny * k))
+      }
+    }
+  }
+  while (head < tail) {
+    const index = queue[head++]
+    const i = index % nx
+    const j = Math.floor(index / nx) % ny
+    const k = Math.floor(index / layer)
+    if (i > 0) step(index - 1)
+    if (i < nx - 1) step(index + 1)
+    if (j > 0) step(index - nx)
+    if (j < ny - 1) step(index + nx)
+    if (k > 0) step(index - layer)
+    if (k < nz - 1) step(index + layer)
+  }
+  const enclosed = new Uint8Array(count)
+  let size = 0
+  for (let index = 0; index < count; index++) {
+    if (cells[index] !== 0 || reached[index] !== 0) continue
+    enclosed[index] = 1
+    size++
+  }
+  return { cells: enclosed, size }
 }

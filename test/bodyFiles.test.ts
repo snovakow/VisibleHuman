@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { bodyOf, frameOf, framesOf, frameText, lastFrame } from '../scripts/lib/bodies.ts'
+import { bodies, bodyOf, fileName, frameOf, framesOf, frameText, lastFrame, thumbnailName } from '../scripts/lib/bodies.ts'
+import { isTissueOnIce } from '../src/volume/segment.ts'
 
 // The volume script's bodies (scripts/lib/bodies.ts): the order a body's files are read in, the names it reads them
 // by, and the files its set lacks or holds empty. The page's reader of bodies.json is tested in bodies.test.ts
@@ -73,4 +74,61 @@ void test("the male's files are one a number, as before", () => {
   )
   assert.equal(frames.some((frame) => frame.absent), false)
   assert.equal(frameText(male, 1877), '2878')
+})
+
+const head = bodyOf('head')
+
+void test("the head's files are four-digit numbers from 0001 to 1477, gzipped TIFFs, with a JPEG a quarter the size of each", () => {
+  assert.equal(fileName(head, 1), '0001.tiff.gz')
+  assert.equal(fileName(head, 740), '0740.tiff.gz')
+  const frames = framesOf(head, 0, lastFrame(head))
+  assert.equal(frames.length, 1477)
+  assert.deepEqual([frames[0].name, frames[0].slice, frames[1476].name, frames[1476].slice], ['0001.tiff.gz', 1, '1477.tiff.gz', 1477])
+  assert.equal(frames.some((frame) => frame.absent), false)
+  assert.deepEqual([head.set, head.width, head.height, head.pixelSize, head.sliceSpacing], ['head-cryo', 1056, 1528, 0.147, 0.147])
+  // A bound is a slice number, with no sub-slice to name
+  assert.equal(frameOf(head, '293', 'first'), 292)
+  assert.equal(frameOf(head, '293', 'last'), 292)
+  assert.equal(frameText(head, 292), '293')
+  assert.throws(() => frameOf(head, '293a', 'first'))
+  assert.throws(() => frameOf(head, '1478', 'last'))
+  assert.equal(thumbnailName(head, 740), '0740.04.jpg')
+  assert.deepEqual(head.thumbnails, { set: 'head-cryo-jpeg', extension: '.04.jpg', sheet: [1, 300, 600, 740, 900, 1200, 1477] })
+  assert.throws(() => thumbnailName(male, 1500))
+})
+
+void test("the head's levels are whole pixels and slices to a voxel, and the page opens on the coarsest", () => {
+  assert.deepEqual(
+    head.levels.map((level) => [level.spacing, level.pixels, level.slices, level.default === true]),
+    [
+      [1.2, 8, 8, true],
+      [1, 7, 7, false],
+      [0.6, 4, 4, false],
+    ],
+  )
+  // Cubes: as many slices as pixels, at a pixel a slice
+  for (const level of head.levels) assert.equal(level.pixels * head.pixelSize, level.slices * head.sliceSpacing)
+  assert.deepEqual(head.cryoBlocks, [[1, 1477]])
+})
+
+void test("the head's axes run against its slices' three, the male's turned half a turn about them", () => {
+  // The subject's right at the image's right, the face at its top, the crown at the first slice
+  assert.deepEqual(head.axes, { x: { source: 0, sign: -1 }, y: { source: 2, sign: -1 }, z: { source: 1, sign: -1 } })
+  assert.deepEqual(male.axes, { x: { source: 0, sign: 1 }, y: { source: 2, sign: -1 }, z: { source: 1, sign: 1 } })
+})
+
+void test("the head's quirks are its own: its pixel rule, its fill, its tall file, its shadowed edge and its scans", () => {
+  assert.equal(head.segmentRule, isTissueOnIce)
+  assert.equal(head.fillsEnclosed, true)
+  assert.deepEqual(head.tallFiles, ['0293.tiff.gz'])
+  assert.deepEqual(head.frameInset, { right: 32 })
+  assert.deepEqual(head.scans, { ct: { set: 'head-cat-dicom', hounsfieldScale: 2 }, mri: { set: 'head-mri-dicom/T2_512' } })
+  assert.equal(head.ct, undefined)
+  assert.deepEqual([head.blankFiles, head.emptyFiles, head.absentFiles], [[], [], []])
+  // The male and the female are built as they were: the gel rule, nothing filled, every pixel read, a CT slice a number
+  for (const body of [male, female]) {
+    assert.deepEqual([body.segmentRule, body.fillsEnclosed, body.tallFiles, body.frameInset, body.scans, body.thumbnails], [undefined, undefined, undefined, undefined, undefined, undefined])
+    assert.notEqual(body.ct, undefined)
+  }
+  assert.deepEqual(bodies.map((body) => body.id), ['male', 'female', 'head'])
 })

@@ -1,8 +1,9 @@
 // The volume script: reads a body's colour slices from the data root and writes the gzipped volume file the app
 // loads, with previews in .cache/preview/. Run by `npm run volume`, on Node's own TypeScript.
 //
-//   --body ID          which body: male or female (the head arrives with its own build)
-//   --spacing MM       which level, by its voxels' spacing in millimetres: the male's and the female's are 4 and 2
+//   --body ID          which body: male, female or head
+//   --spacing MM       which level, by its voxels' spacing in millimetres: the male's and the female's are 4 and 2,
+//                      the head's 1.2, 1 and 0.6
 //   --out PATH         write the file there rather than public/volume/<body>-<spacing>mm.bin; a file written into
 //                      public/volume/ also gets its entry in public/volume/bodies.json, which the page reads
 //   --from A, --to B   read only slices A to B (by default every slice of the body); where a body has sub-slices, as
@@ -11,6 +12,9 @@
 //   --no-ct            leave the density to the colour stand-in, reading no CT slice
 //   --match card|body  give each cryo block a colour gain that matches it to the block before, by the grey strip
 //                      photographed beside the slices or by the body's own colour; by default no block takes one
+//   --contact-sheet    draw .cache/preview/<body>-sheet.png from the body's small JPEGs and build nothing: a few
+//                      slices side by side with the colour of their corners, which a body's axes and background
+//                      rule are read from before its first build; takes no --spacing
 //   --data PATH        the data root, else VHP_DATA, else ~/Data/VisibleHuman
 //
 // A pre-pass first measures the colour step where each cryo block meets the next, on the slices either side of the
@@ -22,7 +26,9 @@
 //
 // The density channel comes from the body's CT where data/<body>/registration.json places it on the photographs:
 // each layer's CT slices are resampled into the layer's cells through the segment's similarity, and a cell no CT
-// covers, such as the crown's slices before the CT begins, keeps the density its colour suggests
+// covers, such as the crown's slices before the CT begins, keeps the density its colour suggests. The head's CT and
+// MRI are whole grids, placed by a rigid transform each: its cells are sampled from them through the transforms, the
+// CT into the density and the MRI into a block of its own
 
 import { readFile, stat } from 'node:fs/promises'
 import { basename, relative, resolve } from 'node:path'
@@ -34,6 +40,7 @@ import { densityFromColor, densityFromCt } from '../src/volume/density.ts'
 import { bodyCoverage, cellIndex, countBody, readVolume, writeVolume, type Triple, type Volume } from '../src/volume/format.ts'
 import {
   dipWindow,
+  enclosedCells,
   fillMissingLayers,
   isBodyCell,
   isBodyPixel,
@@ -41,15 +48,20 @@ import {
   missingReason,
   type MissingReason,
 } from '../src/volume/segment.ts'
+import { compose, invert as invertRigid, type RigidMap } from '../src/volume/rigid.ts'
 import { apply, ctToCryo, invert, type Affine } from '../src/volume/similarity.ts'
 import { bodyOf, ctFileName, frameOf, framesOf, frameText, lastFrame, levelOf, type Body, type Frame, type Level } from './lib/bodies.ts'
 import { readGrayScale, referencePatch, type CardReading } from './lib/card.ts'
+import { drawContactSheet } from './lib/contactSheet.ts'
 import { dataRoot, requireDataFile, setFolder } from './lib/data.ts'
 import { gunzipFile, readGray, readRgb, type RawImage } from './lib/decode.ts'
+import { readDicomSeries, type DicomVolume } from './lib/dicom.ts'
 import { writeWhole } from './lib/files.ts'
 import { insideCtField, keepPieces, minPieceMm2 } from './lib/images.ts'
 import { drawPreviews } from './lib/previews.ts'
 import { loadRegistration, registrationPath, segmentOf, type Registration } from './lib/registration.ts'
+import { indexMap, sampleIndex } from './lib/scanFit.ts'
+import { catToCryoMap, loadScanRegistration, mriToCatMap, type ScanRegistration } from './lib/scanRegistration.ts'
 
 // Files are decoded this many at a time, within a layer
 const batchSize = 4
@@ -65,14 +77,19 @@ function options() {
       previews: { type: 'boolean', default: false },
       'no-ct': { type: 'boolean', default: false },
       match: { type: 'string' },
+      'contact-sheet': { type: 'boolean', default: false },
       data: { type: 'string' },
     },
     strict: true,
   })
-  if (values.body === undefined || values.spacing === undefined) {
+  const sheet = values['contact-sheet']
+  if (values.body === undefined || (values.spacing === undefined && !sheet)) {
     throw new Error('--body and --spacing say what to build, as in --body male --spacing 4')
   }
   const body = bodyOf(values.body)
+  const root = dataRoot(values.data)
+  // A contact sheet is drawn from the body's small JPEGs, at no level
+  if (sheet || values.spacing === undefined) return { sheet: true as const, body, root }
   const spacing = Number(values.spacing)
   if (!(spacing > 0)) throw new Error(`--spacing takes millimetres, not ${values.spacing}`)
   const level = levelOf(body, spacing)
@@ -101,6 +118,7 @@ function options() {
     match = values.match
   }
   return {
+    sheet: false as const,
     body,
     level,
     frames: [firstFrame, lastFrameRead] as const,
@@ -110,7 +128,7 @@ function options() {
     previews: values.previews,
     noCt: values['no-ct'],
     match,
-    root: dataRoot(values.data),
+    root,
   }
 }
 
@@ -145,7 +163,15 @@ function runsText(body: Body, indices: readonly number[]) {
   return runs.join(', ')
 }
 
+// A cell's channels summed over every pixel of a slice, body or not
+interface WholeSums {
+  red: Uint32Array
+  green: Uint32Array
+  blue: Uint32Array
+}
+
 // One slice's sums: for each cell, its body pixels' channels and their count; and the slice's body pixels in all.
+// Where the body fills what it encloses, every pixel's channels too, which is the colour a filled cell takes.
 // The slice's pixels aren't kept, only these. The stride through the pixels is the image's channel count
 function sliceSums(frame: Frame, position: number, image: RawImage, body: Body, field: Field) {
   const { layerCells, cellColumn, cellRowStart } = field
@@ -153,18 +179,33 @@ function sliceSums(frame: Frame, position: number, image: RawImage, body: Body, 
   const green = new Uint32Array(layerCells)
   const blue = new Uint32Array(layerCells)
   const bodyPixels = new Uint16Array(layerCells)
+  const whole: WholeSums | null = body.fillsEnclosed
+    ? { red: new Uint32Array(layerCells), green: new Uint32Array(layerCells), blue: new Uint32Array(layerCells) }
+    : null
   const isBody = body.segmentRule ?? isBodyPixel
+  // The pixels that may be body: all of them, less the strips the body leaves out at the frame's edges
+  const inset = body.frameInset ?? {}
+  const firstColumn = inset.left ?? 0
+  const columnsEnd = body.width - (inset.right ?? 0)
+  const firstRow = inset.top ?? 0
+  const rowsEnd = body.height - (inset.bottom ?? 0)
   const { data, channels } = image
   let total = 0
   for (let y = 0; y < body.height; y++) {
     const rowStart = cellRowStart[y]
+    const inRows = y >= firstRow && y < rowsEnd
     let offset = y * body.width * channels
     for (let x = 0; x < body.width; x++, offset += channels) {
       const r = data[offset]
       const g = data[offset + 1]
       const b = data[offset + 2]
-      if (!isBody(r, g, b)) continue
       const cell = rowStart + cellColumn[x]
+      if (whole) {
+        whole.red[cell] += r
+        whole.green[cell] += g
+        whole.blue[cell] += b
+      }
+      if (!inRows || x < firstColumn || x >= columnsEnd || !isBody(r, g, b)) continue
       red[cell] += r
       green[cell] += g
       blue[cell] += b
@@ -172,7 +213,7 @@ function sliceSums(frame: Frame, position: number, image: RawImage, body: Body, 
       total++
     }
   }
-  return { frame, position, red, green, blue, body: bodyPixels, total, unread: null as Unread | null }
+  return { frame, position, red, green, blue, body: bodyPixels, whole, total, unread: null as Unread | null }
 }
 type SliceSums = ReturnType<typeof sliceSums>
 
@@ -188,12 +229,14 @@ const emptySums = (frame: Frame, position: number, field: Field, unread: Unread)
   green: new Uint32Array(field.layerCells),
   blue: new Uint32Array(field.layerCells),
   body: new Uint16Array(field.layerCells),
+  whole: null,
   total: 0,
 })
 
 // A slice's pixels, read from its file in the data root, or why it wasn't read: a file the body lists as absent isn't
 // looked for, and one that can't be decoded stops the build, unless the body lists it as blank or empty, when it's
-// named in the log and read as missing
+// named in the log and read as missing. A file of another size than the body's slices stops the build too, unless the
+// body lists it as having rows to spare, when its top rows are read
 async function readSlice(frame: Frame, body: Body, root: string, unreadable: ReadonlySet<string>): Promise<RawImage | Unread> {
   if (frame.absent) return 'absent'
   const path = await requireDataFile(root, body.set, frame.name)
@@ -204,6 +247,9 @@ async function readSlice(frame: Frame, body: Body, root: string, unreadable: Rea
     if (!unreadable.has(frame.name)) throw new Error(`${path} can't be decoded: ${String(error)}`, { cause: error })
     console.log(`${frame.name} can't be decoded, so it's read as missing: ${error instanceof Error ? error.message : String(error)}`)
     return 'undecodable'
+  }
+  if (image.width === body.width && image.height > body.height && body.tallFiles?.includes(frame.name)) {
+    return { ...image, height: body.height, data: image.data.subarray(0, body.width * body.height * image.channels) }
   }
   if (image.width !== body.width || image.height !== body.height) {
     throw new Error(`${path} is ${image.width} × ${image.height}, not ${body.width} × ${body.height}`)
@@ -455,7 +501,8 @@ function gainOfSlice(gains: BlockGains, slice: number): Triple {
 
 // The field of every layer read: for each cell, whether it's body by the rule, the share of its pixels that are body
 // scaled to 255, the mean colour of its body pixels, each slice's scaled by its block's gain, and the density the
-// colour stand-in gives that mean as photographed, without the gain, so matching the blocks changes no density. Each
+// colour stand-in gives that mean as photographed, without the gain, so matching the blocks changes no density; and,
+// for a body that fills what it encloses, the mean colour of all its pixels, with the gain. Each
 // slice is decided once the dipWindow non-blank slices after it are read: a missing one adds nothing to its layer
 // (segment.ts). Memory holds the sums of the layer being built and of the slices waiting on that decision, never the
 // slices themselves
@@ -475,6 +522,7 @@ async function readLayers(
   const share = new Uint8Array(layerCells * layers)
   const colors = new Uint8Array(layerCells * layers * 3)
   const colorDensity = new Uint8Array(layerCells * layers)
+  const wholeColors = body.fillsEnclosed ? new Uint8Array(layerCells * layers * 3) : null
   // Channels whose mean the gain took past 255, held there
   let saturated = 0
   // Each frame's body pixels, once read, by its position in frames
@@ -498,6 +546,10 @@ async function readLayers(
     rawBlue: new Uint32Array(layerCells),
     body: new Uint32Array(layerCells),
     pixels: new Uint32Array(layerCells),
+    // Every pixel's channels, summed only for a body that fills what it encloses
+    wholeRed: new Float64Array(wholeColors ? layerCells : 0),
+    wholeGreen: new Float64Array(wholeColors ? layerCells : 0),
+    wholeBlue: new Float64Array(wholeColors ? layerCells : 0),
   }
   const keep = (sums: SliceSums) => {
     const [gr, gg, gb] = gainOfSlice(gains, sums.frame.slice)
@@ -510,6 +562,13 @@ async function readLayers(
       layer.rawBlue[cell] += sums.blue[cell]
       layer.body[cell] += sums.body[cell]
       layer.pixels[cell] += cellPixels[cell]
+    }
+    if (sums.whole) {
+      for (let cell = 0; cell < layerCells; cell++) {
+        layer.wholeRed[cell] += sums.whole.red[cell] * gr
+        layer.wholeGreen[cell] += sums.whole.green[cell] * gg
+        layer.wholeBlue[cell] += sums.whole.blue[cell] * gb
+      }
     }
     layer.kept++
   }
@@ -527,6 +586,11 @@ async function readLayers(
       const pixels = layer.pixels[cell]
       if (pixels > 0) share[base + cell] = Math.round((255 * count) / pixels)
       if (isBodyCell(count, pixels)) bodyCells[base + cell] = 1
+      if (wholeColors && pixels > 0) {
+        wholeColors[(base + cell) * 3] = channelMean(layer.wholeRed[cell], pixels)
+        wholeColors[(base + cell) * 3 + 1] = channelMean(layer.wholeGreen[cell], pixels)
+        wholeColors[(base + cell) * 3 + 2] = channelMean(layer.wholeBlue[cell], pixels)
+      }
       if (count === 0) continue
       colors[(base + cell) * 3] = channelMean(layer.red[cell], count)
       colors[(base + cell) * 3 + 1] = channelMean(layer.green[cell], count)
@@ -547,6 +611,7 @@ async function readLayers(
     for (const sums of [layer.red, layer.green, layer.blue, layer.rawRed, layer.rawGreen, layer.rawBlue, layer.body, layer.pixels]) {
       sums.fill(0)
     }
+    for (const sums of [layer.wholeRed, layer.wholeGreen, layer.wholeBlue]) sums.fill(0)
     layer.kept = 0
     layer.index++
   }
@@ -601,10 +666,9 @@ async function readLayers(
   if (missing.undecodable.length > 0) {
     console.log(`Slices that can't be decoded, read as missing: ${runsText(body, missing.undecodable)}`)
   }
-  const sources = fillMissingLayers([bodyCells, share, colors, colorDensity], layerCells, missingLayers, {
-    colors,
-    body: bodyCells,
-  })
+  const planes = [bodyCells, share, colors, colorDensity]
+  if (wholeColors) planes.push(wholeColors)
+  const sources = fillMissingLayers(planes, layerCells, missingLayers, { colors, body: bodyCells })
   sources.forEach((source, index) => {
     if (source === index) return
     console.log(
@@ -613,9 +677,62 @@ async function readLayers(
         : `Layer ${layerText(index)} has no slice, so its cells are filled from layer ${layerText(source)}`,
     )
   })
-  return { firstLayer, layers, body: bodyCells, share, colors, colorDensity }
+  return { firstLayer, layers, body: bodyCells, share, colors, colorDensity, wholeColors }
 }
 type Grid = Awaited<ReturnType<typeof readLayers>>
+
+// Fills the cells the body encloses, for a body that asks for it: every cell outside the body that no path of such
+// cells joins to a face of the field becomes body, in the colour of all its pixels and the density that colour
+// suggests. Its share of body pixels stays as the rule counted it, so the coverage of a filled cell is the least a body
+// cell stores. Run before the largest piece is kept, so a scrap of body inside a filled hole joins the body through
+// it. Logs how many cells it filled and the largest hole left: among the cells a single layer's body encloses but the
+// fill left, since they reach a face along the slices, as an airway does, the largest piece
+function fillEnclosed(grid: Grid, body: Body, level: Level, field: Field) {
+  const { nx, ny, layerCells } = field
+  const { layers, wholeColors } = grid
+  if (!wholeColors) throw new Error(`The ${body.id}'s layers were read without every pixel's colour, which a filled cell takes`)
+  const enclosed = enclosedCells(grid.body, nx, ny, layers)
+  for (let cell = 0; cell < enclosed.cells.length; cell++) {
+    if (enclosed.cells[cell] === 0) continue
+    grid.body[cell] = 1
+    const r = wholeColors[cell * 3]
+    const g = wholeColors[cell * 3 + 1]
+    const b = wholeColors[cell * 3 + 2]
+    grid.colors[cell * 3] = r
+    grid.colors[cell * 3 + 1] = g
+    grid.colors[cell * 3 + 2] = b
+    grid.colorDensity[cell] = densityFromColor(r, g, b)
+  }
+  const left = new Uint8Array(grid.body.length)
+  let leftCells = 0
+  for (let k = 0; k < layers; k++) {
+    const inLayer = enclosedCells(grid.body.subarray(k * layerCells, (k + 1) * layerCells), nx, ny, 1)
+    left.set(inLayer.cells, k * layerCells)
+    leftCells += inLayer.size
+  }
+  const largest = largestPiece(left, nx, ny, layers)
+  const count = (value: number) => value.toLocaleString('en')
+  let hole = 'no layer encloses a cell the fill left'
+  if (largest.size > 0) {
+    const low = [nx, ny, layers]
+    const high = [-1, -1, -1]
+    largest.cells.forEach((kept, cell) => {
+      if (kept === 0) return
+      const at = [cell % nx, Math.floor(cell / nx) % ny, Math.floor(cell / layerCells)]
+      for (let axis = 0; axis < 3; axis++) {
+        low[axis] = Math.min(low[axis], at[axis])
+        high[axis] = Math.max(high[axis], at[axis])
+      }
+    })
+    const lastIndex = lastFrame(body)
+    const sliceAt = (index: number) => frameText(body, Math.min(lastIndex, index))
+    hole =
+      `the layers enclose ${count(leftCells)} cells it left, which reach a face along the slices; the largest hole among them is ` +
+      `${count(largest.size)} cells, columns ${low[0]}–${high[0]}, rows ${low[1]}–${high[1]}, slices ` +
+      `${sliceAt((grid.firstLayer + low[2]) * level.slices)}–${sliceAt((grid.firstLayer + high[2] + 1) * level.slices - 1)}`
+  }
+  console.log(`Filled ${count(enclosed.size)} cells the body encloses; ${hole}`)
+}
 
 // The CT's density for each cell of the field, where the registration covers it: per layer, the CT slice of each of
 // the layer's slices from A to B is read and sampled through its segment's inverse similarity at points spread over
@@ -719,11 +836,114 @@ async function readCtDensity(
 }
 type CtDensity = Awaited<ReturnType<typeof readCtDensity>>
 
+// A CT's density and an MRI's values for each cell of the field, for a body whose scans are whole grids, as
+// data/<body>/registration.json places them: each cell with body pixels is sampled at points spread through it, as
+// many each way as it holds of the scan's voxels, each between the scan's voxels, and takes their mean. The CT's
+// values go through the body's scale to Hounsfield units and then onto the density scale; a cell is covered by a scan
+// when at least half its points fall on the scan's grid, and by the CT only where they aren't the padding outside
+// its reconstruction circle. The MRI's means are kept as they are, for the crop to spread over the scale once it
+// knows which cells are body
+async function readScans(body: Body, level: Level, field: Field, grid: Grid, registration: ScanRegistration, root: string) {
+  const { scans } = body
+  if (!scans) throw new Error(`The ${body.id} has no whole scans`)
+  const started = performance.now()
+  const cat = await readDicomSeries(setFolder(root, scans.ct.set))
+  const mri = await readDicomSeries(setFolder(root, scans.mri.set))
+  for (const [name, scan, saved] of [['CAT', cat, registration.cat], ['MRI', mri, registration.mri]] as const) {
+    if (scan.frameUID !== saved.frameUID || scan.size.some((value, n) => value !== saved.size[n])) {
+      throw new Error(`The ${name} in the data root isn't the one ${registrationPath(body.id)} was fitted on; npm run register -- --body ${body.id} fits it again`)
+    }
+  }
+  const scale = registration.cat.hounsfieldScale
+  const toCat = invertRigid(catToCryoMap(registration))
+  const toMri = compose(invertRigid(mriToCatMap(registration)), toCat)
+  const { nx, layerCells } = field
+  const { layers, firstLayer } = grid
+  const density = new Uint8Array(layerCells * layers)
+  const covered = new Uint8Array(layerCells * layers)
+  // The MRI's mean in each cell, or −1 where it doesn't cover the cell
+  const mriMeans = new Float32Array(layerCells * layers).fill(-1)
+  const cellMm: Triple = [level.pixels * body.pixelSize, level.pixels * body.pixelSize, level.slices * body.sliceSpacing]
+  // Under the mirrored hand the photographs' columns are mirrored about the grid's centre before the transform
+  const mirrorAbout = registration.hand === 'mirrored' ? registration.catToCryo.cryoCentreMm[0] : null
+  // The CT's padding outside its reconstruction circle is its lowest value, well below air
+  const padding = -1100 / scale
+
+  const sampleCells = (scan: DicomVolume, toScan: RigidMap, take: (cell: number, mean: number) => void) => {
+    const { rows, offset } = indexMap(scan, toScan)
+    const across = cellMm.map((mm) => Math.max(1, Math.ceil(mm / Math.min(...scan.spacing))))
+    const points = across[0] * across[1] * across[2]
+    for (let layer = 0; layer < layers; layer++) {
+      const z0 = (firstLayer + layer) * cellMm[2] - body.sliceSpacing / 2
+      for (let cell = 0; cell < layerCells; cell++) {
+        const index = layer * layerCells + cell
+        // Only cells with body pixels are sampled; the rest stay outside the body
+        if (grid.share[index] === 0 && grid.body[index] === 0) continue
+        const column = cell % nx
+        const row = (cell - column) / nx
+        const x0 = column * cellMm[0] - body.pixelSize / 2
+        const y0 = row * cellMm[1] - body.pixelSize / 2
+        let sum = 0
+        let inside = 0
+        for (let sz = 0; sz < across[2]; sz++) {
+          const z = z0 + ((sz + 0.5) / across[2]) * cellMm[2]
+          for (let sy = 0; sy < across[1]; sy++) {
+            const y = y0 + ((sy + 0.5) / across[1]) * cellMm[1]
+            for (let sx = 0; sx < across[0]; sx++) {
+              const along = x0 + ((sx + 0.5) / across[0]) * cellMm[0]
+              const x = mirrorAbout === null ? along : 2 * mirrorAbout - along
+              const value = sampleIndex(
+                scan,
+                rows[0][0] * x + rows[0][1] * y + rows[0][2] * z + offset[0],
+                rows[1][0] * x + rows[1][1] * y + rows[1][2] * z + offset[1],
+                rows[2][0] * x + rows[2][1] * y + rows[2][2] * z + offset[2],
+              )
+              if (Number.isNaN(value)) continue
+              sum += value
+              inside++
+            }
+          }
+        }
+        if (inside * 2 >= points) take(index, sum / inside)
+      }
+    }
+  }
+  sampleCells(cat, toCat, (cell, mean) => {
+    if (mean < padding) return
+    covered[cell] = 1
+    density[cell] = Math.max(0, Math.min(255, Math.round((mean * scale + 1000) / 16)))
+  })
+  sampleCells(mri, toMri, (cell, mean) => {
+    mriMeans[cell] = mean
+  })
+  const seconds = Math.round((performance.now() - started) / 1000)
+  console.log(
+    `Resampled the CAT (${cat.size.join(' × ')}, its values × ${scale} as Hounsfield units) and the MRI (${mri.size.join(' × ')}) ` +
+      `through ${registrationPath(body.id)}, fitted ${registration.fitted}, ${registration.hand} hand, in ${seconds} s`,
+  )
+  return { ct: { density, covered }, mriMeans }
+}
+
+// The MRI's values in a body's voxels spread over 1 to 255: the value below which this share of them lie becomes 1,
+// the value above which the same share lie becomes 255, and the values between run evenly, so the few brightest
+// voxels don't flatten the rest
+const mriTail = 0.01
+
 // Keeps the largest piece of body and crops the field to its bounds plus a one-voxel margin on every face, which
 // gives the colour room to spread one voxel past the skin. Coverage carries the body decision: a body cell in the
 // piece stores at least 128, a body cell outside it 0, a non-body cell at most 127. Density is written where the body
-// is: the CT's where it covers the cell, else the colour's, never 0, which means outside the body
-function cropToBody(grid: Grid, body: Body, level: Level, field: Field, from: number, to: number, ct: CtDensity | null) {
+// is: the CT's where it covers the cell, else the colour's, never 0, which means outside the body. Where the body has
+// an MRI, its block is written where the body is too: 1 to 255 where the MRI covers the voxel, 0 where it doesn't
+function cropToBody(
+  grid: Grid,
+  body: Body,
+  level: Level,
+  field: Field,
+  from: number,
+  to: number,
+  ct: CtDensity | null,
+  mriMeans: Float32Array | null,
+) {
   const { nx, ny } = field
   const { layers } = grid
   const { cells: kept, size: bodyCount } = largestPiece(grid.body, nx, ny, layers)
@@ -752,6 +972,8 @@ function cropToBody(grid: Grid, body: Body, level: Level, field: Field, from: nu
   const blue = new Uint8Array(cells)
   const coverage = new Uint8Array(cells)
   const density = new Uint8Array(cells)
+  // The MRI's mean in each body voxel it covers, −1 elsewhere, until the crop knows them all
+  const mriRaw = mriMeans ? new Float32Array(cells).fill(-1) : null
   const inField = (fi: number, fj: number, fk: number) =>
     fi >= 0 && fi < nx && fj >= 0 && fj < ny && fk >= 0 && fk < layers
   const fieldIndex = (fi: number, fj: number, fk: number) => fi + nx * (fj + ny * fk)
@@ -772,6 +994,7 @@ function cropToBody(grid: Grid, body: Body, level: Level, field: Field, from: nu
           red[index] = grid.colors[source * 3]
           green[index] = grid.colors[source * 3 + 1]
           blue[index] = grid.colors[source * 3 + 2]
+          if (mriRaw && mriMeans) mriRaw[index] = mriMeans[source]
           if (ct && ct.covered[source] !== 0) {
             density[index] = Math.max(1, ct.density[source])
             fromCt++
@@ -826,6 +1049,22 @@ function cropToBody(grid: Grid, body: Body, level: Level, field: Field, from: nu
     (fieldFirst[1] * p + (p - 1) / 2) * body.pixelSize,
     (fieldFirst[2] * s + (s - 1) / 2) * body.sliceSpacing,
   ]
+  // The MRI's block, from its means in the body's voxels
+  let mri: Uint8Array | undefined
+  let mriRange: { voxels: number; low: number; high: number } | null = null
+  if (mriRaw) {
+    const values = Array.from(mriRaw.filter((value) => value >= 0)).sort((a, b) => a - b)
+    mri = new Uint8Array(cells)
+    if (values.length > 0) {
+      const dimmest = values[Math.floor(mriTail * (values.length - 1))]
+      const brightest = Math.max(dimmest + 1, values[Math.floor((1 - mriTail) * (values.length - 1))])
+      mriRange = { voxels: values.length, low: dimmest, high: brightest }
+      for (let index = 0; index < cells; index++) {
+        if (mriRaw[index] < 0) continue
+        mri[index] = 1 + Math.round(254 * Math.max(0, Math.min(1, (mriRaw[index] - dimmest) / (brightest - dimmest))))
+      }
+    }
+  }
   const volume: Volume = {
     size,
     spacing: [p * body.pixelSize, p * body.pixelSize, s * body.sliceSpacing],
@@ -840,7 +1079,8 @@ function cropToBody(grid: Grid, body: Body, level: Level, field: Field, from: nu
     coverage,
     density,
   }
-  return { volume, fieldFirst, fromCt, fromColor }
+  if (mri) volume.mri = mri
+  return { volume, fieldFirst, fromCt, fromColor, mriRange }
 }
 
 const mm = (value: number) => Number(value.toFixed(3)).toString()
@@ -909,7 +1149,12 @@ async function recordLevel(
 }
 
 async function main() {
-  const { body, level, frames: range, from, to, out, previews, noCt, match, root } = options()
+  const chosen = options()
+  if (chosen.sheet) {
+    for (const line of (await drawContactSheet(chosen.body, chosen.root)).lines) console.log(line)
+    return
+  }
+  const { body, level, frames: range, from, to, out, previews, noCt, match, root } = chosen
   const started = performance.now()
   if (previews) {
     for (const path of await drawPreviews(readVolume(await gunzipFile(out)))) console.log(`Preview: ${path}`)
@@ -921,9 +1166,20 @@ async function main() {
   const gains = await measureBlocks(body, level, field, to, root, match)
   console.log(`Reading the ${body.id}'s slices ${frameText(body, range[0])} to ${frameText(body, range[1])} from ${setFolder(root, body.set)} at ${level.spacing} mm`)
   const grid = await readLayers(body, level, field, frames, root, gains)
+  if (body.fillsEnclosed) fillEnclosed(grid, body, level, field)
   let ct: CtDensity | null = null
+  let mriMeans: Float32Array | null = null
   if (noCt) console.log('Density from the colour alone, as --no-ct asks')
-  else if (!body.ct) console.log(`Density from the colour alone: the ${body.id} has no CT set`)
+  else if (body.scans) {
+    const registration = await loadScanRegistration(body.id)
+    if (registration) {
+      const scans = await readScans(body, level, field, grid, registration, root)
+      ct = scans.ct
+      mriMeans = scans.mriMeans
+    } else {
+      console.log(`Density from the colour alone, and no MRI: no ${registrationPath(body.id)}; npm run register -- --body ${body.id} fits one`)
+    }
+  } else if (!body.ct) console.log(`Density from the colour alone: the ${body.id} has no CT set`)
   else {
     const registration = await loadRegistration(body.id)
     if (registration) {
@@ -933,7 +1189,7 @@ async function main() {
       console.log(`Density from the colour alone: no ${registrationPath(body.id)}; npm run register -- --body ${body.id} fits one`)
     }
   }
-  const { volume, fieldFirst, fromCt, fromColor } = cropToBody(grid, body, level, field, from, to, ct)
+  const { volume, fieldFirst, fromCt, fromColor, mriRange } = cropToBody(grid, body, level, field, from, to, ct, mriMeans)
   const raw = writeVolume(volume)
   await writeWhole(out, gzipSync(raw, { level: 9 }))
   for (const path of await drawPreviews(volume)) console.log(`Preview: ${path}`)
@@ -959,6 +1215,12 @@ async function main() {
     `Density from the CT: ${fromCt.toLocaleString('en')} voxels (${((100 * fromCt) / (fromCt + fromColor)).toFixed(1)} %), ` +
       `from the colour: ${fromColor.toLocaleString('en')}`,
   )
+  if (mriRange) {
+    console.log(
+      `MRI: ${mriRange.voxels.toLocaleString('en')} body voxels covered (${((100 * mriRange.voxels) / (fromCt + fromColor)).toFixed(1)} %), ` +
+        `its values ${mriRange.low.toFixed(0)} to ${mriRange.high.toFixed(0)} spread over 1 to 255`,
+    )
+  }
   console.log(`Wrote ${out}: ${(size / 1e6).toFixed(2)} MB, gzipped from ${(raw.length / 1e6).toFixed(1)} MB`)
   console.log(`Took ${Math.floor(seconds / 60)} min ${Math.round(seconds % 60)} s`)
 }
