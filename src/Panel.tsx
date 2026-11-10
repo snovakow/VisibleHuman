@@ -1,7 +1,18 @@
 import { folder, Leva, useControls } from 'leva'
 import { useEffect, useMemo, useRef } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { isOption, optionKeys, viewOptions, type Dependence, type Folder, type ShownFor, type ViewOptions } from './options.ts'
+import {
+  isOption,
+  optionKeys,
+  viewOptions,
+  type Capabilities,
+  type Capability,
+  type Choice,
+  type Dependence,
+  type Folder,
+  type ShownFor,
+  type ViewOptions,
+} from './options.ts'
 import { levelKey, useStore, type Status } from './store.ts'
 import { isStyle, styles, type Style } from './viewer/styles.ts'
 import { levelOf } from './volume/levels.ts'
@@ -44,6 +55,18 @@ function shownWhile(dependence: Dependence, value: unknown) {
   return typeof value === 'number' && value < dependence.below
 }
 
+// Whether the backend has what a control or a choice needs of it; most need nothing
+function capable(need: Capability | undefined, capabilities: Capabilities) {
+  return need === undefined || capabilities[need]
+}
+
+// A choice's values by their labels, less those the backend can't draw
+function offeredChoices(entry: Choice<string | number>, capabilities: Capabilities): Record<string, string | number> {
+  return Object.fromEntries(
+    Object.entries(entry.choices).filter(([, value]) => capable(entry.choiceNeeds?.[value], capabilities)),
+  )
+}
+
 // leva calls a control's onChange when it's built and rebuilt, with initial set and the value it held before, as well
 // as when it's picked, and when set gives it a value, with fromPanel clear; only a pick is the user's
 interface ChangeContext {
@@ -78,19 +101,22 @@ export function PanelRoot() {
 }
 
 // The leva panel: the view options go to the store as they change, Size when a drag or an edit ends, since a new
-// Size rebuilds every splat. The Body, Level and Detail selects list what the store has loaded, and the renderer, the
-// grid, the splats shown, the surface's triangles and the load's status come back read-only
+// Size rebuilds every splat. The Body, Level and Detail selects list what the store has loaded, a control or a choice
+// the backend can't draw is left out, and the renderer, the grid, the splats shown, the surface's triangles and the
+// load's status come back read-only
 export function Panel({ renderer }: { renderer: string }) {
-  const { level, detail, style, notBuilt, status, error } = useStore(
+  const { level, detail, blend, style, notBuilt, status, error } = useStore(
     useShallow((s) => ({
       level: s.level,
       detail: s.options.detail,
+      blend: s.options.blend,
       style: s.options.style,
       notBuilt: s.notBuilt,
       status: s.status,
       error: s.error,
     })),
   )
+  const capabilities = useStore((s) => s.capabilities)
   const bodies = useStore((s) => s.bodies)
   const body = useStore((s) => s.bodies?.find((candidate) => candidate.id === s.body))
   const levels = useStore((s) => s.levels)
@@ -187,14 +213,20 @@ export function Panel({ renderer }: { renderer: string }) {
         return { ...common, value: typeof current === 'boolean' ? current : entry.default, onChange }
       }
       if (entry.kind === 'choice') {
-        const choices: readonly unknown[] = Object.values(entry.choices)
-        return { ...common, options: entry.choices, value: choices.includes(current) ? current : entry.default, onChange }
+        const offered = offeredChoices(entry, capabilities)
+        const choices: readonly unknown[] = Object.values(offered)
+        return { ...common, options: offered, value: choices.includes(current) ? current : entry.default, onChange }
       }
       return { ...common, options: styleOptions, value: isStyle(current) ? current : entry.default, onChange }
     }
-    // A folder's controls, in the table's order, as leva's schema, so that the keys set below stay typed by name
+    // A folder's controls, in the table's order, less those the backend can't draw, as leva's schema, so that the
+    // keys set below stay typed by name
     const controls = (name: Folder): FolderSchema =>
-      Object.fromEntries(optionKeys.filter((option) => viewOptions[option].folder === name).map((option) => [option, control(option)]))
+      Object.fromEntries(
+        optionKeys
+          .filter((option) => viewOptions[option].folder === name && capable(viewOptions[option].needs, capabilities))
+          .map((option) => [option, control(option)]),
+      )
 
     return {
       Body: folder({
@@ -222,8 +254,9 @@ export function Panel({ renderer }: { renderer: string }) {
           },
         },
       }),
-      // Detail is named beside the table's controls, which hold it already, so that set below knows it by name
-      Look: folder({ ...controls('Look'), detail: control('detail') }),
+      // Detail and Blend are named beside the table's controls, which hold them already, so that set below knows
+      // them by name
+      Look: folder({ ...controls('Look'), detail: control('detail'), blend: control('blend') }),
       Cuts: folder(controls('Cuts')),
       // Scene starts folded: it holds what's drawn around the body, which a visitor reaches for after the look
       Scene: folder(controls('Scene'), { collapsed: true }),
@@ -235,11 +268,12 @@ export function Panel({ renderer }: { renderer: string }) {
         status: { label: 'Status', value: '', editable: false },
       }),
     }
-  }, [bodyOptions, levelOptions, detailOptions])
+  }, [bodyOptions, levelOptions, detailOptions, capabilities])
 
   // The store's choices go back to the selects, after leva has taken each rebuilt list, since a rebuilt control keeps
-  // the value it held: a load picks its body, its level and its Detail, and a level found not built goes back to the
-  // one shown. set is new whenever the lists are
+  // the value it held: a load picks its body, its level and its Detail, a level found not built goes back to the
+  // one shown, and a Blend the backend turned out not to draw goes back to the default. set is new whenever the
+  // lists are
   useEffect(() => {
     if (body) set({ body: body.id })
   }, [set, body])
@@ -249,6 +283,9 @@ export function Panel({ renderer }: { renderer: string }) {
   useEffect(() => {
     if (detailOptions) set({ detail })
   }, [set, detail, detailOptions])
+  useEffect(() => {
+    set({ blend })
+  }, [set, blend])
   useEffect(() => {
     set({
       renderer: renderer || 'Starting…',

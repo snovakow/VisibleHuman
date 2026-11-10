@@ -1,4 +1,5 @@
 import { WebGPURenderer } from 'three/webgpu'
+import type { Capabilities } from '../options.ts'
 
 // R3F types its renderer as a WebGLRenderer, though the Canvas's factory always makes a WebGPURenderer
 export function asWebGPU(renderer: unknown): WebGPURenderer {
@@ -20,12 +21,12 @@ export type Backend = 'auto' | 'webgl' | 'webgpu'
 
 // The Canvas's renderer: WebGPU where the browser offers it and the GPU isn't known to fail it, and otherwise three's
 // WebGL 2 fallback, which the webgl backend also asks for. A WebGPU failure after the start calls fallBack, and report
-// is told which backend is drawing, for the panel, and whether it's WebGPU
+// is told which backend is drawing, for the panel, whether it's WebGPU, and which of the effects it can draw
 export async function createRenderer(
   canvas: object,
   backend: Backend,
   fallBack: () => void,
-  report: (renderer: string, webgpu: boolean) => void,
+  report: (renderer: string, webgpu: boolean, capabilities: Capabilities) => void,
 ) {
   if (!(canvas instanceof HTMLCanvasElement)) throw new Error('Expected an HTMLCanvasElement')
   const forceWebGL = backend === 'webgl'
@@ -38,9 +39,25 @@ export async function createRenderer(
   const webgpu = 'isWebGPUBackend' in renderer.backend
   console.info(`VisibleHuman: rendering with ${webgpu ? 'WebGPU' : 'the WebGL 2 fallback'}`)
   // A Canvas replaced while its renderer was starting is off the page by then, and only the one on the page reports
-  if (canvas.isConnected) report(webgpu ? 'WebGPU' : failingGPU ? 'WebGL 2, as this GPU fails WebGPU' : 'WebGL 2', webgpu)
+  if (canvas.isConnected) {
+    const name = webgpu ? 'WebGPU' : failingGPU ? 'WebGL 2, as this GPU fails WebGPU' : 'WebGL 2'
+    report(name, webgpu, capabilitiesOf(renderer))
+  }
   if (webgpu) watchForFailure(renderer, fallBack)
   return renderer
+}
+
+// Which of the effects the renderer's backend can draw. WebGPU can draw into half-float targets and blend each target
+// of a pass its own way, as it stands. On WebGL 2 a half-float target can be drawn into only with one of two
+// extensions, which the weighted blend's sums need, and each target of a pass blends its own way only with a third,
+// without which three blends them all as the material does; order-independent transparency adds into one target and
+// multiplies into the other, so it needs both
+function capabilitiesOf(renderer: WebGPURenderer): Capabilities {
+  const context: unknown = renderer.getContext()
+  if (!(context instanceof WebGL2RenderingContext)) return { weighted: true, oit: true }
+  const has = (extension: string) => context.getExtension(extension) !== null
+  const halfFloatTargets = has('EXT_color_buffer_half_float') || has('EXT_color_buffer_float')
+  return { weighted: halfFloatTargets, oit: halfFloatTargets && has('OES_draw_buffers_indexed') }
 }
 
 // Names the adapter if it's in failingGPUs, or returns null

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { defaultOptions, isOption, optionKeys, viewOptions, type Folder } from '../src/options.ts'
+import { defaultOptions, drawableOptions, isOption, optionKeys, viewOptions, type Folder, type ViewOptions } from '../src/options.ts'
 import { styles } from '../src/viewer/styles.ts'
 import { boneDensity } from '../src/volume/density.ts'
 
@@ -119,11 +119,58 @@ void test('the surface colours from the texture and draws no shell until a Depth
   for (const entry of [colour, depth]) assert.deepEqual([entry.folder, entry.shownFor], ['Look', { styles: ['surface'] }])
 })
 
+void test('the splats blend in order until asked otherwise, and the weighted sum is a choice only a capable backend offers', () => {
+  const { blend } = viewOptions
+  assert.equal(blend.default, 'normal')
+  assert.deepEqual(blend.choices, { normal: 'normal', glow: 'glow', weighted: 'weighted' })
+  assert.deepEqual([blend.folder, blend.label, blend.shownFor], ['Look', 'Blend', { styles: ['splats'] }])
+  // The weighted sum alone needs something of the backend
+  assert.deepEqual(blend.choiceNeeds, { weighted: 'weighted' })
+  assert.equal(blend.needs, undefined)
+  // Blend sits with the splats' own controls, straight after Size
+  assert.equal(optionKeys.indexOf('blend'), optionKeys.indexOf('size') + 1)
+})
+
 void test('the depth cue starts at none, in the Scene folder, for every style', () => {
   const { depthCue } = viewOptions
   assert.equal(defaultOptions.depthCue, 0)
   assert.deepEqual([depthCue.min, depthCue.max, depthCue.step], [0, 1, 0.01])
   assert.deepEqual([depthCue.folder, depthCue.label, depthCue.shownFor], ['Scene', 'Depth cue', 'every'])
+  assert.equal(depthCue.needs, undefined)
   // The Scene's controls come after the cuts
   assert.ok(optionKeys.indexOf('depthCue') > optionKeys.indexOf('caps'))
+})
+
+void test('the page opens with no effect on: no bloom, the sorted blend, and the surface\'s depth pass', () => {
+  const { bloom, bloomRadius, bloomThreshold, oit } = viewOptions
+  assert.deepEqual([defaultOptions.blend, defaultOptions.bloom, defaultOptions.oit], ['normal', 0, false])
+  assert.deepEqual([bloom.min, bloom.max, bloom.step], [0, 3, 0.01])
+  // Bloom's spread and threshold show only while there's a bloom
+  for (const slider of [bloomRadius, bloomThreshold]) {
+    assert.deepEqual([slider.min, slider.max, slider.step], [0, 1, 0.01])
+    assert.deepEqual(slider.shownWhile, { option: 'bloom', above: 0 })
+  }
+  for (const entry of [bloom, bloomRadius, bloomThreshold]) {
+    assert.deepEqual([entry.folder, entry.shownFor, entry.needs], ['Scene', 'every', undefined])
+  }
+  // The surface's order-independent transparency acts only on a see-through skin, and needs a capable backend
+  assert.deepEqual(
+    [oit.kind, oit.folder, oit.shownFor, oit.shownWhile, oit.needs],
+    ['switch', 'Scene', { styles: ['surface'] }, { option: 'opacity', below: 1 }, 'oit'],
+  )
+  assert.deepEqual([bloom.label, bloomRadius.label, bloomThreshold.label, oit.label], ['Bloom', 'Bloom radius', 'Bloom threshold', 'OIT'])
+  // They come after the depth cue, the switch last
+  assert.deepEqual(optionKeys.slice(optionKeys.indexOf('depthCue')), ['depthCue', 'bloom', 'bloomRadius', 'bloomThreshold', 'oit'])
+})
+
+void test('an option the backend can\'t draw goes back to its default, and what it can draw stands as the same object', () => {
+  const asked: ViewOptions = { ...defaultOptions, blend: 'weighted', oit: true, opacity: 0.3 }
+  assert.equal(drawableOptions(asked, { weighted: true, oit: true }), asked)
+  assert.deepEqual(drawableOptions(asked, { weighted: false, oit: true }), { ...asked, blend: 'normal' })
+  assert.deepEqual(drawableOptions(asked, { weighted: true, oit: false }), { ...asked, oit: false })
+  assert.deepEqual(drawableOptions(asked, { weighted: false, oit: false }), { ...asked, blend: 'normal', oit: false })
+  // The glow needs nothing, and nor do the defaults
+  const glow: ViewOptions = { ...defaultOptions, blend: 'glow' }
+  assert.equal(drawableOptions(glow, { weighted: false, oit: false }), glow)
+  assert.equal(drawableOptions(defaultOptions, { weighted: false, oit: false }), defaultOptions)
 })

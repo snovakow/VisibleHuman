@@ -8,9 +8,10 @@ import { BodySplats } from './BodySplats.tsx'
 import { BodySurface } from './BodySurface.tsx'
 import { BodyVolume } from './BodyVolume.tsx'
 import { CutCaps } from './CutCaps.tsx'
+import { Effects } from './Effects.tsx'
 import { Framing } from './Framing.tsx'
 import { bodyHalf, useCueFog, useOptionUniform } from './shading.ts'
-import type { Style } from './styles.ts'
+import { isOit, isWeighted, type Style } from './styles.ts'
 
 // The body drawn in each style
 const bodies: Record<Style, ComponentType> = { splats: BodySplats, volume: BodyVolume, raytrace: BodyRaytrace, surface: BodySurface }
@@ -33,11 +34,14 @@ function ShadingUniforms() {
 }
 
 // The scene: the controls, the frame counter, the framing of a loaded body, the lights the surface style's meshes
-// are lit by, the shading's uniforms, and the body drawn in the one style the panel has chosen, with the caps on its
-// cuts for the surface
+// are lit by, the shading's uniforms, the body drawn in the one style the panel has chosen, with the caps on its cuts
+// for the surface, and the effects while one is on
 export function Viewer() {
   const controlsRef = useRef<ComponentRef<typeof OrbitControls>>(null)
   const style = useStore((s) => s.options.style)
+  // The pipeline renders the scene only while it has something to add: bloom, the weighted blend's sums and their
+  // composite, or the sum of the surface's see-through layers. Otherwise R3F renders it directly, as it always has
+  const effects = useStore((s) => s.options.bloom > 0 || isWeighted(s.options) || isOit(s.options))
   const headlight = useRef<PointLight>(null)
   const Body = bodies[style]
 
@@ -56,6 +60,7 @@ export function Viewer() {
       <ShadingUniforms />
       <Body />
       {style === 'surface' ? <CutCaps /> : null}
+      {effects ? <Effects /> : null}
     </>
   )
 }

@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { shallow } from 'zustand/shallow'
-import { defaultOptions, type ViewOptions } from './options.ts'
+import { defaultOptions, drawableOptions, type Capabilities, type ViewOptions } from './options.ts'
 import { defaultLevel, type BodyEntry } from './volume/bodies.ts'
 import type { Volume } from './volume/format.ts'
 import { buildBody, levelOf, type Bounds, type Levels } from './volume/levels.ts'
@@ -31,9 +31,13 @@ interface State {
   // A load replaces any still in progress, and an older load never overwrites a newer one. Aborting the signal
   // stops the load and leaves the status to the load that takes over
   load: (body: string | null, level: string | null, signal?: AbortSignal) => Promise<void>
-  // The view options, as the panel sets them from the table in options.ts
+  // The view options, as the panel sets them from the table in options.ts, held to what the backend can draw
   options: ViewOptions
   setOptions: (changes: Partial<ViewOptions>) => void
+  // What the backend drawing can make of the effects that need more than a plain frame, as the renderer found when it
+  // started: everything, until one says otherwise. The panel leaves out what's missing
+  capabilities: Capabilities
+  setCapabilities: (capabilities: Capabilities) => void
   // The triangles in each of the surface style's meshes, while it's drawn, for the panel
   triangles: Partial<Record<SurfaceKind, number>>
   setTriangles: (kind: SurfaceKind, count: number | undefined) => void
@@ -59,8 +63,16 @@ export const useStore = create<State>()((set, get) => ({
   // Unchanged values keep the same options object, so the scene doesn't redo anything for nothing
   setOptions: (changes) =>
     set((state) => {
-      const options = { ...state.options, ...changes }
+      const options = drawableOptions({ ...state.options, ...changes }, state.capabilities)
       return shallow(options, state.options) ? state : { options }
+    }),
+  capabilities: { weighted: true, oit: true },
+  // A backend that lacks something takes the options that need it back to their defaults, as a switch to the
+  // fallback may with an effect on
+  setCapabilities: (capabilities) =>
+    set((state) => {
+      if (shallow(capabilities, state.capabilities)) return state
+      return { capabilities, options: drawableOptions(state.options, capabilities) }
     }),
   triangles: {},
   setTriangles: (kind, count) =>

@@ -58,16 +58,21 @@ function App() {
 
   const [backend, setBackend] = useState(requestedBackend)
   const [drawing, setDrawing] = useState<Drawing | null>(null)
-  // The Canvas's key follows the backend, so a switch to the fallback mounts a new Canvas whose factory forces it
+  const setCapabilities = useStore((s) => s.setCapabilities)
+  // The Canvas's key follows the backend, so a switch to the fallback mounts a new Canvas whose factory forces it. The
+  // store is told which effects the backend that started can draw, for the panel to offer those alone
   const gl = useCallback(
     ({ canvas }: { canvas: object }) =>
       createRenderer(
         canvas,
         backend,
         () => setBackend('webgl'),
-        (renderer, webgpu) => setDrawing({ renderer, webgpu }),
+        (renderer, webgpu, capabilities) => {
+          setDrawing({ renderer, webgpu })
+          setCapabilities(capabilities)
+        },
       ),
-    [backend],
+    [backend, setCapabilities],
   )
 
   // The volume and raytrace styles shade every pixel of the window from one quad, which the fallback draws at a

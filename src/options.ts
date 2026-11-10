@@ -9,8 +9,7 @@ import type { Detail } from './volume/levels.ts'
 // styles at run time would close a cycle
 
 // How the splats lay over one another: in front of what's behind, or added to it so dense parts glow, or summed by how
-// near and how opaque each is, so that the order they're drawn in never matters. The Blend control arrives with the
-// effects; the styles read the type now
+// near and how opaque each is, so that the order they're drawn in never matters
 export type Blend = 'normal' | 'glow' | 'weighted'
 
 // How the volume's march shows what it passes through: laid over what's behind, step by step, from the front; as an
@@ -36,6 +35,12 @@ export type Trace = 'skin' | 'bone' | 'both'
 // its body voxels, and a splat's its body voxels alone
 export type SurfaceColour = 'texture' | 'cells'
 
+// What an effect needs of the backend that draws: the weighted blend sums into half-float targets, and the surface's
+// order-independent transparency into such a target and a second blended its own way. WebGPU has both; the WebGL 2
+// fallback has each only where the browser offers the extensions for it
+export type Capability = 'weighted' | 'oit'
+export type Capabilities = Record<Capability, boolean>
+
 // The panel's folders that hold options. Body holds the body and level choosers, which are the page's load state
 // rather than view options, and Info the read-outs; both are the panel's own
 export type Folder = 'Body' | 'Look' | 'Cuts' | 'Scene'
@@ -57,6 +62,8 @@ interface Control<T> {
   default: T
   shownFor: ShownFor
   shownWhile?: Dependence
+  // What the control needs of the backend, without which the panel leaves it out
+  needs?: Capability
 }
 
 // A number in a range, moved by steps. A deferred slider is committed when the drag or the edit ends rather than as
@@ -73,10 +80,12 @@ export interface Switch extends Control<boolean> {
   kind: 'switch'
 }
 
-// One of the values listed, each by its label in the panel
+// One of the values listed, each by its label in the panel. A value that needs something of the backend is left out of
+// the panel's list where the backend lacks it
 export interface Choice<T extends string | number> extends Control<T> {
   kind: 'choice'
   choices: Record<string, T>
+  choiceNeeds?: Partial<Record<T, Capability>>
 }
 
 // The style, whose choices the panel lists from the styles themselves
@@ -118,6 +127,11 @@ const shadowed: Dependence = { option: 'shadows', is: true }
 // The sliders move in steps of a hundredth, the finest leva shows
 const hundredths = 0.01
 
+// Bloom's spread and threshold until the panel moves them, as PDBSplat chose them by eye for its glow: a halo that
+// hazes the space around the body, from its dense, bright parts but not its faint edges
+const bloomRadiusDefault = 0.4
+const bloomThresholdDefault = 0.3
+
 export const viewOptions = {
   style: styleChoice({ folder: 'Look', label: 'Style', default: 'splats', shownFor: every }),
   // Block 2 is the 8 mm level of the male's 4 mm file, which is where a load opens it; each load picks its own default.
@@ -126,6 +140,15 @@ export const viewOptions = {
   // The splats' size, as a share of the grid spacing's. A new Size rebuilds every splat, so it's committed when a
   // drag or an edit ends
   size: slider({ folder: 'Look', label: 'Size', default: 1, min: 0.5, max: 2, step: hundredths, deferred: true, shownFor: splats }),
+  // Blending acts on splats, so the other styles leave it out. The weighted sum needs targets a backend may lack
+  blend: choice<Blend>({
+    folder: 'Look',
+    label: 'Blend',
+    default: 'normal',
+    choices: { normal: 'normal', glow: 'glow', weighted: 'weighted' },
+    choiceNeeds: { weighted: 'weighted' },
+    shownFor: splats,
+  }),
   mode: choice<VolumeMode>({
     folder: 'Look',
     label: 'Mode',
@@ -236,6 +259,34 @@ export const viewOptions = {
   caps: toggle({ folder: 'Cuts', label: 'Caps', default: true, shownFor: surface }),
   // How far the far side of the body darkens, from none at 0 to black at 1
   depthCue: slider({ folder: 'Scene', label: 'Depth cue', default: 0, min: 0, max: 1, step: hundredths, shownFor: every }),
+  // The strength of a glow spread around the bright parts of the scene, how far it spreads, from 0 to 1, and the
+  // brightness, from 0 to 1, below which nothing glows. The spread and the threshold matter only while it's on, and
+  // show just below it
+  bloom: slider({ folder: 'Scene', label: 'Bloom', default: 0, min: 0, max: 3, step: hundredths, shownFor: every }),
+  bloomRadius: slider({
+    folder: 'Scene',
+    label: 'Bloom radius',
+    default: bloomRadiusDefault,
+    min: 0,
+    max: 1,
+    step: hundredths,
+    shownFor: every,
+    shownWhile: { option: 'bloom', above: 0 },
+  }),
+  bloomThreshold: slider({
+    folder: 'Scene',
+    label: 'Bloom threshold',
+    default: bloomThresholdDefault,
+    min: 0,
+    max: 1,
+    step: hundredths,
+    shownFor: every,
+    shownWhile: { option: 'bloom', above: 0 },
+  }),
+  // Order-independent transparency: the surface's see-through skin summed by how near and how opaque each layer is, in
+  // place of the depth pass that shows only the nearest, so that every layer of skin shows over the bone and nothing
+  // depends on the order the triangles are drawn in. It acts only below full Opacity
+  oit: toggle({ folder: 'Scene', label: 'OIT', default: false, shownFor: surface, shownWhile: translucent, needs: 'oit' }),
 }
 
 // Each option's value, of the type its entry's default has: a slider's is any number, and a choice's one of its values
@@ -254,6 +305,7 @@ export const defaultOptions: ViewOptions = {
   style: viewOptions.style.default,
   detail: viewOptions.detail.default,
   size: viewOptions.size.default,
+  blend: viewOptions.blend.default,
   mode: viewOptions.mode.default,
   density: viewOptions.density.default,
   windowLow: viewOptions.windowLow.default,
@@ -278,4 +330,17 @@ export const defaultOptions: ViewOptions = {
   sagittal: viewOptions.sagittal.default,
   caps: viewOptions.caps.default,
   depthCue: viewOptions.depthCue.default,
+  bloom: viewOptions.bloom.default,
+  bloomRadius: viewOptions.bloomRadius.default,
+  bloomThreshold: viewOptions.bloomThreshold.default,
+  oit: viewOptions.oit.default,
+}
+
+// The options as a backend can draw them: a choice or a switch that needs what the backend lacks goes back to its
+// default, and the rest stand. The same object comes back where nothing changes
+export function drawableOptions(options: ViewOptions, capabilities: Capabilities): ViewOptions {
+  const lacking = (need: Capability | undefined) => need !== undefined && !capabilities[need]
+  const blend = lacking(viewOptions.blend.choiceNeeds?.[options.blend]) ? viewOptions.blend.default : options.blend
+  const oit = options.oit && !lacking(viewOptions.oit.needs)
+  return blend === options.blend && oit === options.oit ? options : { ...options, blend, oit }
 }

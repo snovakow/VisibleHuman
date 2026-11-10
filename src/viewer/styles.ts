@@ -40,3 +40,9 @@ export function isWeighted(options: { style: Style; blend: Blend }) {
 export function isBackShell(options: { style: Style; backShell: boolean; opacity: number }) {
   return options.backShell && options.style === 'surface' && options.opacity < 1
 }
+
+// Whether the surface's see-through skin is summed without an order rather than shown by its depth pass: the OIT switch
+// on, with the surface below full Opacity. At full Opacity nothing is see-through, so the switch draws nothing
+export function isOit(options: { style: Style; oit: boolean; opacity: number }) {
+  return options.oit && options.style === 'surface' && options.opacity < 1
+}

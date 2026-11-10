@@ -10,7 +10,7 @@ import { blockGrid, type BlockGrid } from '../volume/blockGrid.ts'
 import { bodyCoverage, scenePosition, type Triple, type Volume } from '../volume/format.ts'
 import { labelOf, type Bounds } from '../volume/levels.ts'
 import { cutPlanes, type Cuts } from './cuts.ts'
-import { isBackShell } from './styles.ts'
+import { isBackShell, isOit } from './styles.ts'
 import { createBodySampler, rimAt, type BodySampler } from './surfaceShading.ts'
 import { acquireCoverageTexture, acquireVolumeTexture, releaseCoverageTexture, releaseVolumeTexture } from './volumeTexture.ts'
 
@@ -18,8 +18,9 @@ import { acquireCoverageTexture, acquireVolumeTexture, releaseCoverageTexture, r
 // Detail's blocks at the body decision, so that it lies where the splats do at that Detail, and the bone from the
 // loaded grid's density at the Bone threshold; with a Depth, the closed shell that far under the skin, meshed on the
 // skin's grid. Each is coloured from the body's 3D texture just inside the surface, or by the colour of the cells
-// either side of each vertex, lit by the scene's lights and cut by the three planes through one clipping group; the
-// skin is see-through below full Opacity by a depth pass ahead of its colour, with its far side under it as a choice
+// either side of each vertex, lit by the scene's lights, darkened with depth by the scene's fog, and cut by the three
+// planes through one clipping group; the skin is see-through below full Opacity by a depth pass ahead of its colour,
+// with its far side under it as a choice, or, with OIT on, by the effects' sum of every layer, which needs no depth pass
 
 // A see-through skin's draws, in the order they go, each ahead of the colour's at three's default of 0: the far
 // side's depth alone, then its colour, then the near side's depth alone, then its colour. All four list with the
@@ -88,6 +89,7 @@ export function BodySurface() {
   const boneThreshold = useStore((s) => s.options.boneThreshold)
   const opacity = useStore((s) => s.options.opacity)
   const backShell = useStore((s) => isBackShell(s.options))
+  const oit = useStore((s) => isOit(s.options))
   const rim = useStore((s) => s.options.rim)
   const setTriangles = useStore((s) => s.setTriangles)
   const owned = useRef<Owned | null>(null)
@@ -268,8 +270,10 @@ export function BodySurface() {
 
   // Below full opacity, the near side's depth pass draws ahead of its colour and hides every layer but the nearest; with
   // the back shell on as well, the far side's two passes draw ahead of both, so that its nearest face shows under the
-  // near side's. At full Opacity the skin is opaque and hides its far side, so the back shell draws nothing. The bone
-  // stays opaque whatever the Opacity. None of this meshes anything again
+  // near side's. With OIT on, the effects sum every see-through layer whatever its order, so neither depth pass
+  // draws: each would hide the layers the sum is there to show, and, being see-through itself, would join the sum. At
+  // full Opacity the skin is opaque and hides its far side, so the back shell draws nothing. The bone stays opaque
+  // whatever the Opacity. None of this meshes anything again
   useEffect(() => {
     const current = owned.current
     if (!current) return
@@ -282,10 +286,10 @@ export function BodySurface() {
         colour.needsUpdate = true
       }
     }
-    materials.skinDepth.visible = transparent
+    materials.skinDepth.visible = transparent && !oit
     materials.back.visible = backShell
-    materials.backDepth.visible = backShell
-  }, [opacity, backShell])
+    materials.backDepth.visible = backShell && !oit
+  }, [opacity, backShell, oit])
 
   useEffect(() => {
     const current = owned.current
