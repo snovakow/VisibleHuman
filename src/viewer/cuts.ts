@@ -13,7 +13,7 @@ export interface Cuts {
 }
 
 // The box the cuts leave, as its lowest and highest corners along x, y and z
-export interface CutBox {
+interface CutBox {
   min: Triple
   max: Triple
 }

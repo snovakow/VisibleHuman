@@ -121,7 +121,7 @@ export function compose(outer: RigidMap, inner: RigidMap): RigidMap {
 }
 
 // A shape's first and second moments, gathered point by point: enough for its centre and its principal axes
-export interface Moments {
+interface Moments {
   count: number
   sum: [number, number, number]
   // The sums of xx, yy, zz, xy, xz and yz

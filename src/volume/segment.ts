@@ -12,7 +12,7 @@ export const darkMax = 40
 // pale cartilage and fat included, spreads further
 export const greyRange = 20
 // A cell is body when more than this share of its pixels are
-export const bodyShare = 0.5
+const bodyShare = 0.5
 
 export function isBodyPixel(r: number, g: number, b: number) {
   if (b > r + blueMargin) return false
@@ -60,7 +60,7 @@ export const isBodyCell = (bodyPixels: number, pixels: number) => bodyPixels > p
 // never short: a taper isn't, and nor is the crown's second slice, 1002, which is a sixth smaller than 1001 alone and
 // was flagged when one slice was reference enough
 export const dipWindowMm = 8
-export const dipShare = 0.85
+const dipShare = 0.85
 
 // How many of a body's files, sliceSpacing apart, span this many millimetres
 export const filesSpanning = (mm: number, sliceSpacing: number) => Math.round(mm / sliceSpacing)
@@ -134,7 +134,7 @@ export const isThinLayer = (kept: number, slices: number) => kept < slices * thi
 
 // The planes a gap's colour is blended in: the colour, one of the planes filled, and the body decision it's blended
 // by, a byte per cell, non-zero for body
-export interface GapBlend {
+interface GapBlend {
   colors: Uint8Array
   body: Uint8Array
 }

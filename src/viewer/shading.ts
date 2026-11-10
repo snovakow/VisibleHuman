@@ -32,7 +32,7 @@ import { useStore } from '../store.ts'
 // slider never rebuilds a material. Each is a uniform three refreshes on every render for every material: one in an
 // object's own group refreshes, for a material that holds no node, only when that object's material or transform
 // changes, so a plain material that takes the cue as fog would miss a new value
-export const optionUniforms = {
+const optionUniforms = {
   depthCue: uniform(defaultOptions.depthCue).setGroup(renderGroup),
 } satisfies Partial<Record<keyof ViewOptions, unknown>>
 export const { depthCue } = optionUniforms

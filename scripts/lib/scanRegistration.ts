@@ -18,7 +18,7 @@ import { registrationPath } from './registration.ts'
 export type Hand = 'same' | 'mirrored'
 export const hands: readonly Hand[] = ['same', 'mirrored']
 
-export interface ScanRecord {
+interface ScanRecord {
   set: string
   // Columns, rows and slices, the millimetres between them, and the frame of reference the files give
   size: Triple

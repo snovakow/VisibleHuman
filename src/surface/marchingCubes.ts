@@ -11,7 +11,7 @@ import type { SceneAxes, Triple } from '../volume/format.ts'
 // wound the other way round, so they still face outward. Given colours on the same grid, each vertex takes the colour
 // where it lies along its edge. Pure, so a worker runs it and the tests prove it
 
-export interface IsosurfaceInput {
+interface IsosurfaceInput {
   // One value per voxel in index order i + nx·(j + ny·k): a byte, such as the file's coverage or density block, or a
   // float, such as a distance from the skin
   field: Uint8Array | Float32Array

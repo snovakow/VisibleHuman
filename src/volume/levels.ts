@@ -5,16 +5,16 @@ import { isBodyVoxel, scenePosition, sceneSpacing, type Triple, type Volume } fr
 // of all its voxels, body or not. Every level is in the scene's axes and millimetres, centred on the body's bounds
 
 // The blocks a level may merge, in voxels along each axis, finest first. A level's Detail is its block
-export const blocks = [1, 2, 4, 8] as const
+const blocks = [1, 2, 4, 8] as const
 export type Detail = number
 
 // A level of more cells than this is left out. three keeps a splat in 52 bytes over four storage buffers, 16 in the
 // largest, and its sort in 8 more, so a level this size takes about 120 MB, and 32 MB in its largest buffer, well
 // within the 128 MB a storage binding may hold
-export const maxLevelCells = 2_000_000
+const maxLevelCells = 2_000_000
 // The page opens on the finest level of at most this many cells, which on the male's 4 mm file is the 8 mm level of
 // about 215,000, the most the WebGL 2 fallback orbits smoothly on a 2014 Intel Iris
-export const defaultLevelCells = 400_000
+const defaultLevelCells = 400_000
 
 // The body's bounds in the scene, in millimetres, before centring: the box its body voxels fill, each reaching half a
 // voxel either side of its centre
@@ -45,7 +45,7 @@ export interface Level {
 // Finest first
 export type Levels = readonly Level[]
 
-export interface Body {
+interface Body {
   bounds: Bounds
   levels: Levels
   // The level the page opens on
@@ -53,7 +53,7 @@ export interface Body {
 }
 
 // The lowest and highest i, j and k of any body voxel
-export interface Extent {
+interface Extent {
   low: Triple
   high: Triple
 }
@@ -244,7 +244,7 @@ export function buildLevel(
   }
 }
 
-export interface LevelLimits {
+interface LevelLimits {
   maxCells: number
   defaultCells: number
 }

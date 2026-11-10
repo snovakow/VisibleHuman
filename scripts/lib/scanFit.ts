@@ -32,11 +32,11 @@ import type { DicomVolume } from './dicom.ts'
 // luminance of at least this. Measured on patches of the head's slices: bone, scalp, fat and white matter spread
 // 0.22–0.27 of their brightest channel whatever the lighting, grey matter and muscle 0.30–0.45. The male's rule,
 // by luminance and saturation, calls nearly all of the fixed head pale
-export const headPaleSpread = 0.27
-export const headPaleLuminance = 100
+const headPaleSpread = 0.27
+const headPaleLuminance = 100
 
 // The CAT's head and its bone, in Hounsfield units
-export const headHounsfield = -300
+const headHounsfield = -300
 export const boneHounsfield = 300
 
 // The CAT's bone is sampled every this many voxels across a slice and every this many slices, about 2 mm each way,
@@ -132,7 +132,7 @@ export function sampleScan(scan: DicomVolume, [x, y, z]: Vec3, outside: number) 
 
 // The map from a frame of millimetres into a scan's voxel indices, as fractions of a voxel, given the rigid map from
 // that frame into the scan's patient frame: index = rows · point + offset, a row for each of i, j and k
-export interface IndexMap {
+interface IndexMap {
   rows: Mat3
   offset: Vec3
 }
@@ -236,7 +236,7 @@ export function catPoints(cat: DicomVolume, hounsfieldScale: number, stackMm: nu
   return { bone: Float32Array.from(bone), lattice: Float32Array.from(lattice), head: Uint8Array.from(head), frame: principalFrame(moments) }
 }
 
-export interface CatScores {
+interface CatScores {
   // The share of the CAT's bone on pale tissue, the Dice overlap of the two silhouettes, and their sum
   bone: number
   body: number
@@ -302,7 +302,7 @@ export interface Start {
   to: Vec3
 }
 
-export interface Found {
+interface Found {
   map: RigidMap
   score: number
   // The turn and shift from the start, three angles then three shifts, and whether any ended at the reach's edge
@@ -377,7 +377,7 @@ export function mutualInformation(joint: Float64Array | Uint32Array, bins: numbe
 
 // The MRI's points for its fit to the CAT: a lattice of its voxels, about 3 mm apart, that show signal, each with its
 // value's bin; and the head's centre and principal axes in the MRI's frame
-export interface MriPoints {
+interface MriPoints {
   points: Float32Array
   bins: Uint8Array
   frame: PrincipalFrame
@@ -386,7 +386,7 @@ export interface MriPoints {
   top: number
 }
 
-export const informationBins = 32
+const informationBins = 32
 // The MRI is sampled every this many voxels across a slice and every this many slices
 const mriStep: readonly [number, number] = [6, 3]
 // A voxel shows signal from this share of the scan's 99th percentile value, which leaves the air and its noise out

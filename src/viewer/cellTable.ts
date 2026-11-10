@@ -30,7 +30,7 @@ const bytesPerCell = 4
 const byteRange = 256
 const fullByte = byteRange - 1
 // A fixed width, a power of two within WebGPU's default limit of 8192 texels, with as many rows as the cells need
-export const tableWidth = 4096
+const tableWidth = 4096
 
 // What the table's alpha is painted from
 export type TablePaint = Pick<ViewOptions, 'opacity' | 'axial' | 'coronal' | 'sagittal'>

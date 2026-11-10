@@ -8,7 +8,7 @@ import { ctToCryo, flips, type Affine, type Flip, type Point, type Similarity } 
 import type { GrayImage, RawImage } from './decode.ts'
 
 // A mask of cells, each cellPx × cellPx source pixels, row by row
-export interface Mask {
+interface Mask {
   width: number
   height: number
   cellPx: number
@@ -28,17 +28,17 @@ const paleInset = 2
 // 136–176 and a median saturation of 0.35–0.41, fat and pale muscle a saturation of 0.47–0.56, so the rule keeps most
 // of the bone and a share of the fat; a stricter rule tried first, luminance 150 with the channels within 60, kept
 // 6–29 % of the bone and mostly frost
-export const paleLuminance = 120
-export const paleSaturation = 0.45
+const paleLuminance = 120
+const paleSaturation = 0.45
 // On the CT's density scale, body and bone
-export const ctBodyDensity = 40
-export const ctBoneDensity = 100
+const ctBodyDensity = 40
+const ctBoneDensity = 100
 // A piece of a body mask smaller than this, in square millimetres, is not the body: the slice's tag and the card's
 // patches on the cryosection, the scanner table's streaks under the body on the CT
 export const minPieceMm2 = 2000
 // The CT's body silhouette is only matched where it shows the body alone, which its area tells: within this of the
 // cryosection's body area
-export const outlineAreaTolerance = 0.2
+const outlineAreaTolerance = 0.2
 // The CT is reconstructed inside a circle that touches the image's sides, and its rim reads as bone where the body
 // reaches it, as the male's arms do at the 480 mm field; pixels within this many of the rim, or past it, are not read
 const ctRimPx = 4
@@ -80,7 +80,7 @@ export function keepPieces(cells: Uint8Array, width: number, height: number, min
   return kept
 }
 
-export interface CryoMaskOptions {
+interface CryoMaskOptions {
   isBody?: (r: number, g: number, b: number) => boolean
   pixelMm?: number
   luminance?: number
@@ -259,7 +259,7 @@ export function samplePair(
   }
 }
 
-export interface Scores {
+interface Scores {
   // The share of the CT's bone cells that land on pale cryo cells, over every sample. Not a Dice: the pale cells are
   // many times the bone's area, since fat is pale too, so a Dice between the two would top out near 0.2 at the best
   // alignment, while the share rises from about a quarter at a random one to most of the bone at the right one
@@ -303,7 +303,7 @@ export function score(samples: readonly SamplePair[], similarity: Similarity, ce
   return { bone, body, total: useBody ? (bone + body) / 2 : bone }
 }
 
-export interface SearchOptions {
+interface SearchOptions {
   // The CT image's centre, in CT pixels
   centre: Point
   // Cryo pixels per millimetre, which the search's steps are given in

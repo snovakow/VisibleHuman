@@ -2,7 +2,7 @@ import { readBodies, type BodiesFile, type LevelEntry } from './bodies.ts'
 import { readVolume, type Volume } from './format.ts'
 
 // The files ship with the site, so they're fetched relative to the page and the build works from any folder
-export const bodiesUrl = 'volume/bodies.json'
+const bodiesUrl = 'volume/bodies.json'
 
 // Whether an error is an aborted fetch's, which a newer load has taken over from
 export const isAbort = (error: unknown) => error instanceof DOMException && error.name === 'AbortError'
@@ -54,7 +54,7 @@ async function gunzip(bytes: Uint8Array<ArrayBuffer>) {
   return new Uint8Array(await new Response(stream).arrayBuffer())
 }
 
-export interface LoadedVolume {
+interface LoadedVolume {
   volume: Volume
   // The file's bytes as fetched, and the milliseconds to decompress them and to read them
   bytes: number

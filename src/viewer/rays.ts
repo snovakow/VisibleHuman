@@ -9,7 +9,7 @@ import type { SceneAxes, Triple, Volume } from '../volume/format.ts'
 // division by zero
 export const leastDirection = 1e-6
 
-export interface Ray {
+interface Ray {
   origin: Vector3
   direction: Vector3
   // The ray's direction in view space, whose z is negative in front of the camera, so that a distance t along the ray

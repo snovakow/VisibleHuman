@@ -6,7 +6,7 @@
 import type { Triple } from './format.ts'
 
 // Where a level's density comes from: the colour stand-in, or the registered CT
-export type DensitySource = 'colour' | 'ct'
+type DensitySource = 'colour' | 'ct'
 
 // The colour gain one cryo block's slices took, per channel, R, G and B, to even out the colour step at the block's
 // boundary with the block before it; the first block's is 1

@@ -6,8 +6,8 @@ import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { sets } from './sets.ts'
 
-export const defaultRoot = join(homedir(), 'Data', 'VisibleHuman')
-export const manifestName = 'manifest.json'
+const defaultRoot = join(homedir(), 'Data', 'VisibleHuman')
+const manifestName = 'manifest.json'
 
 // What one set holds, as the last fetch or verify found it
 export interface SetRecord {
@@ -22,7 +22,7 @@ export interface SetRecord {
   md5?: { matched: number; unchecked: number; mismatched: string[] }
 }
 
-export interface Manifest {
+interface Manifest {
   root: string
   checked: string
   sets: Record<string, SetRecord>
@@ -74,7 +74,7 @@ function isManifest(value: unknown): value is Manifest {
 
 // The manifest, or null where there's none yet; one that can't be read or isn't a manifest is an error, not something
 // to overwrite
-export async function readManifest(root: string): Promise<Manifest | null> {
+async function readManifest(root: string): Promise<Manifest | null> {
   const path = join(root, manifestName)
   const text = await readFile(path, 'utf8').catch((error: unknown) => {
     if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return null

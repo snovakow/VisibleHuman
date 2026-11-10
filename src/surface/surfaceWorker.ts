@@ -14,7 +14,7 @@ interface GridRequest {
 
 // A surface meshed from a field at an isolevel: the skin from the coverage, and the mesh inside it, asked for as the
 // bone, from the density or, where it's the brain's, from a body's MRI
-export interface FieldRequest extends GridRequest {
+interface FieldRequest extends GridRequest {
   kind: 'skin' | 'bone'
   field: Uint8Array
   isolevel: number
@@ -22,7 +22,7 @@ export interface FieldRequest extends GridRequest {
 
 // The closed shell a depth under the skin, meshed from each body voxel's distance to the outside, which the worker
 // computes from the coverage and keeps under the key, so that the next shell on the grid of the same key reuses it
-export interface ShellRequest extends GridRequest {
+interface ShellRequest extends GridRequest {
   kind: 'shell'
   coverage: Uint8Array
   key: string
@@ -42,7 +42,7 @@ export interface DistanceTiming {
   milliseconds: number
 }
 
-export interface SurfaceResult {
+interface SurfaceResult {
   kind: SurfaceKind
   mesh: IsosurfaceMesh
   // How long the worker took to mesh it

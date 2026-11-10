@@ -32,19 +32,19 @@ export type Trace = 'skin' | 'bone' | 'both' | 'brain'
 
 // What the surface's inner mesh is of: the bone, from the density at the Bone threshold, or, for a body with an MRI,
 // the surface where the MRI passes its threshold
-export type Inner = 'bone' | 'brain'
+type Inner = 'bone' | 'brain'
 
 // Where the surface's colour comes from: the body's texture just inside the surface, at the loaded grid's resolution
 // whatever the Detail, or the colour of the blocks either side of each vertex on its mesh's grid, the Detail's for the
 // skin and the shell and the loaded grid's for the bone, mixed as the vertex lies between them. On the skin that's
 // much the splats' own colour at that Detail: a block's colour takes in the band dilated around the body as well as
 // its body voxels, and a splat's its body voxels alone
-export type SurfaceColour = 'texture' | 'cells'
+type SurfaceColour = 'texture' | 'cells'
 
 // What an effect needs of the backend that draws: the weighted blend sums into half-float targets, and the surface's
 // order-independent transparency into such a target and a second blended its own way. WebGPU has both; the WebGL 2
 // fallback has each only where the browser offers the extensions for it
-export type BackendCapability = 'weighted' | 'oit'
+type BackendCapability = 'weighted' | 'oit'
 export type BackendCapabilities = Record<BackendCapability, boolean>
 // What a control may need before the panel offers it: something of the backend, or an MRI in the body shown, which
 // only the head's file holds
@@ -56,7 +56,7 @@ export type Capabilities = Record<Capability, boolean>
 export type Folder = 'Body' | 'Look' | 'Cuts' | 'Scene'
 
 // Which styles show a control: every style, or the styles named
-export type ShownFor = 'every' | { styles: readonly Style[] }
+type ShownFor = 'every' | { styles: readonly Style[] }
 
 // Another control that hides this one, by its key in the table: this one shows only while that control's value is
 // the one given, isn't it, is one of those listed, is above it or is below it
@@ -85,7 +85,7 @@ interface Control<T> {
 
 // A number in a range, moved by steps. A deferred slider is committed when the drag or the edit ends rather than as
 // it moves, for a value whose every change rebuilds something
-export interface Slider extends Control<number> {
+interface Slider extends Control<number> {
   kind: 'slider'
   min: number
   max: number
@@ -93,7 +93,7 @@ export interface Slider extends Control<number> {
   deferred?: true
 }
 
-export interface Switch extends Control<boolean> {
+interface Switch extends Control<boolean> {
   kind: 'switch'
 }
 
@@ -106,13 +106,13 @@ export interface Choice<T extends string | number> extends Control<T> {
 }
 
 // The style, whose choices the panel lists from the styles themselves
-export interface StyleChoice extends Control<Style> {
+interface StyleChoice extends Control<Style> {
   kind: 'style'
 }
 
 // The splat level, by the block of voxels each splat stands for, whose choices the panel lists from the levels the
 // loaded file gives, by their spacing, coarsest first
-export interface DetailChoice extends Control<Detail> {
+interface DetailChoice extends Control<Detail> {
   kind: 'detail'
 }
 

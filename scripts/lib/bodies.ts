@@ -17,7 +17,7 @@ export interface Level {
 
 // How a slice's file is named: the prefix, the slice number padded to digits, a sub-slice suffix where a number has
 // several files (the female's a, b and c, 0.33 mm apart), then the extension
-export interface Naming {
+interface Naming {
   prefix: string
   digits: number
   subSlices: readonly string[]
@@ -26,7 +26,7 @@ export interface Naming {
 
 // A body's CT set, where it has one: the set's id, how a slice's image and header files are named around its number
 // (the male's cvm1125f.png and cvm1125f.txt), and what the NLM calls the scan
-export interface CtSet {
+interface CtSet {
   set: string
   image: { prefix: string; suffix: string }
   header: { prefix: string; suffix: string }
@@ -38,7 +38,7 @@ export interface CtSet {
 
 // The small JPEGs the NLM offers of a body's slices, where it has them: the set they're in, the extension that takes
 // the place of the slice's own, and the slices a contact sheet shows, spread from the first to the last
-export interface Thumbnails {
+interface Thumbnails {
   set: string
   extension: string
   sheet: readonly number[]
@@ -47,7 +47,7 @@ export interface Thumbnails {
 // The scans of a whole body, each one grid in its scanner's frame, which a rigid transform places on the photographs:
 // a CT, which the density channel is resampled from, and an MRI, which fills a channel of its own. Each is a set of
 // DICOM files, a slice a file
-export interface Scans {
+interface Scans {
   // The CT's set, and what its files' values are multiplied by to give Hounsfield units
   ct: { set: string; hounsfieldScale: number }
   mri: { set: string }

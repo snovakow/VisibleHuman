@@ -8,7 +8,7 @@ export const baseUrl = 'https://data.lhncbc.nlm.nih.gov/public/Visible-Human'
 
 // How a folder's files are named: every number from first to last, padded to digits, with each suffix in turn, less
 // the absent names. A source without a rule wants every file its listing shows
-export interface NameRule {
+interface NameRule {
   prefix: string
   first: number
   last: number
@@ -20,7 +20,7 @@ export interface NameRule {
 
 // One or more NLM folders, relative to baseUrl, that list the same kind of file. Where a name is listed in two
 // folders, it's the same file, taken from the first
-export interface Source {
+interface Source {
   folders: readonly string[]
   names?: NameRule
 }

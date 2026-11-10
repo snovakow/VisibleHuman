@@ -10,7 +10,7 @@ import type { Triple } from '../../src/volume/format.ts'
 
 // The strip lies in this share of the frame from its foot: in the lower fifth on most of the male's slices, higher
 // in the frames of the third block, which leave a band of black below the photograph
-export const stripSearch = 0.3
+const stripSearch = 0.3
 // The patches' pitch along the strip, in pixels, at the male's 0.33 mm per pixel
 export const patchPitch = 32
 // The white patch's edge against the holder: a pixel at least this bright with one at most this dark this many pixels
@@ -26,10 +26,10 @@ const stairBox = 9
 // A patch is read this many pixels inside its edges, clear of the strip's blur and the printed lines
 const patchInset = 7
 // The patches read, from the white, and the one taken as the reference
-export const patchesRead = 4
+const patchesRead = 4
 export const referencePatch = 2
 // A reference patch of fewer pixels than this is too little of the strip to read
-export const minPatchPixels = 500
+const minPatchPixels = 500
 // A channel at this level or above has reached the scan's white point of 240
 export const clipLevel = 239
 

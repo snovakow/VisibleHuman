@@ -29,7 +29,7 @@ import { leastDirection } from './rays.ts'
 // The ray a fragment marches, from the camera through its pixel: where it starts, which way it goes, in the world and
 // in view space, and the distances along it at which it enters and leaves the cut box, the entry no nearer than the
 // near plane. Every quad style's fragment is a function of these
-export interface QuadRay {
+interface QuadRay {
   origin: Node<'vec3'>
   direction: Node<'vec3'>
   // The direction in view space, whose z is negative in front of the camera, so that a distance t along the ray has

@@ -11,7 +11,7 @@ import { correlate, decorrelate, deltaDecode, deltaEncode } from './codec.ts'
 export type Triple = readonly [number, number, number]
 
 // A scene axis follows one of the grid's axes, i (0), j (1) or k (2), with it or against it
-export interface SceneAxis {
+interface SceneAxis {
   source: 0 | 1 | 2
   sign: 1 | -1
 }
@@ -52,8 +52,8 @@ export interface Volume {
   mri?: Uint8Array
 }
 
-export const magic = 'VHV2'
-export const formatVersion = 2
+const magic = 'VHV2'
+const formatVersion = 2
 export const headerBytes = 64
 // The body id's field in the header: ASCII, zero-padded
 const bodyBytes = 16
@@ -78,9 +78,9 @@ export const isBodyVoxel = (coverage: number) => coverage >= bodyCoverage
 // An axis byte: bits 0 and 1 the source axis, bit 7 set where the scene axis runs against it
 const againstBit = 0x80
 
-export const axisByte = (axis: SceneAxis) => axis.source | (axis.sign < 0 ? againstBit : 0)
+const axisByte = (axis: SceneAxis) => axis.source | (axis.sign < 0 ? againstBit : 0)
 
-export function axisFromByte(byte: number): SceneAxis {
+function axisFromByte(byte: number): SceneAxis {
   const source = byte & 3
   if ((source !== 0 && source !== 1 && source !== 2) || (byte & ~(3 | againstBit)) !== 0) {
     throw new Error(`Volume file: ${byte} isn't an axis byte`)
@@ -88,7 +88,7 @@ export function axisFromByte(byte: number): SceneAxis {
   return { source, sign: (byte & againstBit) !== 0 ? -1 : 1 }
 }
 
-export const axesBytes = (axes: SceneAxes): Triple => [axisByte(axes.x), axisByte(axes.y), axisByte(axes.z)]
+const axesBytes = (axes: SceneAxes): Triple => [axisByte(axes.x), axisByte(axes.y), axisByte(axes.z)]
 
 // The scene's three axes from their bytes, each source axis used once, so the mapping can be inverted
 export function axesFromBytes(bytes: Triple): SceneAxes {

@@ -24,7 +24,7 @@ export interface BoundaryWindows {
   after: Triple
 }
 
-export interface BlockGain {
+interface BlockGain {
   gain: Triple
   // Whether a channel's gain was held at a limit
   clamped: boolean
