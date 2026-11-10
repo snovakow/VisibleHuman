@@ -210,6 +210,10 @@ export const viewOptions = {
   }),
   // Lights each step by the density's slope there, which costs six more reads a step, so it's off until asked for
   shading: toggle({ folder: 'Look', label: 'Shading', default: false, shownFor: volume, shownWhile: { option: 'mode', is: 'over' } }),
+  // Draws each step in grey, by how far the density stands through the window, in place of the photographs' colour,
+  // and the x-ray and the maximum in white, so the window and level read the CT, or the head's MRI, as a scan
+  // viewer shows it. Only the colour changes: what each step covers is the same either way
+  grey: toggle({ folder: 'Look', label: 'Grey', default: false, shownFor: volume }),
   trace: choice<Trace>({
     folder: 'Look',
     label: 'Trace',
@@ -350,6 +354,7 @@ export const defaultOptions: ViewOptions = {
   windowHigh: viewOptions.windowHigh.default,
   quality: viewOptions.quality.default,
   shading: viewOptions.shading.default,
+  grey: viewOptions.grey.default,
   trace: viewOptions.trace.default,
   layers: viewOptions.layers.default,
   shadows: viewOptions.shadows.default,

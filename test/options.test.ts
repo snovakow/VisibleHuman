@@ -201,3 +201,14 @@ void test('the MRI and the brain are offered only for a body with an MRI, and go
   // Without one the choices go back and the threshold stays as it was moved, for the next body that has one
   assert.deepEqual(drawableOptions(asked, { ...backend, mri: false }), { ...asked, density: 'ct', trace: 'both', inner: 'bone' })
 })
+
+void test('the volume draws the photographs\' colour until Grey is asked for, a switch in the Look folder for the volume alone', () => {
+  const { grey } = viewOptions
+  assert.deepEqual([grey.kind, grey.folder, grey.label, grey.default], ['switch', 'Look', 'Grey', false])
+  assert.deepEqual(grey.shownFor, { styles: ['volume'] })
+  // It shows in every mode, and needs nothing of the backend or the body
+  assert.deepEqual([grey.shownWhile, grey.needs], [undefined, undefined])
+  assert.equal(defaultOptions.grey, false)
+  // It follows the volume's other controls, straight after Shading
+  assert.equal(optionKeys.indexOf('grey'), optionKeys.indexOf('shading') + 1)
+})

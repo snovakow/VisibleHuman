@@ -37,6 +37,7 @@ export function BodyVolume() {
   const windowHigh = useStore((s) => s.options.windowHigh)
   const quality = useStore((s) => s.options.quality)
   const shading = useStore((s) => s.options.shading)
+  const grey = useStore((s) => s.options.grey)
   const drawn = useRef<Drawn | null>(null)
 
   // Owns the quad for as long as the style is shown. The march lays what it gathers over what's behind, with its
@@ -122,7 +123,8 @@ export function BodyVolume() {
     march.windowLow.value = low
     march.windowHigh.value = high
     march.shading.value = shading
-  }, [density, opacity, windowLow, windowHigh, shading])
+    march.grey.value = grey
+  }, [density, opacity, windowLow, windowHigh, shading, grey])
 
   return null
 }

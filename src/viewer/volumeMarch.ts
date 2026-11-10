@@ -107,6 +107,9 @@ export interface VolumeMarch {
   windowLow: UniformNode<'float'>
   windowHigh: UniformNode<'float'>
   shading: UniformNode<'bool'>
+  // Draws the steps in grey by the density's share of the window, in place of the photographs' colour, and the x-ray
+  // and the maximum in white
+  grey: UniformNode<'bool'>
   // Reads a volume's texture, mapped from the scene by the volume's axes and centred on the body's bounds. The texture
   // stays its owner's, who releases it; the march only reads it
   show(texture: Data3DTexture, volume: Mapped, center: Triple): void
@@ -146,6 +149,7 @@ export function volumeMarch(): VolumeMarch {
   const windowLow = uniform(0)
   const windowHigh = uniform(1)
   const shading = uniform(false)
+  const grey = uniform(false)
   const stepLength = uniform(1)
   // The most steps a ray through the cut box can take: its diagonal in steps, and one more for the first step's offset
   const maxSteps = uniform(1, 'int')
@@ -168,6 +172,13 @@ export function volumeMarch(): VolumeMarch {
     densityAt(body.sample(toTexture.mul(vec4(p, 1)).xyz).level(float(0)))
   // The window's share of a density: clear below the low end, full above the high end
   const windowed = (density: Node<'float'>) => smoothstep(windowLow, windowHigh, density)
+  // A step's colour: the voxel's, decoded from the photographs' sRGB, or in grey its density's share of the window,
+  // so that the window sets the grey's black and white as a scan viewer's window and level do. The choice is a
+  // branch on the switch's uniform, which every pixel takes the same way
+  const stepColor = (texel: Node<'vec4'>, density: Node<'float'>): Node<'vec3'> =>
+    select(grey, vec3(windowed(density)), colorSpaceToWorking(vec4(texel.rgb, 1), SRGBColorSpace).rgb)
+  // The x-ray's and the maximum's colour: the film's cold white, or white in grey
+  const shownTint = select(grey, vec3(1), tintNode)
 
   const colorNode = rayQuad(cutMin, cutMax, ({ origin, direction, viewDir, tEnter, tExit }) => {
     // The first step is offset by a share of a step from a hash of the pixel's place, which trades the bands that
@@ -197,12 +208,12 @@ export function volumeMarch(): VolumeMarch {
       const cue = cueAtDistance(t)
 
       If(mode.equal(modeIndex.over), () => {
-        // What the step covers of the light still coming through, in the voxel's colour decoded from the photographs'
-        // sRGB, shaded where asked by the density's slope there
+        // What the step covers of the light still coming through, in the step's colour, shaded where asked by the
+        // density's slope there
         const sigma = opacity.mul(windowed(density)).mul(extinction)
         const alpha = exp(sigma.mul(stepLength).negate()).oneMinus().toVar()
         If(alpha.greaterThan(0), () => {
-          const color = colorSpaceToWorking(vec4(texel.rgb, 1), SRGBColorSpace).rgb.toVar()
+          const color = stepColor(texel, density).toVar()
           If(shading, () => {
             const dx = vec3(voxel.x, 0, 0)
             const dy = vec3(0, voxel.y, 0)
@@ -236,7 +247,7 @@ export function volumeMarch(): VolumeMarch {
           most.assign(max(most, windowed(density).mul(cue)))
         })
         .Else(() => {
-          const color = colorSpaceToWorking(vec4(texel.rgb, 1), SRGBColorSpace).rgb
+          const color = stepColor(texel, density)
           gathered.addAssign(color.mul(cue).mul(windowed(density).mul(stepLength).mul(opacity).mul(glowGain)))
         })
       t.addAssign(stepLength)
@@ -247,11 +258,11 @@ export function volumeMarch(): VolumeMarch {
     // The x-ray is the negative of what got through, the maximum is itself, faded by Opacity as the other modes are,
     // and the glow is its own light; the over's colour is already premultiplied by what it covered
     If(mode.equal(modeIndex.xray), () => {
-      result.assign(vec4(tintNode.mul(covered), covered))
+      result.assign(vec4(shownTint.mul(covered), covered))
     })
       .ElseIf(mode.equal(modeIndex.mip), () => {
         const shown = most.mul(opacity)
-        result.assign(vec4(tintNode.mul(shown), shown))
+        result.assign(vec4(shownTint.mul(shown), shown))
       })
       .ElseIf(mode.equal(modeIndex.glow), () => {
         result.assign(vec4(gathered, clamp(max(max(gathered.r, gathered.g), gathered.b), 0, 1)))
@@ -277,6 +288,7 @@ export function volumeMarch(): VolumeMarch {
     windowLow,
     windowHigh,
     shading,
+    grey,
     show(texture, volume, center) {
       body.value = texture
       toTexture.value.copy(sceneToTexture(volume, center))
