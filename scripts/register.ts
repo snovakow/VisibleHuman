@@ -1,9 +1,9 @@
 // The registration script: fits each segment of a body's CT to its cryosections and writes data/<body>/registration.json,
 // which the volume script reads to resample the CT into the density channel. Run by `npm run register`.
 //
-//   --body ID       which body: male or female
+//   --body ID       which body: male, female or head
 //   --samples N     how many slices of each segment the fit is made on, spread along it (8 by default)
-//   --preview       redraw the overlays from the registration as saved, fitting nothing
+//   --preview       redraw the overlays from the registration as saved, which it leaves as it is
 //   --data PATH     the data root, else VHP_DATA, else ~/Data/VisibleHuman
 //
 // A segment is a run of CT slices that share one geometry (field of view, centre, scan and how the body entered the
@@ -16,7 +16,11 @@
 // A body photographed several times a number, as the female's a, b and c, is fitted on the middle photograph of each
 // sample number, against the CT slice of that number.
 // Overlays go to .cache/preview/register/<body>-<slice>.png: the slice at two pixels a millimetre, the CT bone outline
-// magenta where the search started and cyan where it ended
+// magenta where the search started and cyan where it ended.
+// The head's scans are whole grids, not a slice for each photograph: its CAT is fitted to the grid the volume script
+// built, by a rigid transform, and its MRI to the CAT (lib/registerScans.ts), so the head is built first, then
+// registered, then built again with the density and the MRI. Its --preview climbs from the CAT's starts again, to
+// outline the one a fit would take
 
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -38,6 +42,7 @@ import {
   type SamplePair,
 } from './lib/images.ts'
 import { previewFolder } from './lib/previews.ts'
+import { registerScans } from './lib/registerScans.ts'
 import { loadRegistration, saveRegistration, type Registration, type Segment } from './lib/registration.ts'
 
 const overlayFolder = join(previewFolder, 'register')
@@ -58,10 +63,10 @@ function options() {
   })
   if (values.body === undefined) throw new Error('--body says which body to register, as in --body male')
   const body = bodyOf(values.body)
-  if (!body.ct) throw new Error(`The ${body.id} has no CT set to register`)
+  if (!body.ct && !body.scans) throw new Error(`The ${body.id} has no CT set to register`)
   const samples = Number(values.samples)
   if (!Number.isInteger(samples) || samples < 1) throw new Error(`--samples takes a count, not ${values.samples}`)
-  return { body, ct: body.ct, samples, preview: values.preview, root: dataRoot(values.data) }
+  return { body, samples, preview: values.preview, root: dataRoot(values.data) }
 }
 
 // One CT slice's geometry, read from its header, for every slice of the body that has one
@@ -229,7 +234,13 @@ function printTable(segments: readonly Segment[]) {
 }
 
 async function main() {
-  const { body, ct, samples: sampleCount, preview, root } = options()
+  const { body, samples: sampleCount, preview, root } = options()
+  if (body.scans) {
+    await registerScans(body, root, preview)
+    return
+  }
+  const { ct } = body
+  if (!ct) throw new Error(`The ${body.id} has no CT set to register`)
   const started = performance.now()
   // A number with a blank, empty or absent photograph sits beside a block's end or a gap, and is never a sample
   const skip = new Set([...body.blankFiles, ...body.emptyFiles, ...body.absentFiles].map((file) => Number(file.replace(/\D/g, ''))))
