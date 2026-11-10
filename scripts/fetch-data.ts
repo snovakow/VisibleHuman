@@ -419,4 +419,9 @@ async function main() {
   if (incomplete > 0) process.exitCode = 1
 }
 
-await main()
+try {
+  await main()
+} catch (error) {
+  console.error(error instanceof Error ? error.message : error)
+  process.exitCode = 1
+}
