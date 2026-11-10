@@ -82,6 +82,89 @@
           "optional": true
         }
       ]
+    },
+    {
+      "id": "female",
+      "label": "Female",
+      "credit": "Visible Human Female, courtesy of the U.S. National Library of Medicine",
+      "levels": [
+        {
+          "id": "4mm",
+          "label": "4 mm",
+          "file": "volume/female-4mm.bin",
+          "spacing": [
+            3.96,
+            3.96,
+            4
+          ],
+          "default": true,
+          "size": [
+            136,
+            75,
+            435
+          ],
+          "bytes": 4572591,
+          "textureBytes": 17748000,
+          "density": "ct",
+          "blockGains": [
+            {
+              "slices": [
+                1001,
+                1492
+              ],
+              "gain": [
+                1,
+                1,
+                1
+              ]
+            },
+            {
+              "slices": [
+                1497,
+                1977
+              ],
+              "gain": [
+                1,
+                1,
+                1
+              ]
+            },
+            {
+              "slices": [
+                1978,
+                2328
+              ],
+              "gain": [
+                1,
+                1,
+                1
+              ]
+            },
+            {
+              "slices": [
+                2330,
+                2730
+              ],
+              "gain": [
+                1,
+                1,
+                1
+              ]
+            }
+          ]
+        },
+        {
+          "id": "2mm",
+          "label": "2 mm",
+          "file": "volume/female-2mm.bin",
+          "spacing": [
+            1.98,
+            1.98,
+            2
+          ],
+          "optional": true
+        }
+      ]
     }
   ]
 }
