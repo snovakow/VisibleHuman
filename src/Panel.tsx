@@ -55,12 +55,12 @@ function shownWhile(dependence: Dependence, value: unknown) {
   return typeof value === 'number' && value < dependence.below
 }
 
-// Whether the backend has what a control or a choice needs of it; most need nothing
+// Whether the backend, or the body shown, has what a control or a choice needs; most need nothing
 function capable(need: Capability | undefined, capabilities: Capabilities) {
   return need === undefined || capabilities[need]
 }
 
-// A choice's values by their labels, less those the backend can't draw
+// A choice's values by their labels, less those whose need the backend or the body shown lacks
 function offeredChoices(entry: Choice<string | number>, capabilities: Capabilities): Record<string, string | number> {
   return Object.fromEntries(
     Object.entries(entry.choices).filter(([, value]) => capable(entry.choiceNeeds?.[value], capabilities)),

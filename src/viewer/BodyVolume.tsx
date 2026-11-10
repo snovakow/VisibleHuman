@@ -9,7 +9,7 @@ import { stepShare } from './quality.ts'
 import { createRayQuad } from './rayQuad.ts'
 import { asWebGPU } from './renderer.ts'
 import { modeIndex, sourceIndex, volumeMarch, windowEnds, type VolumeMarch } from './volumeMarch.ts'
-import { acquireVolumeTexture, releaseVolumeTexture } from './volumeTexture.ts'
+import { acquireMriTexture, acquireVolumeTexture, releaseMriTexture, releaseVolumeTexture } from './volumeTexture.ts'
 
 // The Volume style: the body's 3D texture marched from the ray quad, in the mode, window and quality the panel sets
 
@@ -65,18 +65,21 @@ export function BodyVolume() {
     }
   }, [get])
 
-  // The volume's texture, held while the volume is shown and let go when it changes or this unmounts
+  // The volume's texture, held while the volume is shown and let go when it changes or this unmounts: the colour
+  // with the density, or with the MRI in the density's place while the Density is the MRI
+  const readsMri = density === 'mri' && volume?.mri !== undefined
   useEffect(() => {
     const current = drawn.current
     if (!current || !volume || !bounds) return undefined
-    const texture = acquireVolumeTexture(volume)
+    const texture = readsMri ? acquireMriTexture(volume) : acquireVolumeTexture(volume)
     current.march.show(texture, volume, bounds.center)
     current.quad.visible = true
     return () => {
       current.quad.visible = false
-      releaseVolumeTexture(volume)
+      if (readsMri) releaseMriTexture(volume)
+      else releaseVolumeTexture(volume)
     }
-  }, [volume, bounds])
+  }, [volume, bounds, readsMri])
 
   // The box the cuts leave of the bounds clips every ray and bounds its steps
   useEffect(() => {

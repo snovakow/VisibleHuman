@@ -1,5 +1,5 @@
 import { WebGPURenderer } from 'three/webgpu'
-import type { Capabilities } from '../options.ts'
+import type { BackendCapabilities } from '../options.ts'
 
 // R3F types its renderer as a WebGLRenderer, though the Canvas's factory always makes a WebGPURenderer
 export function asWebGPU(renderer: unknown): WebGPURenderer {
@@ -26,7 +26,7 @@ export async function createRenderer(
   canvas: object,
   backend: Backend,
   fallBack: () => void,
-  report: (renderer: string, webgpu: boolean, capabilities: Capabilities) => void,
+  report: (renderer: string, webgpu: boolean, capabilities: BackendCapabilities) => void,
 ) {
   if (!(canvas instanceof HTMLCanvasElement)) throw new Error('Expected an HTMLCanvasElement')
   const forceWebGL = backend === 'webgl'
@@ -52,7 +52,7 @@ export async function createRenderer(
 // extensions, which the weighted blend's sums need, and each target of a pass blends its own way only with a third,
 // without which three blends them all as the material does; order-independent transparency adds into one target and
 // multiplies into the other, so it needs both
-function capabilitiesOf(renderer: WebGPURenderer): Capabilities {
+function capabilitiesOf(renderer: WebGPURenderer): BackendCapabilities {
   const context: unknown = renderer.getContext()
   if (!(context instanceof WebGL2RenderingContext)) return { weighted: true, oit: true }
   const has = (extension: string) => context.getExtension(extension) !== null

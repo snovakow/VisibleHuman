@@ -244,15 +244,17 @@ export function readVolume(bytes: Uint8Array): Volume {
 }
 
 // The bytes of an RGBA texture, R, G, B and density per voxel in index order. The density is the GPU's body test,
-// so a file without a density block gets 1 inside the body and 0 outside
-export function rgbaBytes(volume: Volume): Uint8Array {
-  const { red, green, blue, density, coverage } = volume
+// so a file without a density block gets 1 inside the body and 0 outside. Asked for the MRI, the fourth byte is the
+// MRI block's instead, 0 outside the body and where the MRI doesn't reach, so whatever reads the density reads the MRI
+export function rgbaBytes(volume: Volume, fourth: 'density' | 'mri' = 'density'): Uint8Array {
+  const { red, green, blue, density, coverage, mri } = volume
+  if (fourth === 'mri' && !mri) throw new Error(`The ${volume.body}'s volume has no MRI block`)
   const bytes = new Uint8Array(red.length * 4)
   for (let n = 0, at = 0; n < red.length; n++, at += 4) {
     bytes[at] = red[n]
     bytes[at + 1] = green[n]
     bytes[at + 2] = blue[n]
-    bytes[at + 3] = density ? density[n] : isBodyVoxel(coverage[n]) ? 1 : 0
+    bytes[at + 3] = fourth === 'mri' && mri ? mri[n] : density ? density[n] : isBodyVoxel(coverage[n]) ? 1 : 0
   }
   return bytes
 }

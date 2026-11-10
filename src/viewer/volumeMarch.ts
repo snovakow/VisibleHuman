@@ -71,7 +71,8 @@ const fullSlopePerVoxel = 0.15
 
 // The modes and the density sources as the shader's integers
 const modeIndex: Record<VolumeMode, number> = { over: 0, xray: 1, mip: 2, glow: 3 }
-const sourceIndex: Record<DensitySource, number> = { ct: 0, colour: 1 }
+// The MRI is read as the file's density is, from the texture's fourth channel, which holds the MRI then
+const sourceIndex: Record<DensitySource, number> = { ct: 0, colour: 1, mri: 0 }
 
 // The density byte a colour reads as, as src/volume/density.ts reads it on the CPU for the file's stand-in where the
 // CT doesn't reach, from the same thresholds: pale and unsaturated is bone, red is muscle, yellow is fat, and a dark

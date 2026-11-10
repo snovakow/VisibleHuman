@@ -9,7 +9,14 @@ import { stepShare } from './quality.ts'
 import { createRayQuad } from './rayQuad.ts'
 import { raytrace, traceIndex, type Raytrace } from './raytrace.ts'
 import { asWebGPU } from './renderer.ts'
-import { acquireCoverageTexture, acquireVolumeTexture, releaseCoverageTexture, releaseVolumeTexture } from './volumeTexture.ts'
+import {
+  acquireCoverageTexture,
+  acquireMriTexture,
+  acquireVolumeTexture,
+  releaseCoverageTexture,
+  releaseMriTexture,
+  releaseVolumeTexture,
+} from './volumeTexture.ts'
 
 // The Raytrace style: the skin and the bone traced through the body's 3D textures from the ray quad, with the
 // surfaces, layers, shadows and light the panel sets
@@ -38,6 +45,7 @@ export function BodyRaytrace() {
   const lightAzimuth = useStore((s) => s.options.lightAzimuth)
   const lightElevation = useStore((s) => s.options.lightElevation)
   const boneThreshold = useStore((s) => s.options.boneThreshold)
+  const mriThreshold = useStore((s) => s.options.mriThreshold)
   const rim = useStore((s) => s.options.rim)
   const opacity = useStore((s) => s.options.opacity)
   const quality = useStore((s) => s.options.quality)
@@ -69,20 +77,23 @@ export function BodyRaytrace() {
     }
   }, [get])
 
-  // The volume's textures, held while the volume is shown and let go when it changes or this unmounts
+  // The volume's textures, held while the volume is shown and let go when it changes or this unmounts: the colour
+  // with the density, or with the MRI in the density's place while the brain is traced
+  const tracesBrain = trace === 'brain' && volume?.mri !== undefined
   useEffect(() => {
     const current = drawn.current
     if (!current || !volume || !bounds) return undefined
-    const colour = acquireVolumeTexture(volume)
+    const colour = tracesBrain ? acquireMriTexture(volume) : acquireVolumeTexture(volume)
     const coverage = acquireCoverageTexture(volume)
     current.tracer.show(colour, coverage, volume, bounds.center)
     current.quad.visible = true
     return () => {
       current.quad.visible = false
       releaseCoverageTexture(volume)
-      releaseVolumeTexture(volume)
+      if (tracesBrain) releaseMriTexture(volume)
+      else releaseVolumeTexture(volume)
     }
-  }, [volume, bounds])
+  }, [volume, bounds, tracesBrain])
 
   // The box the cuts leave of the bounds clips every ray and bounds its steps
   useEffect(() => {
@@ -125,9 +136,10 @@ export function BodyRaytrace() {
     tracer.layers.value = layers
     tracer.shadows.value = shadows
     tracer.setLight(lightAzimuth, lightElevation)
-    tracer.boneThreshold.value = boneThreshold / 255
+    // The brain's surface is the same field's as the bone's, at the MRI's threshold
+    tracer.boneThreshold.value = (trace === 'brain' ? mriThreshold : boneThreshold) / 255
     tracer.rim.value = rim
-  }, [trace, layers, shadows, lightAzimuth, lightElevation, boneThreshold, rim])
+  }, [trace, layers, shadows, lightAzimuth, lightElevation, boneThreshold, mriThreshold, rim])
 
   return null
 }

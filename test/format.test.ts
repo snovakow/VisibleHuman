@@ -84,6 +84,18 @@ void test('the texture bytes interleave the colour with the density', () => {
   assert.deepEqual([...rgba.subarray(44, 48)], [77, 78, 79, 1])
 })
 
+void test('asked for the MRI, the texture bytes carry the MRI block where the density was', () => {
+  const mri = Uint8Array.from([0, 0, 90, 255, 1, 0, 0, 40, 0, 0, 0, 7])
+  const rgba = rgbaBytes({ ...volume, mri }, 'mri')
+  assert.equal(rgba.length, 48)
+  // The colour as before, and each voxel's fourth byte its MRI: 0 outside the body and where the MRI doesn't reach
+  assert.deepEqual([...rgba.subarray(0, 4)], [200, 100, 50, 0])
+  assert.deepEqual([...rgba.filter((_, n) => n % 4 === 3)], [...mri])
+  assert.deepEqual([...rgbaBytes({ ...volume, mri })], [...rgbaBytes(volume)])
+  // A volume without the block has nothing to give
+  assert.throws(() => rgbaBytes(volume, 'mri'), /no MRI block/)
+})
+
 void test('the reader reads a file inside a larger buffer, as Node gives it', () => {
   const bytes = writeVolume(volume)
   const padded = new Uint8Array(bytes.length + 5)

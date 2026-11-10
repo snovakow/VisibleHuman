@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { shallow } from 'zustand/shallow'
-import { defaultOptions, drawableOptions, type Capabilities, type ViewOptions } from './options.ts'
+import { defaultOptions, drawableOptions, type BackendCapabilities, type Capabilities, type ViewOptions } from './options.ts'
 import { defaultLevel, type BodyEntry } from './volume/bodies.ts'
 import type { Volume } from './volume/format.ts'
 import { buildBody, levelOf, type Bounds, type Levels } from './volume/levels.ts'
@@ -35,9 +35,10 @@ interface State {
   options: ViewOptions
   setOptions: (changes: Partial<ViewOptions>) => void
   // What the backend drawing can make of the effects that need more than a plain frame, as the renderer found when it
-  // started: everything, until one says otherwise. The panel leaves out what's missing
+  // started: everything, until one says otherwise; and whether the body shown has an MRI. The panel leaves out what's
+  // missing
   capabilities: Capabilities
-  setCapabilities: (capabilities: Capabilities) => void
+  setCapabilities: (backend: BackendCapabilities) => void
   // The triangles in each of the surface style's meshes, while it's drawn, for the panel
   triangles: Partial<Record<SurfaceKind, number>>
   setTriangles: (kind: SurfaceKind, count: number | undefined) => void
@@ -66,11 +67,12 @@ export const useStore = create<State>()((set, get) => ({
       const options = drawableOptions({ ...state.options, ...changes }, state.capabilities)
       return shallow(options, state.options) ? state : { options }
     }),
-  capabilities: { weighted: true, oit: true },
+  capabilities: { weighted: true, oit: true, mri: false },
   // A backend that lacks something takes the options that need it back to their defaults, as a switch to the
   // fallback may with an effect on
-  setCapabilities: (capabilities) =>
+  setCapabilities: (backend) =>
     set((state) => {
+      const capabilities = { ...state.capabilities, ...backend }
       if (shallow(capabilities, state.capabilities)) return state
       return { capabilities, options: drawableOptions(state.options, capabilities) }
     }),
@@ -140,11 +142,21 @@ export const useStore = create<State>()((set, get) => ({
       const start = performance.now()
       const { bounds, levels, defaultDetail } = buildBody(loaded.volume)
       // A new level of the same body keeps the Detail's spacing where it has it; otherwise the level's own default
-      const { options, levels: before } = get()
+      const { options, levels: before, capabilities: held } = get()
       const label = sameBody && before ? levelOf(before, options.detail)?.label : undefined
       const detail = levels.find((candidate) => candidate.label === label)?.block ?? defaultDetail
       shown = { body: body.id, level: level.id }
-      set({ status: 'ready', volume: loaded.volume, bounds, levels, options: { ...options, detail } })
+      // A body without an MRI takes the options that read one back to their defaults
+      const mri = loaded.volume.mri !== undefined
+      const capabilities = held.mri === mri ? held : { ...held, mri }
+      set({
+        status: 'ready',
+        volume: loaded.volume,
+        bounds,
+        levels,
+        capabilities,
+        options: drawableOptions({ ...options, detail }, capabilities),
+      })
 
       const counts = levels.map((each) => `${each.count.toLocaleString('en')} at ${each.label}`)
       const extent = bounds.half.map((half) => Math.round(half * 2)).join(' × ')

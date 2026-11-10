@@ -87,6 +87,8 @@ export function BodySurface() {
   const colourSource = useStore((s) => s.options.colour)
   const shellDepth = useStore((s) => s.options.depth)
   const boneThreshold = useStore((s) => s.options.boneThreshold)
+  const inner = useStore((s) => s.options.inner)
+  const mriThreshold = useStore((s) => s.options.mriThreshold)
   const opacity = useStore((s) => s.options.opacity)
   const backShell = useStore((s) => isBackShell(s.options))
   const oit = useStore((s) => isOit(s.options))
@@ -196,27 +198,25 @@ export function BodySurface() {
   }, [volume, bounds, skinOn, detail, setTriangles])
 
   // The bone, meshed again when the volume or the Bone threshold changes, from the density, which a file without
-  // one has none of
+  // one has none of; or, where the Inner surface is the brain, the same mesh from the MRI at the MRI threshold. Only
+  // the threshold in use meshes it again
+  const isolevel = inner === 'brain' ? mriThreshold : boneThreshold
   useEffect(() => {
     const current = owned.current
     if (!current) return undefined
-    if (!volume || !bounds || !boneOn || !volume.density) {
+    const field = inner === 'brain' ? volume?.mri : volume?.density
+    if (!volume || !bounds || !boneOn || !field) {
       discard(current, 'bone')
       setTriangles('bone', undefined)
       return undefined
     }
     // On the loaded grid, coloured by its voxels where the colour is the cells'
     const grid = blockGridOf(volume, 1)
-    const request = {
-      kind: 'bone',
-      field: volume.density,
-      isolevel: boneThreshold,
-      ...gridOf(volume, grid, bounds),
-    } satisfies SurfaceRequest
-    return mesh(current, request, volume, `at isolevel ${boneThreshold}`, setTriangles, (geometry, materials) => [
+    const request = { kind: 'bone', field, isolevel, ...gridOf(volume, grid, bounds) } satisfies SurfaceRequest
+    return mesh(current, request, volume, `${inner === 'brain' ? 'from the MRI ' : ''}at isolevel ${isolevel}`, setTriangles, (geometry, materials) => [
       new Mesh(geometry, materials.bone),
     ])
-  }, [volume, bounds, boneOn, boneThreshold, setTriangles])
+  }, [volume, bounds, boneOn, inner, isolevel, setTriangles])
 
   // The shell under the skin, on the skin's grid, present while there's a Depth: meshed again when the volume, the
   // Detail or the Depth changes, the worker keeping the grid's distance field from one Depth to the next. The Depth is

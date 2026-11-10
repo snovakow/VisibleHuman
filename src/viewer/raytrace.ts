@@ -78,7 +78,9 @@ const faceShare = 0.1
 const smoothingOffsets = [-0.5, 0.5]
 
 // The traces as the shader's integers
-const traceIndex: Record<Trace, number> = { skin: 0, bone: 1, both: 2 }
+// The brain is traced as the bone is, alone: its surface is the same field's, the texture's fourth channel, which
+// holds the MRI then and is judged against the MRI threshold
+const traceIndex: Record<Trace, number> = { skin: 0, bone: 1, both: 2, brain: 1 }
 
 export interface Raytrace {
   // The quad's colour: what the ray through each pixel met, premultiplied, with how much it covers as its alpha. The

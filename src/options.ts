@@ -18,15 +18,21 @@ export type Blend = 'normal' | 'glow' | 'weighted'
 export type VolumeMode = 'over' | 'xray' | 'mip' | 'glow'
 
 // Where the march reads a voxel's density: the file's density channel, the CT's where the scan covers the voxel and
-// a reading of its colour where it doesn't, or that reading of the colour everywhere, which shows what the CT adds
-export type DensitySource = 'ct' | 'colour'
+// a reading of its colour where it doesn't; that reading of the colour everywhere, which shows what the CT adds; or,
+// for a body with one, its MRI, which tells the soft tissues apart where the CT tells bone from the rest
+export type DensitySource = 'ct' | 'colour' | 'mri'
 
 // The march's step as a share of a voxel: a step chosen for the backend, a whole voxel on the WebGL 2 fallback and
 // half a voxel on WebGPU, or one named, each halving doubling the cost of a frame
 export type Quality = 'auto' | 'voxel' | 'half' | 'quarter'
 
-// Which surfaces the raytrace follows each ray to: the skin, the bone, or both, whichever a ray meets first
-export type Trace = 'skin' | 'bone' | 'both'
+// Which surfaces the raytrace follows each ray to: the skin, the bone, or both, whichever a ray meets first; or, for
+// a body with an MRI, the surface where the MRI passes its threshold, which with the body cut open is the brain's
+export type Trace = 'skin' | 'bone' | 'both' | 'brain'
+
+// What the surface's inner mesh is of: the bone, from the density at the Bone threshold, or, for a body with an MRI,
+// the surface where the MRI passes its threshold
+export type Inner = 'bone' | 'brain'
 
 // Where the surface's colour comes from: the body's texture just inside the surface, at the loaded grid's resolution
 // whatever the Detail, or the colour of the blocks either side of each vertex on its mesh's grid, the Detail's for the
@@ -38,7 +44,11 @@ export type SurfaceColour = 'texture' | 'cells'
 // What an effect needs of the backend that draws: the weighted blend sums into half-float targets, and the surface's
 // order-independent transparency into such a target and a second blended its own way. WebGPU has both; the WebGL 2
 // fallback has each only where the browser offers the extensions for it
-export type Capability = 'weighted' | 'oit'
+export type BackendCapability = 'weighted' | 'oit'
+export type BackendCapabilities = Record<BackendCapability, boolean>
+// What a control may need before the panel offers it: something of the backend, or an MRI in the body shown, which
+// only the head's file holds
+export type Capability = BackendCapability | 'mri'
 export type Capabilities = Record<Capability, boolean>
 
 // The panel's folders that hold options. Body holds the body and level choosers, which are the page's load state
@@ -62,7 +72,7 @@ interface Control<T> {
   default: T
   shownFor: ShownFor
   shownWhile?: Dependence
-  // What the control needs of the backend, without which the panel leaves it out
+  // What the control needs of the backend or of the body shown, without which the panel leaves it out
   needs?: Capability
 }
 
@@ -80,8 +90,8 @@ export interface Switch extends Control<boolean> {
   kind: 'switch'
 }
 
-// One of the values listed, each by its label in the panel. A value that needs something of the backend is left out of
-// the panel's list where the backend lacks it
+// One of the values listed, each by its label in the panel. A value that needs something of the backend or of the body
+// shown is left out of the panel's list where that's lacking
 export interface Choice<T extends string | number> extends Control<T> {
   kind: 'choice'
   choices: Record<string, T>
@@ -132,6 +142,10 @@ const hundredths = 0.01
 const bloomRadiusDefault = 0.4
 const bloomThresholdDefault = 0.3
 
+// The MRI threshold until the panel moves it: between the skull, which the head's MRI shows dark, a median of 25 on
+// its block's scale with three quarters of it under 40, and the soft tissue inside it, nearly all of it over 57
+const mriThresholdDefault = 45
+
 export const viewOptions = {
   style: styleChoice({ folder: 'Look', label: 'Style', default: 'splats', shownFor: every }),
   // Block 2 is the 8 mm level of the male's 4 mm file, which is where a load opens it; each load picks its own default.
@@ -160,7 +174,8 @@ export const viewOptions = {
     folder: 'Look',
     label: 'Density',
     default: 'ct',
-    choices: { CT: 'ct', colour: 'colour' },
+    choices: { CT: 'ct', colour: 'colour', MRI: 'mri' },
+    choiceNeeds: { mri: 'mri' },
     shownFor: volume,
   }),
   // The window over the density, as a share of the scale's top: below the low end a voxel is clear, above the high
@@ -199,7 +214,8 @@ export const viewOptions = {
     folder: 'Look',
     label: 'Trace',
     default: 'both',
-    choices: { skin: 'skin', bone: 'bone', both: 'both' },
+    choices: { skin: 'skin', bone: 'bone', both: 'both', brain: 'brain' },
+    choiceNeeds: { brain: 'mri' },
     shownFor: raytrace,
   }),
   // How many surfaces a ray lays over one another below full Opacity before it stops; it stops at bone regardless
@@ -233,6 +249,15 @@ export const viewOptions = {
   skin: toggle({ folder: 'Look', label: 'Skin', default: true, shownFor: surface }),
   bone: toggle({ folder: 'Look', label: 'Bone', default: true, shownFor: surface }),
   backShell: toggle({ folder: 'Look', label: 'Back shell', default: false, shownFor: surface, shownWhile: translucent }),
+  // What the mesh inside the skin is of, which the Bone switch shows: offered only for a body with an MRI
+  inner: choice<Inner>({
+    folder: 'Look',
+    label: 'Inner',
+    default: 'bone',
+    choices: { bone: 'bone', brain: 'brain' },
+    shownFor: surface,
+    needs: 'mri',
+  }),
   colour: choice<SurfaceColour>({
     folder: 'Look',
     label: 'Colour',
@@ -247,6 +272,19 @@ export const viewOptions = {
   // The density, on the file's scale, from which a voxel counts as bone. The default is the scale's, which the
   // density channel was built to; the range runs from dense soft tissue to the densest bone
   boneThreshold: slider({ folder: 'Look', label: 'Bone threshold', default: 110, min: 70, max: 200, step: 1, shownFor: surfaces }),
+  // The MRI's value, on the file's scale of 1 to 255, from which a voxel is inside the surface the raytrace's brain
+  // and the surface's inner brain are drawn at. The default sits between the skull, which the MRI shows dark, and the
+  // brain inside it
+  mriThreshold: slider({
+    folder: 'Look',
+    label: 'MRI threshold',
+    default: mriThresholdDefault,
+    min: 1,
+    max: 255,
+    step: 1,
+    shownFor: surfaces,
+    needs: 'mri',
+  }),
   // How much a surface's edges light up where it turns away from the eye, which draws it as a glass shell
   rim: slider({ folder: 'Look', label: 'Rim', default: 0, min: 0, max: 1, step: hundredths, shownFor: surfaces }),
   opacity: slider({ folder: 'Look', label: 'Opacity', default: 1, min: 0, max: 1, step: hundredths, shownFor: every }),
@@ -320,9 +358,11 @@ export const defaultOptions: ViewOptions = {
   skin: viewOptions.skin.default,
   bone: viewOptions.bone.default,
   backShell: viewOptions.backShell.default,
+  inner: viewOptions.inner.default,
   colour: viewOptions.colour.default,
   depth: viewOptions.depth.default,
   boneThreshold: viewOptions.boneThreshold.default,
+  mriThreshold: viewOptions.mriThreshold.default,
   rim: viewOptions.rim.default,
   opacity: viewOptions.opacity.default,
   axial: viewOptions.axial.default,
@@ -336,11 +376,16 @@ export const defaultOptions: ViewOptions = {
   oit: viewOptions.oit.default,
 }
 
-// The options as a backend can draw them: a choice or a switch that needs what the backend lacks goes back to its
-// default, and the rest stand. The same object comes back where nothing changes
+// The options as the backend can draw them and the body shown allows: a choice or a switch that needs what the
+// backend or the body lacks goes back to its default, and the rest stand. The same object comes back where nothing
+// changes
 export function drawableOptions(options: ViewOptions, capabilities: Capabilities): ViewOptions {
   const lacking = (need: Capability | undefined) => need !== undefined && !capabilities[need]
   const blend = lacking(viewOptions.blend.choiceNeeds?.[options.blend]) ? viewOptions.blend.default : options.blend
   const oit = options.oit && !lacking(viewOptions.oit.needs)
-  return blend === options.blend && oit === options.oit ? options : { ...options, blend, oit }
+  const density = lacking(viewOptions.density.choiceNeeds?.[options.density]) ? viewOptions.density.default : options.density
+  const trace = lacking(viewOptions.trace.choiceNeeds?.[options.trace]) ? viewOptions.trace.default : options.trace
+  const inner = lacking(viewOptions.inner.needs) ? viewOptions.inner.default : options.inner
+  const same = blend === options.blend && oit === options.oit && density === options.density && trace === options.trace && inner === options.inner
+  return same ? options : { ...options, blend, oit, density, trace, inner }
 }
