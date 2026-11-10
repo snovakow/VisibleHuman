@@ -98,6 +98,21 @@ void test('the outline is the mask cells with an unset neighbour', () => {
   assert.equal(maskPoints(masks.bone).length / 2, maskArea(masks.bone))
 })
 
+void test("a point counts on the cell whose pixels hold it, pixel centres being whole numbers", () => {
+  // Cell 1 of 3-pixel cells holds pixels 3 to 5, which span 2.5 to 5.5
+  const target = { width: 3, height: 3, cellPx: 3, cells: Uint8Array.from([0, 0, 0, 0, 1, 0, 0, 0, 0]) }
+  const identity = { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 }
+  const at = (x: number, y: number) => hits(Float64Array.from([x, y]), identity, target)
+  assert.equal(at(4, 4), 1)
+  assert.equal(at(2.6, 4), 1)
+  assert.equal(at(5.4, 5.4), 1)
+  assert.equal(at(2.4, 4), 0)
+  assert.equal(at(5.6, 4), 0)
+  // Past the grid's first pixel's outer edge, nothing is hit
+  assert.equal(hits(Float64Array.from([-0.6, 0]), identity, { ...target, cells: new Uint8Array(9).fill(1) }), 0)
+  assert.equal(hits(Float64Array.from([-0.4, 0]), identity, { ...target, cells: new Uint8Array(9).fill(1) }), 1)
+})
+
 void test('under the true similarity the bone lands on the pale tissue and the silhouettes agree', () => {
   const pair = samplePair(1, cryoMasks(cryo, { pixelMm: cryoPixelMm }), ctMasks(ct, ctPixelMm), ctPixelMm, cryoPixelMm)
   assert.ok(silhouettesComparable([pair]))
@@ -118,6 +133,15 @@ void test('the search finds the flip and the translation from the slice centre, 
   assert.equal(best.similarity.flip, 'vertical')
   assert.ok(Math.abs(best.similarity.tx - truth.tx) <= 1 / cryoPixelMm, `tx ${best.similarity.tx}`)
   assert.ok(Math.abs(best.similarity.ty - truth.ty) <= 1 / cryoPixelMm, `ty ${best.similarity.ty}`)
-  assert.ok(Math.abs(best.similarity.rotationDeg) <= 0.5, `rotation ${best.similarity.rotationDeg}`)
+  // A disc is the same under a turn about itself, and these lie within 15 CT pixels of the turn's centre, so the turn
+  // is held to what moves them: each disc's centre lands within a millimetre of where the truth puts it
+  const found = ctToCryo(best.similarity, centre)
+  const placed = ctToCryo(truth, centre)
+  for (const [u, v] of [bodyAt, boneAt]) {
+    const dx = found.a * u + found.b * v + found.e - (placed.a * u + placed.b * v + placed.e)
+    const dy = found.c * u + found.d * v + found.f - (placed.c * u + placed.d * v + placed.f)
+    assert.ok(Math.hypot(dx, dy) * cryoPixelMm <= 1, `a disc ${(Math.hypot(dx, dy) * cryoPixelMm).toFixed(2)} mm off`)
+  }
+  assert.ok(Math.abs(best.similarity.rotationDeg) <= 3, `rotation ${best.similarity.rotationDeg}`)
   assert.ok(best.scores.bone > 0.9)
 })

@@ -201,7 +201,9 @@ export function maskOutline(mask: Mask): Float64Array {
   return maskPoints({ ...mask, cells: edge })
 }
 
-// How many of the points, mapped by the affine into the target's source pixels, land on a set cell
+// How many of the points, mapped by the affine into the target's source pixels, land on a set cell. Pixel centres
+// are whole numbers, so pixel x spans x − 0.5 to x + 0.5 and cell X the pixels X·cellPx to X·cellPx + cellPx − 1:
+// a point is in cell floor((x + 0.5) / cellPx), centred on the cell as maskPoints places a cell's centre
 export function hits(points: Float64Array, map: Affine, target: Mask): number {
   const { a, b, c, d, e, f } = map
   const { width, height, cellPx, cells } = target
@@ -210,12 +212,9 @@ export function hits(points: Float64Array, map: Affine, target: Mask): number {
   for (let n = 0; n < points.length; n += 2) {
     const u = points[n]
     const v = points[n + 1]
-    const x = a * u + b * v + e
-    const y = c * u + d * v + f
-    if (x < 0 || y < 0) continue
-    const X = Math.floor(x * perCell)
-    const Y = Math.floor(y * perCell)
-    if (X >= width || Y >= height) continue
+    const X = Math.floor((a * u + b * v + e + 0.5) * perCell)
+    const Y = Math.floor((c * u + d * v + f + 0.5) * perCell)
+    if (X < 0 || Y < 0 || X >= width || Y >= height) continue
     count += cells[X + width * Y]
   }
   return count
