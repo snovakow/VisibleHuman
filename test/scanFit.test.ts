@@ -61,6 +61,12 @@ void test('a scan is read between its voxels, and not off its grid', () => {
   assert.equal(sampleIndex(scan, 0.25, 0, 1), 100.25)
   assert.ok(Number.isNaN(sampleIndex(scan, -0.01, 0, 0)))
   assert.ok(Number.isNaN(sampleIndex(scan, 0, 1.01, 0)))
+  // A floor puts a value off the scan where any of the eight voxels it's read between lies below it, as the CT's
+  // padding outside its reconstruction circle does, and leaves it where none does
+  assert.ok(Number.isNaN(sampleIndex(scan, 0, 0, 0, 1)))
+  assert.ok(Number.isNaN(sampleIndex(scan, 0.5, 0.5, 0.5, 1)))
+  assert.ok(Number.isNaN(sampleIndex(scan, 1, 1, 1, 1)))
+  assert.equal(sampleIndex(scan, 0.5, 0.5, 0.5, 0), 55.5)
   // By a point of the patient frame: the centre is every voxel's mean, and a point off the grid reads as told
   assert.equal(sampleScan(scan, [6, 7, 8.5], -1), 55.5)
   assert.equal(sampleScan(scan, [4.9, 7, 8.5], -1), -1)

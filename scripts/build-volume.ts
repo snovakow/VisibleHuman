@@ -4,10 +4,13 @@
 //   --body ID          which body: male, female or head
 //   --spacing MM       which level, by its voxels' spacing in millimetres: the male's and the female's are 4 and 2,
 //                      the head's 1.2, 1 and 0.6
-//   --out PATH         write the file there rather than public/volume/<body>-<spacing>mm.bin; a file written into
-//                      public/volume/ also gets its entry in public/volume/bodies.json, which the page reads
+//   --out PATH         write the file there rather than public/volume/<body>-<spacing>mm.bin, or, for a range of
+//                      slices, .cache/volume/<body>-<spacing>mm-<from>-<to>.bin; a file written into public/volume/
+//                      also gets its entry in public/volume/bodies.json, which the page reads
 //   --from A, --to B   read only slices A to B (by default every slice of the body); where a body has sub-slices, as
-//                      the female's a, b and c, a bound may name one, as 1500b, and a bare number takes them all
+//                      the female's a, b and c, a bound may name one, as 1500b, and a bare number takes them all. A
+//                      range is written into .cache/volume/ unless --out names public/volume/, so that a trial build
+//                      never replaces the file the page loads
 //   --previews         redraw the previews from the existing file, reading no slice
 //   --no-ct            leave the density to the colour stand-in, reading no CT slice
 //   --match card|body  give each cryo block a colour gain that matches it to the block before, by the grey strip
@@ -56,7 +59,7 @@ import {
 } from '../src/volume/segment.ts'
 import { compose, invert as invertRigid, type RigidMap } from '../src/volume/rigid.ts'
 import { apply, ctToCryo, invert, type Affine } from '../src/volume/similarity.ts'
-import { bodyOf, ctFileName, frameOf, framesOf, frameText, lastFrame, levelOf, type Body, type Frame, type Level } from './lib/bodies.ts'
+import { bodyOf, ctFileName, defaultOutput, frameOf, framesOf, frameText, lastFrame, levelOf, type Body, type Frame, type Level } from './lib/bodies.ts'
 import { readGrayScale, referencePatch, type CardReading } from './lib/card.ts'
 import { drawContactSheet } from './lib/contactSheet.ts'
 import { dataRoot, requireDataFile, setFolder } from './lib/data.ts'
@@ -116,7 +119,8 @@ function options() {
   const subs = body.naming.subSlices.length
   const from = body.firstSlice + Math.floor(firstFrame / subs)
   const to = body.firstSlice + Math.floor(lastFrameRead / subs)
-  const out = values.out ?? `public/volume/${body.id}-${spacing}mm.bin`
+  const ranged = values.from !== undefined || values.to !== undefined
+  const out = values.out ?? defaultOutput(body, level, ranged ? [firstFrame, lastFrameRead] : null)
   const isMatch = (value: string): value is Match => value === 'card' || value === 'body'
   let match: Match | null = null
   if (values.match !== undefined) {
@@ -131,6 +135,8 @@ function options() {
     from,
     to,
     out,
+    // Where the file goes because a range was asked for without --out, which the log says before the build starts
+    rangedOut: ranged && values.out === undefined,
     previews: values.previews,
     noCt: values['no-ct'],
     match,
@@ -341,7 +347,7 @@ async function measureBlocks(body: Body, level: Level, field: Field, to: number,
   const frames = framesOf(body, 0, lastFrame(body))
   const blanks = unreadableOf(body)
   const { layerCells, cellPixels } = field
-  const dipWindow = filesSpanning(body.shortWindowMm ?? dipWindowMm, body.sliceSpacing)
+  const dipWindow = filesSpanning(dipWindowMm, body.sliceSpacing)
   const gainWindow = filesSpanning(gainWindowMm, body.sliceSpacing)
   const frostSkip = filesSpanning(frostSkipMm, body.sliceSpacing)
   // Every pixel each slice read has that the rule passes, which is what judges it kept or missing
@@ -569,7 +575,7 @@ async function readLayers(
   const missingLayers = Array.from({ length: layers }, () => false)
   // The layers read as missing for keeping too few of their slices, each with its count kept and read
   const thinLayers: { index: number; kept: number; slices: number }[] = []
-  const window = filesSpanning(body.shortWindowMm ?? dipWindowMm, body.sliceSpacing)
+  const window = filesSpanning(dipWindowMm, body.sliceSpacing)
   // The frost rule's reach and its references, in files, and the faces of the body's blocks within the slices read,
   // each named by the position of the first file after it: the ends of the slices read aren't faces
   const frost = body.frostedFaces
@@ -949,11 +955,12 @@ type CtDensity = Awaited<ReturnType<typeof readCtDensity>>
 
 // A CT's density and an MRI's values for each cell of the field, for a body whose scans are whole grids, as
 // data/<body>/registration.json places them: each cell with body pixels is sampled at points spread through it, as
-// many each way as it holds of the scan's voxels, each between the scan's voxels, and takes their mean. The CT's
-// values go through the body's scale to Hounsfield units and then onto the density scale; a cell is covered by a scan
-// when at least half its points fall on the scan's grid, and by the CT only where they aren't the padding outside
-// its reconstruction circle. The MRI's means are kept as they are, for the crop to spread over the scale once it
-// knows which cells are body
+// many each way as it holds of the scan's voxels, each between the scan's voxels, and takes the mean of the points
+// that fall on the scan. A point of the CT falls on it only where none of the voxels it's read from is the padding
+// outside the reconstruction circle, so a cell at the circle's edge takes its density from its points inside it. The
+// CT's values go through the body's scale to Hounsfield units and then onto the density scale; a cell is covered by
+// a scan when at least half its points fall on it. The MRI's means are kept as they are, for the crop to spread over
+// the scale once it knows which cells are body
 async function readScans(body: Body, level: Level, field: Field, grid: Grid, registration: ScanRegistration, root: string) {
   const { scans } = body
   if (!scans) throw new Error(`The ${body.id} has no whole scans`)
@@ -977,10 +984,11 @@ async function readScans(body: Body, level: Level, field: Field, grid: Grid, reg
   const cellMm: Triple = [level.pixels * body.pixelSize, level.pixels * body.pixelSize, level.slices * body.sliceSpacing]
   // Under the mirrored hand the photographs' columns are mirrored about the grid's centre before the transform
   const mirrorAbout = registration.hand === 'mirrored' ? registration.catToCryo.cryoCentreMm[0] : null
-  // The CT's padding outside its reconstruction circle is its lowest value, well below air
-  const padding = -1100 / scale
+  // The CT's padding outside its reconstruction circle: the head's CAT holds −1200 there, −2400 Hounsfield units,
+  // where the air beside the head reads −750 at the least, −1500 units, so the line between them is drawn at −2000
+  const padding = paddingBelowHu / scale
 
-  const sampleCells = (scan: DicomVolume, toScan: RigidMap, take: (cell: number, mean: number) => void) => {
+  const sampleCells = (scan: DicomVolume, toScan: RigidMap, floor: number, take: (cell: number, mean: number) => void) => {
     const { rows, offset } = indexMap(scan, toScan)
     const across = cellMm.map((mm) => Math.max(1, Math.ceil(mm / Math.min(...scan.spacing))))
     const points = across[0] * across[1] * across[2]
@@ -1008,6 +1016,7 @@ async function readScans(body: Body, level: Level, field: Field, grid: Grid, reg
                 rows[0][0] * x + rows[0][1] * y + rows[0][2] * z + offset[0],
                 rows[1][0] * x + rows[1][1] * y + rows[1][2] * z + offset[1],
                 rows[2][0] * x + rows[2][1] * y + rows[2][2] * z + offset[2],
+                floor,
               )
               if (Number.isNaN(value)) continue
               sum += value
@@ -1019,12 +1028,11 @@ async function readScans(body: Body, level: Level, field: Field, grid: Grid, reg
       }
     }
   }
-  sampleCells(cat, toCat, (cell, mean) => {
-    if (mean < padding) return
+  sampleCells(cat, toCat, padding, (cell, mean) => {
     covered[cell] = 1
     density[cell] = Math.max(0, Math.min(255, Math.round((mean * scale + 1000) / 16)))
   })
-  sampleCells(mri, toMri, (cell, mean) => {
+  sampleCells(mri, toMri, -Infinity, (cell, mean) => {
     mriMeans[cell] = mean
   })
   const seconds = Math.round((performance.now() - started) / 1000)
@@ -1034,6 +1042,9 @@ async function readScans(body: Body, level: Level, field: Field, grid: Grid, reg
   )
   return { ct: { density, covered }, mriMeans }
 }
+
+// Below this many Hounsfield units a CT's value is the padding outside its reconstruction circle, not tissue or air
+const paddingBelowHu = -2000
 
 // The MRI's values in a body's voxels spread over 1 to 255: the value below which this share of them lie becomes 1,
 // the value above which the same share lie becomes 255, and the values between run evenly, so the few brightest
@@ -1265,8 +1276,9 @@ async function main() {
     for (const line of (await drawContactSheet(chosen.body, chosen.root)).lines) console.log(line)
     return
   }
-  const { body, level, frames: range, from, to, out, previews, noCt, match, root } = chosen
+  const { body, level, frames: range, from, to, out, rangedOut, previews, noCt, match, root } = chosen
   const started = performance.now()
+  if (rangedOut) console.log(`A range of slices is written to ${out}, not into public/volume/, unless --out says where`)
   if (previews) {
     for (const path of await drawPreviews(readVolume(await gunzipFile(out)))) console.log(`Preview: ${path}`)
     return

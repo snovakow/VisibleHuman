@@ -90,8 +90,6 @@ export interface Body {
   // run of blank or short slices, whose body is bluer than the slices past the frost's reach is read as missing, and
   // a layer keeping fewer than half its slices is filled from its neighbours (segment.ts)
   frostedFaces?: true
-  // The short rule's window in millimetres, where the body keeps one of its own rather than segment.ts's 8 mm
-  shortWindowMm?: number
   // A pixel rule of the body's own, where the male's blue-gel rule doesn't fit its background
   segmentRule?: (r: number, g: number, b: number) => boolean
   // The cells its body encloses are filled in as body, in the colour of all their pixels: for a body whose pixel rule
@@ -171,6 +169,15 @@ export function frameOf(body: Body, text: string, end: 'first' | 'last'): number
 export function frameText(body: Body, index: number) {
   const subs = body.naming.subSlices
   return `${body.firstSlice + Math.floor(index / subs.length)}${subs[index % subs.length]}`
+}
+
+// Where a build writes its file unless --out says otherwise: a build of the whole body into public/volume/, as the
+// file the page loads; a build of a range of its slices into .cache/volume/, named by the body, the level and the
+// range's first and last files, so that a trial on a few slices never replaces the file the page loads
+export function defaultOutput(body: Body, level: Level, frames: readonly [number, number] | null) {
+  const name = `${body.id}-${level.spacing}mm`
+  if (!frames) return `public/volume/${name}.bin`
+  return `.cache/volume/${name}-${frameText(body, frames[0])}-${frameText(body, frames[1])}.bin`
 }
 
 // The male: 1,878 slices a millimetre apart, 2048 × 1216 pixels of 0.33 mm, photographed from four frozen blocks.
@@ -278,7 +285,7 @@ const female: Body = {
 // subject's left, lie on the photographs' only this way (register.ts).
 // It's set in ice, not gel: white frost over the crown and grey ice below, which a pixel rule of its own tells from
 // tissue, and the tissue that rule can't tell, inside tissue it can, is filled back in. Slices 500 to 508 are under
-// a film of frost, and the builder reads 502 to 507 as short. The frame is narrower than the head: the subject's
+// a film of frost, and the builder reads 502 to 508 as short. The frame is narrower than the head: the subject's
 // right side passes out of it over slices 233 to 1288 and the left over 353 to 1216, and the tip of the nose and the
 // back of the head touch its top and bottom
 // The head's CAT files hold half of Hounsfield units, by the rescale they state themselves: air beside the head
@@ -286,11 +293,6 @@ const female: Body = {
 // enamel 1065 to 1365, where cortical bone is 1200 to 1900 and enamel 2500 and over; soft tissue reads 0 to 10. A
 // line through the air and the fat gives 2.01 times the file's value less 9, so the values are doubled
 const headCatHounsfieldScale = 2
-
-// The head's short rule looks eight slices either way, 1.2 mm, the window its pixel rule was tuned and its file built
-// with. Its ice frosts over 500 to 508, and the builder reads 502 to 507 short; over 8 mm, 54 of its slices, it reads
-// 508 short too, which would change its file
-const headShortWindowMm = 8 * 0.147
 
 const head: Body = {
   id: 'head',
@@ -323,7 +325,6 @@ const head: Body = {
   frameInset: { right: 32 },
   segmentRule: isTissueOnIce,
   fillsEnclosed: true,
-  shortWindowMm: headShortWindowMm,
   // The CAT, 463 slices half a millimetre apart, and of the four MRI series the T2 at 512 × 512, 229 slices a
   // millimetre apart; both taken before the head was frozen
   scans: { ct: { set: 'head-cat-dicom', hounsfieldScale: headCatHounsfieldScale }, mri: { set: 'head-mri-dicom/T2_512' } },

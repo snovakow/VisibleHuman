@@ -30,3 +30,6 @@ dist-ssr
 public/volume/*-2mm.bin
 public/volume/head-1mm.bin
 public/volume/head-0.6mm.bin
+
+# A temporary file a volume build writes through, should a run end without taking it with it
+public/volume/*.tmp

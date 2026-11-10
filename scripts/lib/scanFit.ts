@@ -156,8 +156,10 @@ export function indexMap(scan: DicomVolume, toScan: RigidMap): IndexMap {
   return { rows: [row(0), row(1), row(2)], offset: [shift(0), shift(1), shift(2)] }
 }
 
-// A scan's value at fractional voxel indices, between its voxels, or NaN off the grid
-export function sampleIndex(scan: DicomVolume, fi: number, fj: number, fk: number) {
+// A scan's value at fractional voxel indices, between its voxels, or NaN off the grid. Where a floor is given, a
+// value taken from any voxel below it is NaN too, as off the scan: the CT's padding outside its reconstruction
+// circle, which mixed into a sample at the circle's edge would pull it far below the tissue it lies in
+export function sampleIndex(scan: DicomVolume, fi: number, fj: number, fk: number, floor = -Infinity) {
   const [nx, ny, nz] = scan.size
   if (!(fi >= 0 && fj >= 0 && fk >= 0 && fi <= nx - 1 && fj <= ny - 1 && fk <= nz - 1)) return NaN
   const { voxels } = scan
@@ -169,6 +171,9 @@ export function sampleIndex(scan: DicomVolume, fi: number, fj: number, fk: numbe
   const tk = fk - k0
   const at = i0 + nx * (j0 + ny * k0)
   const up = at + nx * ny
+  for (const corner of [at, at + 1, at + nx, at + nx + 1, up, up + 1, up + nx, up + nx + 1]) {
+    if (voxels[corner] < floor) return NaN
+  }
   const near = (voxels[at] * (1 - ti) + voxels[at + 1] * ti) * (1 - tj) + (voxels[at + nx] * (1 - ti) + voxels[at + nx + 1] * ti) * tj
   const far = (voxels[up] * (1 - ti) + voxels[up + 1] * ti) * (1 - tj) + (voxels[up + nx] * (1 - ti) + voxels[up + nx + 1] * ti) * tj
   return near * (1 - tk) + far * tk

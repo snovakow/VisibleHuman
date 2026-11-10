@@ -58,7 +58,7 @@ export const isBodyCell = (bodyPixels: number, pixels: number) => bodyPixels > p
 // 318 thousand, where the clear slices either side hold 690 to 830 thousand). A slice with fewer than the window's
 // slices on either side of it, within the slices read or the body, has too few on that side to judge it by, so it's
 // never short: a taper isn't, and nor is the crown's second slice, 1002, which is a sixth smaller than 1001 alone and
-// was flagged when one slice was reference enough. A body may keep a window of its own, as the head does
+// was flagged when one slice was reference enough
 export const dipWindowMm = 8
 export const dipShare = 0.85
 
