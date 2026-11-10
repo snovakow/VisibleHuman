@@ -12,6 +12,7 @@ allowed-tools:
   - Grep
   - Glob
   - Bash(git fetch *)
+  - Bash(git merge --ff-only *)
   - Bash(git add *)
   - Bash(git restore --staged *)
   - Bash(git commit *)
@@ -25,7 +26,7 @@ allowed-tools:
   - Bash(npm version * --no-git-tag-version)
   - Bash(node ${CLAUDE_SKILL_DIR}/scripts/scan.mjs *)
 metadata:
-  baseline: 2026-10-21
+  baseline: 2026-11-08
 ---
 
 # Commit a reviewed batch
@@ -48,23 +49,26 @@ The one block to adapt for a project. The steps below read it, and `scripts/scan
 - **Changelog:** `auto`. When a `CHANGELOG.md` exists at the root or under `docs/`, the version commit also carries a new section for its number; the scan names the file. There is none yet.
 - **Checks:** the `lint`, `typecheck`, `check`, `test` and `build` scripts that `package.json` defines, whichever exist, run for what changed. The scan lists them. Then `npm outdated`, which reports rather than fails (Rules of this repository).
 - **Leave alone:** none.
-- **Maintained docs:** `README.md`, written for the public. A plan under `docs/`, when there is one, is the user's (Rules of this repository).
+- **Maintained docs:** `README.md`, written for the public, and `docs/data.md`, the overview of the NLM's data (Rules of this repository). A plan under `docs/`, when there is one, is the user's (Rules of this repository).
 - **Never mention:** none.
 
 ## Rules of this repository
 
-VisibleHuman is a React Three Fiber app in TypeScript, built with Vite, that draws the Visible Human Project's cross-sections as Gaussian splats with three.js's `WebGPURenderer`, from a volume file that a Node script builds out of the source images. These rules add to the steps below.
+VisibleHuman is a React Three Fiber app in TypeScript, built with Vite, that draws the Visible Human Project's male, female and head with three.js's `WebGPURenderer`, as Gaussian splats, a ray-marched volume, ray-traced surfaces and meshes, from a volume file for each body that Node scripts build out of the source images. These rules add to the steps below.
 
 - **Review the code as well as the commits.** Step 2 reads every change in full; read it as a code reviewer too, and treat each of these as a finding to fix or ask about:
   - logic or arithmetic errors, wrong units, axes or coordinate spaces, an off-by-one in a grid or slice index, unhandled `null` or `undefined`, async work that can finish after its component unmounts, and listeners or timers that are never removed
   - a volume reader that trusts the file's header without checking it against the file's length, or a load that a slower, older request can overwrite
-  - in the data script: a download that isn't retried or that leaves a partial file where a whole one is expected, a slice skipped or counted twice where the source's regions overlap, and memory that grows with the number of slices
+  - in the data scripts: a download that isn't retried or that leaves a partial file where a whole one is expected, a slice skipped or counted twice where the source's regions overlap, and memory that grows with the number of slices
   - React and R3F misuse: hooks outside the rules of hooks, effects that break under StrictMode's double mount, allocation or React state updates inside `useFrame`, splat geometries, `GaussianSplat` objects, data textures or other GPU resources made by hand and never disposed of, and cached results changed in place
   - anything `WebGPURenderer` can't run. It runs node materials only, so no GLSL `ShaderMaterial`, `RawShaderMaterial` or `onBeforeCompile`, no WebGL render target, and no drei helper built on them; custom shading belongs in TSL.
   - a new `any`, `@ts-ignore`, `@ts-expect-error` or lint suppression without a comment saying why, and any loosening of the Oxlint config, a tsconfig option or a package script that the batch doesn't need
   - a new dependency that isn't needed, maintained, licensed for a public repository and worth its size
 - **A change to this skill** goes at the top of the report.
-- **The volume file is generated.** The file under `public/volume/` comes from the data script, and the scan flags it as large; that's expected, so confirm with the user that it was built by the script as committed, rather than reviewing its bytes. A batch that changes the script, or the settings it reads, and not the file says in the report that the file needs rebuilding; a batch that changes the file and not the script says how it was built.
+- **The volume files are generated.** The three committed under `public/volume/`, the male's and the female's 4 mm files and the head's 1.2 mm file, come from `npm run volume`, which also writes their entries in `bodies.json`, and the scan flags them as large; that's expected, so confirm with the user that each was built by the script as committed, rather than reviewing its bytes. A batch that changes the script, or the settings it reads, and not a file says in the report which files need rebuilding; a batch that changes a file and not the script says how it was built. The finer levels, the 2 mm files and the head's 1 mm and 0.6 mm, are ignored by git and built before a deploy: one that turns up untracked or staged is reported, not committed.
+- **The registrations are generated too.** `data/*/registration.json` comes from `npm run register`, is small and is committed; a batch that changes one says how it was fitted, and whether any part of it was placed by hand.
+- **The source images are never in the repository.** They live in a data root outside it, `~/Data/VisibleHuman` unless set otherwise, with the previews and overlays under `.cache/`; an image, a scan or a manifest from there in the tree is reported, not committed.
+- **`docs/data.md` describes the NLM's data,** set by set, with counts, sizes and quirks. A batch that changes `scripts/lib/sets.ts` or `scripts/lib/bodies.ts`, or what the build does with a set, keeps it accurate; its figures for the data itself come from the data root and the NLM's listings, so a change to them is confirmed with the user rather than made from the code. It names the NLM's folders and the data root's in backticks, which the scan's Docs section lists as paths that don't exist; that's expected.
 - **Dependencies stay current.** After the checks, run `npm outdated` (skip it offline) and list in the report what has fallen behind, apart from the deliberate holds: `@types/node` follows the Node in use, and React stays within React Three Fiber's peer range. A run never installs, upgrades or removes a package.
 - **A plan is the user's.** When `docs/` holds a plan for the work under way, commit it as the user left it and never edit it, even where it names paths on the user's machine for its deploy steps; say in the report when a change makes it inaccurate. The batch that deletes it also drops the README's link to it.
 - **The live site** is a static build of `main`. When a batch changes anything the build reads (`src/`, `public/`, `index.html`, the Vite config, `package.json` or `package-lock.json`), the report says that the site needs a rebuild and a deploy once it's merged.
@@ -74,7 +78,7 @@ VisibleHuman is a React Three Fiber app in TypeScript, built with Vite, that dra
 - Run in a fresh thread, as the first thing in it. A thread that made the changes under review remembers making them and cannot review them from the repository alone, and one that has already run this would run it again over the same work. So if anything precedes this command in the thread, an earlier message, work done here or a summary carried over from a longer context, stop before anything is read or run, and say to start a new thread with `/commit` as its first message.
 - Never push. Never create, switch or delete a branch, and never clone or copy the repository to rehearse a step: the checks on each step and the undo point are the safety net. Never run anything that discards the user's work: no `git reset --hard`, no `git checkout -- <file>` over their edits, no `git clean`, no `git stash drop`.
 - Never rewrite a pushed commit, or anything at or below the baseline. A problem there is reported, not fixed; a fix to pushed work is a new commit.
-- Note `git rev-parse HEAD` before changing anything and give it in the report as the undo point.
+- Note `git rev-parse HEAD` before changing anything and give it in the report as the undo point; after a fast-forward in step 1, the tip it moved to, since what it brought in is pushed and not the run's to undo.
 - The file is the unit. Splitting hunks needs interactive staging, which is not available here, so two unrelated changes in one file go in one commit whose message covers both, or ask whether to hold one back.
 - Stage explicit paths, never `-A` or `.`. Before each commit, check `git diff --cached --stat` against its subject, and unstage what does not belong with `git restore --staged <path>` rather than widen the message.
 - Never delete the user's files or edit `.gitignore` without asking. An untracked file that does not belong in the repository is reported, not committed.
@@ -99,7 +103,8 @@ node ${CLAUDE_SKILL_DIR}/scripts/scan.mjs
 Its **Attention** section lists what needs the user. Stop and ask about each before anything else:
 
 - a rebase, merge, cherry-pick or revert in progress, or a detached HEAD
-- the branch behind its upstream, or a protected branch
+- the branch behind its upstream. Say what arrived, `git log --format='%h %s' HEAD..@{u}`, and any file it changes that also holds uncommitted edits, since the re-apply below merges there. Where HEAD would fast-forward onto it, which the scan says, ask whether to fast-forward now or to stop so the user brings the branch up to date and runs again. To fast-forward, note `git stash list`, then run `git merge --ff-only --autostash @{u}`: it moves the branch to the pushed tip with the uncommitted edits stashed and re-applied, and refuses anything else, leaving the tree as it was. Afterwards `git stash list` must show no `autostash` entry that was not there before, since an earlier conflict's entry stays until the user drops it; a new one means the re-apply conflicted, the edits are safe in it and the tree holds the conflict, which is the user's to resolve, so stop and say so. Then run the scan again, since the baseline has moved. Where HEAD carries unpushed commits of its own as well, they would have to be rebased over what arrived, and that is the user's to do: stop, and say to run `/commit` again in a fresh thread once the branch is up to date.
+- a protected branch
 - the version changed outside this skill: HEAD or the working tree no longer holds the last version commit's number. Ask whether to undo the change or to pass the intended version as the argument.
 - a changelog section above the last version commit's number, written by hand or by a run that never finished. Ask whether to rewrite it as this run's section or to keep its text as the start of one.
 - credentials or session data in added lines (step 3)
@@ -187,7 +192,7 @@ Run the scan again, with the same `--since` if one was used. `git status` lists 
 
 Then report, briefly:
 
-- first, what the review flagged: problems in pushed commits that could not be fixed, anything committed over a failed check on the user's say-so, a credential kept and why
+- first, what the review flagged: problems in pushed commits that could not be fixed, anything committed over a failed check on the user's say-so, a credential kept and why, a fast-forward made in step 1 and what it brought in
 - each commit in order: short hash, subject and files; a rewritten commit as old to new hash with what changed
 - the version change and changelog section, if any, and any doc claim only the user can confirm
 - files left uncommitted, each with the reason

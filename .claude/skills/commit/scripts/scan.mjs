@@ -39,8 +39,9 @@ const LEAVE_ALONE = [];
 const NEVER_MENTION = [];
 // Prose the skill keeps true, as git pathspecs. Their backticked paths are checked against the
 // tree, and files that came or went since the baseline are listed beside them.
-// A plan under docs/, when there is one, is the user's: the skill commits it but never edits it.
-const DOCS = ['README.md'];
+// docs/data.md is the overview of the NLM's data. A plan under docs/, when there is one, is the user's: the skill
+// commits it but never edits it.
+const DOCS = ['README.md', 'docs/data.md'];
 // Files that usually should not be tracked, checked against the files added since the baseline.
 const JUNK = [
   /(^|\/)\.DS_Store$/, /(^|\/)Thumbs\.db$/, /(^|\/)\.env(\.[\w-]+)?$/,
@@ -49,8 +50,12 @@ const JUNK = [
   // TypeScript's build state, Vite's temporary config bundle, local and personal settings, keys.
   /\.tsbuildinfo$/, /\.timestamp-\d+-[0-9a-f]+\.m?js$/, /\.local$/, /(^|\/)\.claude\/settings\.local\.json$/,
   /\.(pem|key|p12|pfx)$/,
-  // Source images downloaded while testing; the data script reads them from the NLM's server.
-  /(^|\/)a_vm\d+\.png$/i, /\.(raw|rgb|fre)(\.(Z|gz))?$/i,
+  // Source images, which live in a data root outside the repository: the bodies' slices and scans by their NLM
+  // names, the film's raw frames, and the head's gzipped TIFFs and DICOM files.
+  /(^|\/)(a_vm|avf|cvm|cvf|mvm|mvf)\d+\w*\.png$/i, /\.(raw|rgb|fre|fro)(\.(Z|gz))?$/i, /\.tiff?(\.gz)?$/i,
+  /(^|\/)[IJ]\.\d+\.gz$/,
+  // The finer volume levels, built before a deploy and never committed.
+  /(^|\/)public\/volume\/(\w+-2mm|head-1mm|head-0\.6mm)\.bin$/,
 ];
 const LARGE_FILE = 1_000_000; // bytes; an added file above this is worth a look
 const SUBJECT_MAX = 72;       // characters
@@ -447,7 +452,7 @@ const versioning = !VERSION_FILE
 const attention = [
   ...operations.map((operation) => `${operation} in progress`),
   ...(hasHead && !branch ? ['HEAD is detached'] : []),
-  ...(behind ? [`branch is ${count(behind, 'commit')} behind ${upstream}`] : []),
+  ...(behind ? [`branch is ${count(behind, 'commit')} behind ${upstream}${ahead ? `, and carries ${count(ahead, 'unpushed commit')} of its own that would have to be rebased over what arrived` : ', and HEAD would fast-forward onto it'}`] : []),
   ...(branch && PROTECTED_BRANCHES.includes(branch) ? [`on ${branch}, a protected branch`] : []),
   ...(VERSION_AUTHOR && userName !== VERSION_AUTHOR ? [`git user.name is ${userName ?? 'unset'}, not ${VERSION_AUTHOR}; a version commit would not count`] : []),
   ...(official && (headVersion !== officialVersion || worktreeVersion !== officialVersion)
