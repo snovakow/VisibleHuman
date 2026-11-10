@@ -105,11 +105,13 @@ export function PanelRoot() {
 // the backend can't draw is left out, and the renderer, the grid, the splats shown, the surface's triangles and the
 // load's status come back read-only
 export function Panel({ renderer }: { renderer: string }) {
-  const { level, detail, blend, style, notBuilt, status, error } = useStore(
+  const { level, detail, blend, density, trace, style, notBuilt, status, error } = useStore(
     useShallow((s) => ({
       level: s.level,
       detail: s.options.detail,
       blend: s.options.blend,
+      density: s.options.density,
+      trace: s.options.trace,
       style: s.options.style,
       notBuilt: s.notBuilt,
       status: s.status,
@@ -254,9 +256,15 @@ export function Panel({ renderer }: { renderer: string }) {
           },
         },
       }),
-      // Detail and Blend are named beside the table's controls, which hold them already, so that set below knows
-      // them by name
-      Look: folder({ ...controls('Look'), detail: control('detail'), blend: control('blend') }),
+      // Detail, Blend, Density and Trace are named beside the table's controls, which hold them already, so that set
+      // below knows them by name
+      Look: folder({
+        ...controls('Look'),
+        detail: control('detail'),
+        blend: control('blend'),
+        density: control('density'),
+        trace: control('trace'),
+      }),
       Cuts: folder(controls('Cuts')),
       // Scene starts folded: it holds what's drawn around the body, which a visitor reaches for after the look
       Scene: folder(controls('Scene'), { collapsed: true }),
@@ -272,8 +280,8 @@ export function Panel({ renderer }: { renderer: string }) {
 
   // The store's choices go back to the selects, after leva has taken each rebuilt list, since a rebuilt control keeps
   // the value it held: a load picks its body, its level and its Detail, a level found not built goes back to the
-  // one shown, and a Blend the backend turned out not to draw goes back to the default. set is new whenever the
-  // lists are
+  // one shown, and a Blend the backend turned out not to draw goes back to the default, as do a Density and a Trace
+  // that read an MRI when a body without one is chosen. set is new whenever the lists are
   useEffect(() => {
     if (body) set({ body: body.id })
   }, [set, body])
@@ -286,6 +294,12 @@ export function Panel({ renderer }: { renderer: string }) {
   useEffect(() => {
     set({ blend })
   }, [set, blend])
+  useEffect(() => {
+    set({ density })
+  }, [set, density])
+  useEffect(() => {
+    set({ trace })
+  }, [set, trace])
   useEffect(() => {
     set({
       renderer: renderer || 'Starting…',

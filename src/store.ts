@@ -27,7 +27,8 @@ interface State {
   volume: Volume | null
   bounds: Bounds | null
   levels: Levels | null
-  // Loads a level of a body, the body's default level where level is null and the first body where body is null.
+  // Loads a level of a body, the body's default level where level is null and the first body where body is null or
+  // names none.
   // A load replaces any still in progress, and an older load never overwrites a newer one. Aborting the signal
   // stops the load and leaves the status to the load that takes over
   load: (body: string | null, level: string | null, signal?: AbortSignal) => Promise<void>
@@ -102,8 +103,8 @@ export const useStore = create<State>()((set, get) => ({
         if (!isLatest()) return
         set({ bodies })
       }
-      const body = bodyId === null ? bodies[0] : bodies.find((candidate) => candidate.id === bodyId)
-      if (!body) throw new Error(`No body is called ${bodyId}`)
+      // A name no body has, as a mistyped ?body= gives, opens the first body, as an unknown ?style= opens the first style
+      const body = bodies.find((candidate) => candidate.id === bodyId) ?? bodies[0]
       const level = levelId === null ? defaultLevel(body) : body.levels.find((candidate) => candidate.id === levelId)
       if (!level) throw new Error(`The ${body.id} has no level ${levelId}`)
 

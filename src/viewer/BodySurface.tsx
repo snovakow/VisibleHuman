@@ -151,12 +151,14 @@ export function BodySurface() {
         discard(current, 'bone')
         discard(current, 'shell')
       }
+      // The panel's counts go with the meshes, so another style, or another body met there, shows none of them
+      for (const kind of ['skin', 'bone', 'shell'] as const) setTriangles(kind, undefined)
       scene.remove(group)
       for (const material of Object.values(materials)) material.dispose()
       sampler.dispose()
       owned.current = null
     }
-  }, [get])
+  }, [get, setTriangles])
 
   // The volume's textures, held while the volume is shown and let go when it changes or this unmounts. The meshes
   // read the colour alone; the sampler takes the coverage too, since the caps' sampler is the same and edges their
