@@ -165,6 +165,67 @@
           "optional": true
         }
       ]
+    },
+    {
+      "id": "head",
+      "label": "Head",
+      "credit": "Visible Human Project additional head images, courtesy of the U.S. National Library of Medicine",
+      "levels": [
+        {
+          "id": "1.2mm",
+          "label": "1.2 mm",
+          "file": "volume/head-1.2mm.bin",
+          "spacing": [
+            1.176,
+            1.176,
+            1.176
+          ],
+          "default": true,
+          "size": [
+            130,
+            193,
+            187
+          ],
+          "bytes": 10778609,
+          "textureBytes": 18767320,
+          "density": "ct",
+          "blockGains": [
+            {
+              "slices": [
+                1,
+                1477
+              ],
+              "gain": [
+                1,
+                1,
+                1
+              ]
+            }
+          ]
+        },
+        {
+          "id": "1mm",
+          "label": "1 mm",
+          "file": "volume/head-1mm.bin",
+          "spacing": [
+            1.029,
+            1.029,
+            1.029
+          ],
+          "optional": true
+        },
+        {
+          "id": "0.6mm",
+          "label": "0.6 mm",
+          "file": "volume/head-0.6mm.bin",
+          "spacing": [
+            0.588,
+            0.588,
+            0.588
+          ],
+          "optional": true
+        }
+      ]
     }
   ]
 }
