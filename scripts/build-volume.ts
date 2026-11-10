@@ -1,11 +1,12 @@
 // The volume script: reads a body's colour slices from the data root and writes the gzipped volume file the app
 // loads, with previews in .cache/preview/. Run by `npm run volume`, on Node's own TypeScript.
 //
-//   --body ID          which body: male (the female and the head arrive with their milestones)
-//   --spacing MM       which level, by its voxels' spacing in millimetres: the male's are 4 and 2
+//   --body ID          which body: male or female (the head arrives with its own build)
+//   --spacing MM       which level, by its voxels' spacing in millimetres: the male's and the female's are 4 and 2
 //   --out PATH         write the file there rather than public/volume/<body>-<spacing>mm.bin; a file written into
 //                      public/volume/ also gets its entry in public/volume/bodies.json, which the page reads
-//   --from A, --to B   read only slices A to B (by default every slice of the body)
+//   --from A, --to B   read only slices A to B (by default every slice of the body); where a body has sub-slices, as
+//                      the female's a, b and c, a bound may name one, as 1500b, and a bare number takes them all
 //   --previews         redraw the previews from the existing file, reading no slice
 //   --no-ct            leave the density to the colour stand-in, reading no CT slice
 //   --match card|body  give each cryo block a colour gain that matches it to the block before, by the grey strip
@@ -41,7 +42,7 @@ import {
   type MissingReason,
 } from '../src/volume/segment.ts'
 import { apply, ctToCryo, invert, type Affine } from '../src/volume/similarity.ts'
-import { bodyOf, ctFileName, fileName, levelOf, type Body, type Level } from './lib/bodies.ts'
+import { bodyOf, ctFileName, frameOf, framesOf, frameText, lastFrame, levelOf, type Body, type Frame, type Level } from './lib/bodies.ts'
 import { readGrayScale, referencePatch, type CardReading } from './lib/card.ts'
 import { dataRoot, requireDataFile, setFolder } from './lib/data.ts'
 import { gunzipFile, readGray, readRgb, type RawImage } from './lib/decode.ts'
@@ -75,17 +76,23 @@ function options() {
   const spacing = Number(values.spacing)
   if (!(spacing > 0)) throw new Error(`--spacing takes millimetres, not ${values.spacing}`)
   const level = levelOf(body, spacing)
-  const slice = (text: string | undefined, fallback: number, name: string) => {
+  // The range as frame indices, and as the slice numbers it starts and ends in
+  const frame = (text: string | undefined, fallback: number, name: string, end: 'first' | 'last') => {
     if (text === undefined) return fallback
-    const value = Number(text)
-    if (!Number.isInteger(value) || value < body.firstSlice || value > body.lastSlice) {
-      throw new Error(`--${name} takes a slice number from ${body.firstSlice} to ${body.lastSlice}, not ${text}`)
+    try {
+      return frameOf(body, text, end)
+    } catch (error) {
+      throw new Error(`--${name}: ${error instanceof Error ? error.message : String(error)}`, { cause: error })
     }
-    return value
   }
-  const from = slice(values.from, body.firstSlice, 'from')
-  const to = slice(values.to, body.lastSlice, 'to')
-  if (from > to) throw new Error(`--from ${from} comes after --to ${to}`)
+  const firstFrame = frame(values.from, 0, 'from', 'first')
+  const lastFrameRead = frame(values.to, lastFrame(body), 'to', 'last')
+  if (firstFrame > lastFrameRead) {
+    throw new Error(`--from ${frameText(body, firstFrame)} comes after --to ${frameText(body, lastFrameRead)}`)
+  }
+  const subs = body.naming.subSlices.length
+  const from = body.firstSlice + Math.floor(firstFrame / subs)
+  const to = body.firstSlice + Math.floor(lastFrameRead / subs)
   const out = values.out ?? `public/volume/${body.id}-${spacing}mm.bin`
   const isMatch = (value: string): value is Match => value === 'card' || value === 'body'
   let match: Match | null = null
@@ -96,6 +103,7 @@ function options() {
   return {
     body,
     level,
+    frames: [firstFrame, lastFrameRead] as const,
     from,
     to,
     out,
@@ -123,31 +131,6 @@ function fieldOf(body: Body, level: Level) {
   return { nx, ny, layerCells, cellColumn, cellRowStart, cellPixels }
 }
 type Field = ReturnType<typeof fieldOf>
-
-// One file of the body: its index in the body's sequence of files from the first slice, which layers are counted
-// from, whatever --from says, so a range builds the same layers as the whole; the slice number it belongs to; its name
-interface Frame {
-  index: number
-  slice: number
-  name: string
-}
-
-function framesOf(body: Body, from: number, to: number): Frame[] {
-  const subs = body.naming.subSlices
-  const frames: Frame[] = []
-  for (let slice = from; slice <= to; slice++) {
-    subs.forEach((sub, n) => {
-      frames.push({ index: (slice - body.firstSlice) * subs.length + n, slice, name: fileName(body, slice, sub) })
-    })
-  }
-  return frames
-}
-
-// A frame's name in the logs: its slice number, and its sub-slice letter where the body has them
-function frameText(body: Body, index: number) {
-  const subs = body.naming.subSlices
-  return `${body.firstSlice + Math.floor(index / subs.length)}${subs[index % subs.length]}`
-}
 
 // Frame indices as runs, such as 2017–2020, 2424–2435
 function runsText(body: Body, indices: readonly number[]) {
@@ -189,14 +172,18 @@ function sliceSums(frame: Frame, position: number, image: RawImage, body: Body, 
       total++
     }
   }
-  return { frame, position, red, green, blue, body: bodyPixels, total }
+  return { frame, position, red, green, blue, body: bodyPixels, total, unread: null as Unread | null }
 }
 type SliceSums = ReturnType<typeof sliceSums>
 
-// The sums of a slice with nothing in it
-const emptySums = (frame: Frame, position: number, field: Field): SliceSums => ({
+// Why a slice was read as missing without its pixels: the set lacks its file, or its file can't be decoded
+type Unread = 'absent' | 'undecodable'
+
+// The sums of a slice with nothing in it, for one that wasn't read
+const emptySums = (frame: Frame, position: number, field: Field, unread: Unread): SliceSums => ({
   frame,
   position,
+  unread,
   red: new Uint32Array(field.layerCells),
   green: new Uint32Array(field.layerCells),
   blue: new Uint32Array(field.layerCells),
@@ -204,16 +191,19 @@ const emptySums = (frame: Frame, position: number, field: Field): SliceSums => (
   total: 0,
 })
 
-// A slice's pixels, read from its file in the data root. A file that can't be decoded stops the build, unless the body
-// lists it as blank, when it's read as an empty slice, null
-async function readSlice(frame: Frame, body: Body, root: string, blanks: ReadonlySet<string>): Promise<RawImage | null> {
+// A slice's pixels, read from its file in the data root, or why it wasn't read: a file the body lists as absent isn't
+// looked for, and one that can't be decoded stops the build, unless the body lists it as blank or empty, when it's
+// named in the log and read as missing
+async function readSlice(frame: Frame, body: Body, root: string, unreadable: ReadonlySet<string>): Promise<RawImage | Unread> {
+  if (frame.absent) return 'absent'
   const path = await requireDataFile(root, body.set, frame.name)
   let image: RawImage
   try {
     image = await readRgb(path)
   } catch (error) {
-    if (!blanks.has(frame.name)) throw new Error(`${path} can't be decoded: ${String(error)}`, { cause: error })
-    return null
+    if (!unreadable.has(frame.name)) throw new Error(`${path} can't be decoded: ${String(error)}`, { cause: error })
+    console.log(`${frame.name} can't be decoded, so it's read as missing: ${error instanceof Error ? error.message : String(error)}`)
+    return 'undecodable'
   }
   if (image.width !== body.width || image.height !== body.height) {
     throw new Error(`${path} is ${image.width} × ${image.height}, not ${body.width} × ${body.height}`)
@@ -222,10 +212,13 @@ async function readSlice(frame: Frame, body: Body, root: string, blanks: Readonl
 }
 
 // A slice's sums, read from its file in the data root
-async function readFrame(frame: Frame, position: number, body: Body, field: Field, root: string, blanks: ReadonlySet<string>) {
-  const image = await readSlice(frame, body, root, blanks)
-  return image ? sliceSums(frame, position, image, body, field) : emptySums(frame, position, field)
+async function readFrame(frame: Frame, position: number, body: Body, field: Field, root: string, unreadable: ReadonlySet<string>) {
+  const image = await readSlice(frame, body, root, unreadable)
+  return typeof image === 'string' ? emptySums(frame, position, field, image) : sliceSums(frame, position, image, body, field)
 }
+
+// The files that are read as missing when they can't be decoded, rather than stopping the build
+const unreadableOf = (body: Body) => new Set([...body.blankFiles, ...body.emptyFiles])
 
 // The window either side of a boundary between cryo blocks that its step is measured on: this many slices kept
 // before the boundary, and as many after it, past the first few kept after it, which the frost a block starts with
@@ -282,8 +275,8 @@ async function measureBlocks(body: Body, level: Level, field: Field, to: number,
   const unit = blocks.map((): Triple => [1, 1, 1])
   if (blocks.length < 2) return { blocks, gains: unit }
   const started = performance.now()
-  const frames = framesOf(body, body.firstSlice, body.lastSlice)
-  const blanks = new Set(body.blankFiles)
+  const frames = framesOf(body, 0, lastFrame(body))
+  const blanks = unreadableOf(body)
   const { layerCells, cellPixels } = field
   // Every pixel each slice read has that the rule passes, which is what judges it kept or missing
   const totals = new Map<number, Promise<number>>()
@@ -338,7 +331,7 @@ async function measureBlocks(body: Body, level: Level, field: Field, to: number,
       decoded += batch.length
       const images = await Promise.all(batch.map((p) => readSlice(frames[p], body, root, blanks)))
       images.forEach((image, m) => {
-        if (!image) return
+        if (typeof image === 'string') return
         const slice = sliceSums(frames[batch[m]], batch[m], image, body, field)
         for (let cell = 0; cell < layerCells; cell++) {
           sums.red[cell] += slice.red[cell]
@@ -486,9 +479,9 @@ async function readLayers(
   let saturated = 0
   // Each frame's body pixels, once read, by its position in frames
   const counts = new Int32Array(frames.length)
-  const missing: Record<MissingReason, number[]> = { blank: [], short: [] }
+  const missing: Record<MissingReason | Unread, number[]> = { blank: [], short: [], absent: [], undecodable: [] }
   const missingLayers = Array.from({ length: layers }, () => false)
-  const blanks = new Set(body.blankFiles)
+  const blanks = unreadableOf(body)
   const pending: SliceSums[] = []
   let read = 0
   const started = performance.now()
@@ -573,7 +566,8 @@ async function readLayers(
       if (after.length < dipWindow && read < frames.length) return
       pending.shift()
       while (layerOf(sums.frame.index) - firstLayer > layer.index) finishLayer()
-      const reason = missingReason(sums.total, nonBlank(sums.position - 1, -1), after)
+      // A slice not read is missing for that reason, and listed by it rather than as blank
+      const reason = sums.unread ?? missingReason(sums.total, nonBlank(sums.position - 1, -1), after)
       if (reason) missing[reason].push(sums.frame.index)
       else keep(sums)
     }
@@ -603,6 +597,10 @@ async function readLayers(
   }
   if (missing.blank.length > 0) console.log(`Blank slices, read as missing: ${runsText(body, missing.blank)}`)
   if (missing.short.length > 0) console.log(`Short slices, read as missing: ${runsText(body, missing.short)}`)
+  if (missing.absent.length > 0) console.log(`Slices the set lacks, read as missing: ${runsText(body, missing.absent)}`)
+  if (missing.undecodable.length > 0) {
+    console.log(`Slices that can't be decoded, read as missing: ${runsText(body, missing.undecodable)}`)
+  }
   const sources = fillMissingLayers([bodyCells, share, colors, colorDensity], layerCells, missingLayers, {
     colors,
     body: bodyCells,
@@ -911,7 +909,7 @@ async function recordLevel(
 }
 
 async function main() {
-  const { body, level, from, to, out, previews, noCt, match, root } = options()
+  const { body, level, frames: range, from, to, out, previews, noCt, match, root } = options()
   const started = performance.now()
   if (previews) {
     for (const path of await drawPreviews(readVolume(await gunzipFile(out)))) console.log(`Preview: ${path}`)
@@ -919,9 +917,9 @@ async function main() {
   }
 
   const field = fieldOf(body, level)
-  const frames = framesOf(body, from, to)
+  const frames = framesOf(body, range[0], range[1])
   const gains = await measureBlocks(body, level, field, to, root, match)
-  console.log(`Reading the ${body.id}'s slices ${from} to ${to} from ${setFolder(root, body.set)} at ${level.spacing} mm`)
+  console.log(`Reading the ${body.id}'s slices ${frameText(body, range[0])} to ${frameText(body, range[1])} from ${setFolder(root, body.set)} at ${level.spacing} mm`)
   const grid = await readLayers(body, level, field, frames, root, gains)
   let ct: CtDensity | null = null
   if (noCt) console.log('Density from the colour alone, as --no-ct asks')
@@ -946,7 +944,11 @@ async function main() {
   if (listed) console.log(`Recorded the ${level.spacing} mm level in ${relative(process.cwd(), listed)}`)
   const seconds = (performance.now() - started) / 1000
   const cells = volume.size[0] * volume.size[1] * volume.size[2]
-  console.log(`Slices read: ${frames.length} (${from} to ${to})`)
+  const unread = frames.filter((frame) => frame.absent).length
+  console.log(
+    `Slices read: ${frames.length - unread} (${frameText(body, range[0])} to ${frameText(body, range[1])}` +
+      `${unread > 0 ? `, less ${unread} the set lacks` : ''})`,
+  )
   console.log(
     `Grid: ${volume.size.join(' × ')} voxels at ${volume.spacing.map(mm).join(' × ')} mm, the body and a one-voxel margin, ` +
       `from cell ${fieldFirst.join(', ')} of the ${field.nx} × ${field.ny} × ${grid.layers} field; ` +
