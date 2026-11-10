@@ -14,7 +14,8 @@ const rimPower = 3
 export interface BodySampler {
   // The colour of the tissue at a scene point, decoded from the photographs' sRGB
   colourAt(p: Node<'vec3'>): Node<'vec3'>
-  // The density at a scene point, from 0 to 1 of the file's scale
+  // The density at a scene point, from 0 to 1 of the file's scale; or the MRI there, where the colour texture shown
+  // is the one that carries the MRI in the density's place
   densityAt(p: Node<'vec3'>): Node<'float'>
   // The coverage at a scene point, from 0 to 1, which crosses the skin's isolevel where the skin mesh lies
   coverageAt(p: Node<'vec3'>): Node<'float'>
