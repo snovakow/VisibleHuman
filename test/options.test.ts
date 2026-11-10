@@ -1,13 +1,34 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { defaultOptions, drawableOptions, isOption, optionKeys, viewOptions, type Folder, type ViewOptions } from '../src/options.ts'
-import { styles } from '../src/viewer/styles.ts'
+import {
+  defaultOptions,
+  drawableOptions,
+  isOption,
+  isShown,
+  optionKeys,
+  viewOptions,
+  type Dependence,
+  type Folder,
+  type ShownWhile,
+  type ViewOptions,
+} from '../src/options.ts'
+import { styles, type Style } from '../src/viewer/styles.ts'
 import { boneDensity } from '../src/volume/density.ts'
 
 // The options table: the defaults the store opens on, the ranges and choices the panel is built from, and the splats'
 // defaults, which the page has always opened on and which the table must keep
 
 const folders: Folder[] = ['Body', 'Look', 'Cuts', 'Scene']
+
+// Every control a control's showing depends on, in every style
+function dependencesOf(shownWhile: ShownWhile): Dependence[] {
+  const listed = 'byStyle' in shownWhile ? Object.values(shownWhile.byStyle) : [shownWhile]
+  return listed.flatMap((each) => ('all' in each ? [...each.all] : [each]))
+}
+
+// Whether an option's control shows in a style, with the options as given
+const shows = (option: keyof ViewOptions, style: Style, options: ViewOptions) =>
+  isShown(viewOptions[option], style, (key) => (isOption(key) ? options[key] : undefined))
 
 void test('the defaults hold every option in the table, each at its entry\'s default', () => {
   assert.deepEqual(Object.keys(defaultOptions).sort(), optionKeys.slice().sort())
@@ -38,7 +59,9 @@ void test('every entry sits in a folder, with a slider\'s default inside its ran
       assert.ok(entry.shownFor.styles.length > 0, `${key} is shown for some style`)
       for (const style of entry.shownFor.styles) assert.ok(styles.some((each) => each.id === style), `${key} names a style`)
     }
-    if (entry.shownWhile) assert.ok(isOption(entry.shownWhile.option), `${key} depends on an option`)
+    if (entry.shownWhile) {
+      for (const dependence of dependencesOf(entry.shownWhile)) assert.ok(isOption(dependence.option), `${key} depends on ${dependence.option}`)
+    }
   }
 })
 
@@ -211,4 +234,50 @@ void test('the volume draws the photographs\' colour until Grey is asked for, a 
   assert.equal(defaultOptions.grey, false)
   // It follows the volume's other controls, straight after Shading
   assert.equal(optionKeys.indexOf('grey'), optionKeys.indexOf('shading') + 1)
+})
+
+void test('the Bone threshold shows while the bone is drawn, and the MRI threshold while the brain is', () => {
+  const at = (changes: Partial<ViewOptions>): ViewOptions => ({ ...defaultOptions, ...changes })
+  // The raytrace's bone is traced alone or with the skin, and its brain on its own
+  for (const [trace, bone, brain] of [['skin', false, false], ['bone', true, false], ['both', true, false], ['brain', false, true]] as const) {
+    assert.equal(shows('boneThreshold', 'raytrace', at({ trace })), bone, `Bone threshold, tracing ${trace}`)
+    assert.equal(shows('mriThreshold', 'raytrace', at({ trace })), brain, `MRI threshold, tracing ${trace}`)
+  }
+  // The surface's inner mesh is drawn under its Bone switch, of the bone or the brain as Inner says
+  for (const [bone, inner, boneShown, brainShown] of [
+    [true, 'bone', true, false],
+    [true, 'brain', false, true],
+    [false, 'bone', false, false],
+    [false, 'brain', false, false],
+  ] as const) {
+    assert.equal(shows('boneThreshold', 'surface', at({ bone, inner })), boneShown, `Bone threshold, Bone ${bone}, Inner ${inner}`)
+    assert.equal(shows('mriThreshold', 'surface', at({ bone, inner })), brainShown, `MRI threshold, Bone ${bone}, Inner ${inner}`)
+  }
+  // Neither shows in a style that draws no surface, whatever the options say
+  for (const style of ['splats', 'volume'] as const) {
+    assert.equal(shows('boneThreshold', style, at({ trace: 'bone', bone: true })), false)
+    assert.equal(shows('mriThreshold', style, at({ trace: 'brain', inner: 'brain' })), false)
+  }
+  // At the defaults, both styles draw the bone and neither the brain
+  for (const style of ['raytrace', 'surface'] as const) {
+    assert.deepEqual([shows('boneThreshold', style, defaultOptions), shows('mriThreshold', style, defaultOptions)], [true, false])
+  }
+  // A body without an MRI holds Inner at its default, where the surface's Bone switch alone decides
+  assert.equal(shows('boneThreshold', 'surface', drawableOptions(at({ inner: 'brain' }), { weighted: true, oit: true, mri: false })), true)
+})
+
+void test('a control shows while every control it depends on allows it, by the style drawn where they differ', () => {
+  const entry = { shownFor: { styles: ['raytrace', 'surface'] }, shownWhile: { byStyle: { raytrace: { option: 'a', oneOf: ['x', 'y'] } } } } as const
+  const values = (a: unknown) => (key: string) => (key === 'a' ? a : undefined)
+  assert.equal(isShown(entry, 'raytrace', values('x')), true)
+  assert.equal(isShown(entry, 'raytrace', values('z')), false)
+  // A style the dependence says nothing of shows it throughout, and a style it isn't shown for never
+  assert.equal(isShown(entry, 'surface', values('z')), true)
+  assert.equal(isShown(entry, 'volume', values('x')), false)
+  const all = { shownFor: 'every', shownWhile: { all: [{ option: 'a', above: 0 }, { option: 'b', below: 1 }] } } as const
+  const both = (a: number, b: number) => (key: string) => (key === 'a' ? a : b)
+  assert.deepEqual([isShown(all, 'splats', both(1, 0)), isShown(all, 'splats', both(0, 0)), isShown(all, 'splats', both(1, 1))], [true, false, false])
+  // A single dependence, as most entries have
+  assert.equal(isShown(viewOptions.layers, 'raytrace', (key) => (key === 'opacity' ? 0.5 : undefined)), true)
+  assert.equal(isShown(viewOptions.layers, 'raytrace', (key) => (key === 'opacity' ? 1 : undefined)), false)
 })

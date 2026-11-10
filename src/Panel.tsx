@@ -3,18 +3,17 @@ import { useEffect, useMemo, useRef } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import {
   isOption,
+  isShown,
   optionKeys,
   viewOptions,
   type Capabilities,
   type Capability,
   type Choice,
-  type Dependence,
   type Folder,
-  type ShownFor,
   type ViewOptions,
 } from './options.ts'
 import { levelKey, useStore, type Status } from './store.ts'
-import { isStyle, styles, type Style } from './viewer/styles.ts'
+import { isStyle, styles } from './viewer/styles.ts'
 import { levelOf } from './volume/levels.ts'
 
 const statusText: Record<Status, string> = { loading: 'Loading…', ready: 'Ready', failed: '' }
@@ -33,27 +32,8 @@ const panelTheme = { sizes: { rootWidth: '340px' } }
 const pathOf = (option: keyof ViewOptions) => `${viewOptions[option].folder}.${option}`
 const stylePath = pathOf('style')
 
-// The path of the control an entry depends on, which the table names by its key
-function optionPath(key: string) {
-  if (!isOption(key)) throw new Error(`No option is named ${key}`)
-  return pathOf(key)
-}
-
 // The styles by their labels in the panel
 const styleOptions = Object.fromEntries(styles.map((style) => [style.label, style.id]))
-
-// Whether a control is shown for a style
-function shownForStyle(shownFor: ShownFor, style: Style) {
-  return shownFor === 'every' || shownFor.styles.includes(style)
-}
-
-// Whether a control another hides is shown, by that control's value
-function shownWhile(dependence: Dependence, value: unknown) {
-  if ('is' in dependence) return value === dependence.is
-  if ('isNot' in dependence) return value !== dependence.isNot
-  if ('above' in dependence) return typeof value === 'number' && value > dependence.above
-  return typeof value === 'number' && value < dependence.below
-}
 
 // Whether the backend, or the body shown, has what a control or a choice needs; most need nothing
 function capable(need: Capability | undefined, capabilities: Capabilities) {
@@ -161,17 +141,20 @@ export function Panel({ renderer }: { renderer: string }) {
     const { load, setOptions, options } = useStore.getState()
 
     // The control of one option, which sets the option as it changes, shown for the styles its entry names and while
-    // the control its entry depends on allows. Its value is the store's, so that a rebuilt panel keeps what's set
+    // the controls its entry depends on allow. Its value is the store's, so that a rebuilt panel keeps what's set. A
+    // control the panel leaves out, for a capability the backend or the body lacks, is read at its default, where
+    // the store holds it then, as Inner is on a body without an MRI
     const control = <K extends keyof ViewOptions>(option: K) => {
       const entry = viewOptions[option]
-      const forStyles = entry.shownFor === 'every' ? null : entry.shownFor
-      const dependence = entry.shownWhile ? { ...entry.shownWhile, path: optionPath(entry.shownWhile.option) } : null
       const render =
-        forStyles || dependence
+        entry.shownFor !== 'every' || entry.shownWhile
           ? (get: (path: string) => unknown) => {
               const drawn = get(stylePath)
-              const forStyle = !forStyles || (isStyle(drawn) && shownForStyle(forStyles, drawn))
-              return forStyle && (!dependence || shownWhile(dependence, get(dependence.path)))
+              const valueOf = (key: string) => {
+                if (!isOption(key)) throw new Error(`No option is named ${key}`)
+                return capable(viewOptions[key].needs, capabilities) ? get(pathOf(key)) : viewOptions[key].default
+              }
+              return isShown(entry, isStyle(drawn) ? drawn : viewOptions.style.default, valueOf)
             }
           : undefined
       const onChange = (value: ViewOptions[K]) => {

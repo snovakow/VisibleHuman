@@ -51,9 +51,7 @@ interface Stage {
 // over its opaque ones, and bloom spreads a glow around the scene's bright parts. It renders only while it's mounted,
 // so the scene renders directly whenever there's no effect to apply
 export function Effects() {
-  const gl = useThree((s) => s.gl)
-  const scene = useThree((s) => s.scene)
-  const camera = useThree((s) => s.camera)
+  const get = useThree((s) => s.get)
   const weighted = useStore((s) => isWeighted(s.options))
   const oit = useStore((s) => isOit(s.options))
   const bloomOn = useStore((s) => s.options.bloom > 0)
@@ -63,7 +61,10 @@ export function Effects() {
   const stage = useRef<Stage | null>(null)
   const glow = useRef<BloomNode | null>(null)
 
+  // The renderer, the scene and the camera last as long as the Canvas, which a switch of backend mounts anew with the
+  // effects inside it, so the pipeline is built once each time the effects mount
   useEffect(() => {
+    const { gl, scene, camera } = get()
     const scenePass = pass(scene, camera)
     const pipeline = new RenderPipeline(asWebGPU(gl), scenePass.getTextureNode('output'))
     stage.current = { pipeline, scenePass }
@@ -73,12 +74,13 @@ export function Effects() {
       scenePass.dispose()
       pipeline.dispose()
     }
-  }, [gl, scene, camera])
+  }, [get])
 
   // The effects that are on join the pipeline's output, and leave it as they turn off, each taking its passes with it
   useEffect(() => {
     if (!stage.current) return undefined
     const { pipeline, scenePass } = stage.current
+    const { gl, scene, camera } = get()
     const { options } = useStore.getState()
     const made: Node[] = []
     let sceneColor: Node<'vec4'> = scenePass.getTextureNode('output')
@@ -124,7 +126,7 @@ export function Effects() {
       glow.current = null
       for (const node of made) node.dispose()
     }
-  }, [gl, scene, camera, weighted, oit, bloomOn])
+  }, [get, weighted, oit, bloomOn])
 
   useEffect(() => {
     if (glow.current) glow.current.strength.value = strength

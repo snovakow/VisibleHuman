@@ -15,7 +15,7 @@ The panel at the top right groups its controls in folders, and shows in each onl
 ### Body
 
 - **Body** chooses the body: the male, the female or the head. Adding `?body=female` or `?body=head` to the address opens the page on that body, and the address follows the body chosen, so a link opens on the body it was copied from.
-- **Level** chooses the file the body is drawn from: for the male and the female 4 mm, which they open on, or 2 mm, twice as fine along each axis and a larger download, and for the head 1.2 mm, which it opens on, then 1 mm and 0.6 mm. Where the site doesn't have a level's file, the panel marks it not built and the body stays as it was.
+- **Level** chooses the file the body is drawn from: for the male and the female 4 mm, which they open on, or 2 mm, twice as fine along each axis and a larger download, and for the head 1.2 mm, which it opens on, then 1 mm and 0.6 mm. The view stays where it was left, as a new body's doesn't: each body opens framed whole from the front. Where the site doesn't have a level's file, the panel marks it not built and the body stays as it was.
 
 ### Look
 
@@ -56,8 +56,8 @@ With the surface:
 
 With the raytrace or the surface:
 
-- **Bone threshold** sets the density from which tissue counts as bone, on the scale the file stores it in, where the default is bone's. Lowering it toward 90 shows the ribs whole at the 4 mm level, where a block holds as much soft tissue as bone; raising it keeps only the densest bone. The surface builds its bone mesh again at each new value.
-- **MRI threshold**, for the head, sets the MRI value, on the file's scale of 1 to 255, at which the raytrace's brain and the surface's inner brain are drawn. It starts at 45, between the skull, which the MRI shows dark, and the brain inside it, and the surface builds the brain again at each new value.
+- **Bone threshold** sets the density from which tissue counts as bone, on the scale the file stores it in, where the default is bone's. Lowering it toward 90 shows the ribs whole at the 4 mm level, where a block holds as much soft tissue as bone; raising it keeps only the densest bone. The surface builds its bone mesh again at each new value. It shows while there's bone to draw: while the raytrace traces it, or while the surface's Bone switch is on with Inner on the bone.
+- **MRI threshold**, for the head, sets the MRI value, on the file's scale of 1 to 255, at which the raytrace's brain and the surface's inner brain are drawn. It starts at 45, between the skull, which the MRI shows dark, and the brain inside it, and the surface builds the brain again at each new value. It shows while the raytrace traces the brain, or while the surface's Bone switch is on with Inner on the brain.
 - **Rim** lights a surface's edges where they turn away from the eye, which draws the skin as a glass shell at a low Opacity.
 
 The MRI's controls and choices are offered only for the head, and choosing a body without an MRI puts Density, Trace and Inner back to their defaults.

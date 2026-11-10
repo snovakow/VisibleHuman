@@ -59,19 +59,26 @@ export type Folder = 'Body' | 'Look' | 'Cuts' | 'Scene'
 export type ShownFor = 'every' | { styles: readonly Style[] }
 
 // Another control that hides this one, by its key in the table: this one shows only while that control's value is
-// the one given, isn't it, is above it or is below it
+// the one given, isn't it, is one of those listed, is above it or is below it
 export type Dependence =
   | { option: string; is: boolean | string }
   | { option: string; isNot: string }
+  | { option: string; oneOf: readonly string[] }
   | { option: string; above: number }
   | { option: string; below: number }
+
+// When a control shows, among the styles it's shown for: while one control allows it, or while every one of several
+// does, or, where that differs from style to style, as the style drawn says, a style that says nothing showing it
+// throughout
+type Dependences = Dependence | { all: readonly Dependence[] }
+export type ShownWhile = Dependences | { byStyle: Partial<Record<Style, Dependences>> }
 
 interface Control<T> {
   folder: Folder
   label: string
   default: T
   shownFor: ShownFor
-  shownWhile?: Dependence
+  shownWhile?: ShownWhile
   // What the control needs of the backend or of the body shown, without which the panel leaves it out
   needs?: Capability
 }
@@ -133,6 +140,22 @@ const notXray: Dependence = { option: 'mode', isNot: 'xray' }
 const translucent: Dependence = { option: 'opacity', below: 1 }
 // While the shadows are cast, which is all the light's direction is for
 const shadowed: Dependence = { option: 'shadows', is: true }
+// While the bone is drawn: traced by the raytrace, alone or with the skin, or meshed by the surface under its Bone
+// switch with Inner on the bone, which a body without an MRI always has
+const boneDrawn: ShownWhile = {
+  byStyle: {
+    raytrace: { option: 'trace', oneOf: ['bone', 'both'] },
+    surface: { all: [{ option: 'bone', is: true }, { option: 'inner', isNot: 'brain' }] },
+  },
+}
+// While the brain is drawn, from the MRI: traced by the raytrace, or meshed by the surface under its Bone switch
+// with Inner on the brain
+const brainDrawn: ShownWhile = {
+  byStyle: {
+    raytrace: { option: 'trace', is: 'brain' },
+    surface: { all: [{ option: 'bone', is: true }, { option: 'inner', is: 'brain' }] },
+  },
+}
 
 // The sliders move in steps of a hundredth, the finest leva shows
 const hundredths = 0.01
@@ -274,8 +297,18 @@ export const viewOptions = {
   // no shell
   depth: slider({ folder: 'Look', label: 'Depth (mm)', default: 0, min: 0, max: 100, step: 1, shownFor: surface }),
   // The density, on the file's scale, from which a voxel counts as bone. The default is the scale's, which the
-  // density channel was built to; the range runs from dense soft tissue to the densest bone
-  boneThreshold: slider({ folder: 'Look', label: 'Bone threshold', default: 110, min: 70, max: 200, step: 1, shownFor: surfaces }),
+  // density channel was built to; the range runs from dense soft tissue to the densest bone. It shows while the bone
+  // is drawn, though it also sets where the surface's caps turn solid and what shadows a cut face of the raytrace
+  boneThreshold: slider({
+    folder: 'Look',
+    label: 'Bone threshold',
+    default: 110,
+    min: 70,
+    max: 200,
+    step: 1,
+    shownFor: surfaces,
+    shownWhile: boneDrawn,
+  }),
   // The MRI's value, on the file's scale of 1 to 255, from which a voxel is inside the surface the raytrace's brain
   // and the surface's inner brain are drawn at. The default sits between the skull, which the MRI shows dark, and the
   // brain inside it
@@ -287,6 +320,7 @@ export const viewOptions = {
     max: 255,
     step: 1,
     shownFor: surfaces,
+    shownWhile: brainDrawn,
     needs: 'mri',
   }),
   // How much a surface's edges light up where it turns away from the eye, which draws it as a glass shell
@@ -379,6 +413,26 @@ export const defaultOptions: ViewOptions = {
   bloomRadius: viewOptions.bloomRadius.default,
   bloomThreshold: viewOptions.bloomThreshold.default,
   oit: viewOptions.oit.default,
+}
+
+// Whether a control shows for the style drawn, by the styles it's shown for and the values of the controls it depends
+// on, which valueOf gives by their keys
+export function isShown(entry: { shownFor: ShownFor; shownWhile?: ShownWhile }, style: Style, valueOf: (option: string) => unknown) {
+  if (entry.shownFor !== 'every' && !entry.shownFor.styles.includes(style)) return false
+  const allows = (dependence: Dependence) => {
+    const value = valueOf(dependence.option)
+    if ('is' in dependence) return value === dependence.is
+    if ('isNot' in dependence) return value !== dependence.isNot
+    if ('oneOf' in dependence) return typeof value === 'string' && dependence.oneOf.includes(value)
+    if ('above' in dependence) return typeof value === 'number' && value > dependence.above
+    return typeof value === 'number' && value < dependence.below
+  }
+  const allow = (dependences: Dependences) => ('all' in dependences ? dependences.all.every(allows) : allows(dependences))
+  const { shownWhile } = entry
+  if (!shownWhile) return true
+  if (!('byStyle' in shownWhile)) return allow(shownWhile)
+  const forStyle = shownWhile.byStyle[style]
+  return forStyle === undefined || allow(forStyle)
 }
 
 // The options as the backend can draw them and the body shown allows: a choice or a switch that needs what the
