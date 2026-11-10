@@ -39,8 +39,8 @@ export interface QuadRay {
   tExit: Node<'float'>
 }
 
-// The quad as a mesh of the material, which draws from both sides, since a quad drawn from behind only would be culled
-// as the camera turns, and is never frustum-culled, since its vertices are placed in clip space, not in the scene
+// The quad as a mesh of the material, which draws from both sides, so that neither winding of its two triangles on
+// the screen culls it, and is never frustum-culled, since its vertices are placed in clip space, not in the scene
 export function createRayQuad(material: NodeMaterial) {
   material.side = DoubleSide
   // Each corner at its clip-space place, whatever the camera's matrices say

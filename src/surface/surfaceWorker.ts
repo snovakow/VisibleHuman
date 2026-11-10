@@ -12,10 +12,10 @@ interface GridRequest {
   colors?: Uint8Array
 }
 
-// A surface meshed from a field at an isolevel: the skin from the coverage and the bone from the density, with the
-// brain, from a body's MRI, still to come
+// A surface meshed from a field at an isolevel: the skin from the coverage, and the mesh inside it, asked for as the
+// bone, from the density or, where it's the brain's, from a body's MRI
 export interface FieldRequest extends GridRequest {
-  kind: 'skin' | 'bone' | 'brain'
+  kind: 'skin' | 'bone'
   field: Uint8Array
   isolevel: number
 }
