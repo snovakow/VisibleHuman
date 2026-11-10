@@ -20,6 +20,9 @@ export interface Segment extends Similarity {
   score: number
   bodyScore?: number
   samples: readonly number[]
+  // Set by whoever moves a segment's similarity by hand, where its fit landed wrong: a refit keeps the segment as
+  // the file has it and scores it there, rather than putting the fit back
+  placed?: 'by hand'
 }
 
 export interface Registration {
@@ -75,6 +78,10 @@ function readSegment(value: unknown, where: string): Segment {
     samples: value.samples,
   }
   if (value.bodyScore !== undefined) segment.bodyScore = number(value, 'bodyScore', where)
+  if (value.placed !== undefined) {
+    if (value.placed !== 'by hand') throw new Error(`${where}'s placed is ${JSON.stringify(value.placed)}, where only "by hand" is known`)
+    segment.placed = value.placed
+  }
   return segment
 }
 
@@ -132,6 +139,7 @@ export async function saveRegistration(registration: Registration) {
     }
     if (segment.bodyScore !== undefined) tidied.bodyScore = tidy(segment.bodyScore)
     tidied.samples = segment.samples
+    if (segment.placed !== undefined) tidied.placed = segment.placed
     return tidied
   })
   const json = { ...registration, segments }

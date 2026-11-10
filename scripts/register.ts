@@ -15,6 +15,8 @@
 // scan's segments, since a scan writes all its images one way.
 // A body photographed several times a number, as the female's a, b and c, is fitted on the middle photograph of each
 // sample number, against the CT slice of that number.
+// A segment the saved file marks as placed by hand is kept where the file has it, and scored there: its fit is still
+// made, since its scan's flip is chosen over all the scan's segments, and reported beside the placement.
 // Overlays go to .cache/preview/register/<body>-<slice>.png: the slice at two pixels a millimetre, the CT bone outline
 // magenta where the search started and cyan where it ended.
 // The head's scans are whole grids, not a slice for each photograph: its CAT is fitted to the grid the volume script
@@ -38,12 +40,13 @@ import {
   maskOutline,
   samplePair,
   sampleScores,
+  score,
   silhouettesComparable,
   type SamplePair,
 } from './lib/images.ts'
 import { previewFolder } from './lib/previews.ts'
 import { registerScans } from './lib/registerScans.ts'
-import { loadRegistration, saveRegistration, type Registration, type Segment } from './lib/registration.ts'
+import { loadRegistration, registrationPath, saveRegistration, type Registration, type Segment } from './lib/registration.ts'
 
 const overlayFolder = join(previewFolder, 'register')
 // Each millimetre cell of an overlay is drawn this many pixels across
@@ -73,17 +76,27 @@ function options() {
 async function readHeaders(body: Body, root: string) {
   const folder = setFolder(root, body.ct!.set)
   const headers = new Map<number, CtHeader>()
+  const missing: number[] = []
   for (let slice = body.firstSlice; slice <= body.lastSlice; slice++) {
     const name = ctFileName(body, 'header', slice)
     let text: string
     try {
       text = await readFile(join(folder, name), 'latin1')
     } catch (error) {
-      if (error instanceof Error && 'code' in error && error.code === 'ENOENT') continue
+      if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
+        missing.push(slice)
+        continue
+      }
       throw error
     }
     headers.set(slice, parseCtHeader(text, name))
   }
+  // The CT may start after the photographs or end before them, as the male's does at the crown; a header missing
+  // between two that are there is a hole in the local copy, which would otherwise split a segment without a word
+  const slices = [...headers.keys()]
+  const [first, last] = [Math.min(...slices), Math.max(...slices)]
+  const hole = missing.find((slice) => slice > first && slice < last)
+  if (hole !== undefined) await requireDataFile(root, body.ct!.set, ctFileName(body, 'header', hole))
   return headers
 }
 
@@ -119,7 +132,8 @@ function sampleSlices(first: number, last: number, count: number, skip: Readonly
   for (let n = 0; n < count; n++) {
     let slice = first + Math.floor(((n + 0.5) * length) / count)
     while (skip.has(slice) && slice < last) slice++
-    if (!skip.has(slice)) slices.push(slice)
+    // Two shares of a short segment can pass over the same skipped numbers to one slice, which counts once
+    if (!skip.has(slice) && !slices.includes(slice)) slices.push(slice)
   }
   return slices
 }
@@ -168,8 +182,9 @@ async function drawOverlay(path: string, cryo: RawImage, outline: Float64Array, 
   const plot = (map: Affine, colour: readonly [number, number, number]) => {
     for (let n = 0; n < outline.length; n += 2) {
       const [x, y] = apply(map, [outline[n], outline[n + 1]])
-      const px = Math.round((x / cryoCellPx) * overlayScale)
-      const py = Math.round((y / cryoCellPx) * overlayScale)
+      // The block of overlay pixels centred on the point: a pixel centre x lies (x + 0.5) / cryoCellPx cells along
+      const px = Math.round(((x + 0.5) / cryoCellPx) * overlayScale - overlayScale / 2)
+      const py = Math.round(((y + 0.5) / cryoCellPx) * overlayScale - overlayScale / 2)
       for (let dy = 0; dy < overlayScale; dy++) {
         for (let dx = 0; dx < overlayScale; dx++) {
           const ox = px + dx
@@ -223,12 +238,13 @@ const fixed = (value: number, places: number, width: number) => value.toFixed(pl
 
 function printTable(segments: readonly Segment[]) {
   console.log('segment  slices      dfov  flip        scale  rotation       tx       ty   bone  body')
+  const mark = (segment: Segment) => (segment.placed ? `  placed ${segment.placed}` : '')
   segments.forEach((segment, n) => {
     const body = segment.bodyScore === undefined ? '    –' : fixed(segment.bodyScore, 2, 5)
     console.log(
       `${String(n + 1).padStart(7)}  ${segment.slices.join('–').padEnd(10)}  ${String(segment.dfovMm).padStart(4)}  ` +
         `${segment.flip.padEnd(10)}  ${fixed(segment.scale, 3, 5)}  ${fixed(segment.rotationDeg, 2, 8)}  ` +
-        `${fixed(segment.tx, 1, 7)}  ${fixed(segment.ty, 1, 7)}  ${fixed(segment.score, 2, 5)}  ${body}`,
+        `${fixed(segment.tx, 1, 7)}  ${fixed(segment.ty, 1, 7)}  ${fixed(segment.score, 2, 5)}  ${body}${mark(segment)}`,
     )
   })
 }
@@ -262,11 +278,26 @@ async function main() {
     return
   }
 
+  // The segments the saved file marks as placed by hand, which this fit leaves where they are
+  const placed = (await loadRegistration(body.id))?.segments.filter((segment) => segment.placed) ?? []
+
   console.log(`Reading the ${body.id}'s CT headers from ${setFolder(root, ct.set)}`)
   const headers = await readHeaders(body, root)
   if (headers.size === 0) throw new Error(`No CT headers found in ${setFolder(root, ct.set)}`)
   const ranges = segmentRanges(body, headers)
   console.log(`${headers.size} CT slices in ${ranges.length} segments`)
+  const heldFor = (range: { first: number; last: number }) =>
+    placed.find(({ slices }) => slices[0] === range.first && slices[1] === range.last)
+  for (const segment of placed) {
+    const range = ranges.find((candidate) => heldFor(candidate) === segment)
+    const same = range && range.header.pixelMm === segment.ctPixelMm && range.header.size.every((value, n) => value === segment.ctSize[n])
+    if (!same) {
+      throw new Error(
+        `${registrationPath(body.id)} places slices ${segment.slices.join('–')} by hand, but the CT's headers give no segment of ` +
+          'those slices and that geometry now; remove its "placed" to have the fit place whatever covers them',
+      )
+    }
+  }
 
   // Each segment fitted under each flip alone, its samples' images let go once fitted
   const fits = []
@@ -304,8 +335,14 @@ async function main() {
   for (const { range, slices, pairs, centre, useBody, start, byFlip, seconds } of fits) {
     const { header } = range
     const flip = scanFlips.get(scanOf(header))!
-    const best = byFlip.get(flip)!
+    const fitted = byFlip.get(flip)!
     const own = [...byFlip.values()].reduce((a, b) => (b.scores.total > a.scores.total ? b : a))
+    // A segment placed by hand stays where the file has it, scored there
+    const held = heldFor(range)
+    const heldAt: Similarity | null = held
+      ? { scale: held.scale, rotationDeg: held.rotationDeg, tx: held.tx, ty: held.ty, flip: held.flip }
+      : null
+    const best = heldAt ? { similarity: heldAt, scores: score(pairs, heldAt, centre, useBody) } : fitted
     const segment: Segment = {
       slices: [range.first, range.last],
       ctPixelMm: header.pixelMm,
@@ -316,6 +353,7 @@ async function main() {
       samples: slices,
     }
     if (useBody) segment.bodyScore = best.scores.body
+    if (held) segment.placed = held.placed
     segments.push(segment)
     const perSlice = pairs.map((pair) => {
       const scores = sampleScores(pair, best.similarity, centre, useBody)
@@ -325,9 +363,14 @@ async function main() {
       own.similarity.flip === flip
         ? ''
         : ` (alone it scored best under a ${own.similarity.flip} flip, ${own.scores.total.toFixed(3)} against ${best.scores.total.toFixed(3)})`
+    const byHand = heldAt
+      ? `placed by hand and kept as saved (tx ${heldAt.tx.toFixed(1)}, ty ${heldAt.ty.toFixed(1)}, rotation ${heldAt.rotationDeg.toFixed(2)}°, ` +
+        `${heldAt.flip} flip), where the fit would put it at tx ${fitted.similarity.tx.toFixed(1)}, ty ${fitted.similarity.ty.toFixed(1)}, ` +
+        `rotation ${fitted.similarity.rotationDeg.toFixed(2)}° for a bone share of ${fitted.scores.bone.toFixed(3)}; as placed, `
+      : ''
     console.log(
       `Segment ${segments.length}, slices ${range.first}–${range.last} at ${header.dfovMm} mm, ${header.entry}, exam ${header.exam}: ` +
-        `${flip} flip${overruled}, bone share ${best.scores.bone.toFixed(3)}` +
+        `${byHand}${heldAt ? '' : `${flip} flip${overruled}, `}bone share ${best.scores.bone.toFixed(3)}` +
         `${useBody ? `, silhouette Dice ${best.scores.body.toFixed(3)}` : ', silhouettes not comparable, so bone alone'}, ` +
         `fitted in ${seconds} s; per slice: ${perSlice.join(', ')}`,
     )
