@@ -65,10 +65,10 @@ void test('the splats open as they always have: block 2 at Size 1 and Opacity 1,
   assert.equal(viewOptions.opacity.shownFor, 'every')
 })
 
-void test('the keys come in the panel\'s order, the Look folder before the Cuts', () => {
-  const lookEnd = optionKeys.map((key) => viewOptions[key].folder).lastIndexOf('Look')
-  const cutsStart = optionKeys.map((key) => viewOptions[key].folder).indexOf('Cuts')
-  assert.ok(lookEnd < cutsStart)
+void test('the keys come in the panel\'s order, the Look folder before the Cuts and the Scene after them', () => {
+  const folderOf = optionKeys.map((key) => viewOptions[key].folder)
+  assert.ok(folderOf.lastIndexOf('Look') < folderOf.indexOf('Cuts'))
+  assert.ok(folderOf.lastIndexOf('Cuts') < folderOf.indexOf('Scene'))
   assert.equal(optionKeys[0], 'style')
 })
 
@@ -117,4 +117,13 @@ void test('the surface colours from the texture and draws no shell until a Depth
   assert.deepEqual(Object.values(colour.choices).sort(), ['cells', 'texture'])
   assert.deepEqual([depth.min, depth.max, depth.step, depth.default], [0, 100, 1, 0])
   for (const entry of [colour, depth]) assert.deepEqual([entry.folder, entry.shownFor], ['Look', { styles: ['surface'] }])
+})
+
+void test('the depth cue starts at none, in the Scene folder, for every style', () => {
+  const { depthCue } = viewOptions
+  assert.equal(defaultOptions.depthCue, 0)
+  assert.deepEqual([depthCue.min, depthCue.max, depthCue.step], [0, 1, 0.01])
+  assert.deepEqual([depthCue.folder, depthCue.label, depthCue.shownFor], ['Scene', 'Depth cue', 'every'])
+  // The Scene's controls come after the cuts
+  assert.ok(optionKeys.indexOf('depthCue') > optionKeys.indexOf('caps'))
 })

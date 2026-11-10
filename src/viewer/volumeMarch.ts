@@ -38,12 +38,14 @@ import type { Triple } from '../volume/format.ts'
 import { darkMax } from '../volume/segment.ts'
 import { rayQuad } from './rayQuad.ts'
 import { sceneToTexture, type Mapped } from './rays.ts'
+import { cueAlongRay } from './shading.ts'
 
 // The volume march: each pixel's ray, from the quad, clipped to the box the cuts leave, is walked in steps from the
 // front, and at each step the body's 3D texture is read where the ray is, its colour and its density. What the pixel
 // shows of what the ray met is the mode's: laid over step by step until the light is spent, the light an x-ray would
-// leave, the most density met, or light the body gives off. PDBSplat's field march is the model, with the ray from the
-// quad rather than a box's back face, a step per axis spacing rather than one, and the colour from the texture itself
+// leave, the most density met, or light the body gives off. Each step counts for less the farther it lies, by the
+// depth cue. PDBSplat's field march is the model, with the ray from the quad rather than a box's back face, a step per
+// axis spacing rather than one, and the colour from the texture itself
 
 // The light a unit of windowed density takes per millimetre at Opacity 1, chosen by eye on the male: soft tissue,
 // which sits about a quarter of the way up the density scale, closes over within a few voxels, so the skin reads as a
@@ -166,7 +168,7 @@ export function volumeMarch(): VolumeMarch {
   // The window's share of a density: clear below the low end, full above the high end
   const windowed = (density: Node<'float'>) => smoothstep(windowLow, windowHigh, density)
 
-  const colorNode = rayQuad(cutMin, cutMax, ({ origin, direction, tEnter, tExit }) => {
+  const colorNode = rayQuad(cutMin, cutMax, ({ origin, direction, viewDir, tEnter, tExit }) => {
     // The first step is offset by a share of a step from a hash of the pixel's place, which trades the bands that
     // equal steps draw for fine noise
     const offset = hash(screenCoordinate.y.mul(screenHashRow).add(screenCoordinate.x))
@@ -177,6 +179,8 @@ export function volumeMarch(): VolumeMarch {
     const most = float(0).toVar()
     // The light comes from the camera, so a slope facing the camera is lit
     const toCamera = direction.negate().toVar()
+    // The depth cue at a distance along the ray, from how much view depth a millimetre of the ray covers
+    const cueAtDistance = cueAlongRay(viewDir.z.negate())
 
     Loop(maxSteps, () => {
       If(t.greaterThan(end).or(transmittance.lessThan(minTransmittance)), () => {
@@ -187,6 +191,9 @@ export function volumeMarch(): VolumeMarch {
       const p = origin.add(direction.mul(t)).toVar()
       const texel = body.sample(toTexture.mul(vec4(p, 1)).xyz).level(float(0)).toVar()
       const density = densityAt(texel).toVar()
+      // What the depth cue leaves of the step: of its colour where it has one, of what it takes from an x-ray, and of
+      // its density toward the maximum, so that in every mode the far side shows less
+      const cue = cueAtDistance(t)
 
       If(mode.equal(modeIndex.over), () => {
         // What the step covers of the light still coming through, in the voxel's colour decoded from the photographs'
@@ -214,22 +221,22 @@ export function volumeMarch(): VolumeMarch {
             const lit = mix(float(shadeAmbient), float(1), max(dot(normal, toCamera), 0))
             color.mulAssign(mix(float(1), lit, clamp(slope.div(fullSlopePerVoxel), 0, 1)))
           })
-          gathered.addAssign(color.mul(alpha.mul(transmittance)))
+          gathered.addAssign(color.mul(cue).mul(alpha.mul(transmittance)))
           transmittance.mulAssign(alpha.oneMinus())
         })
       })
         .ElseIf(mode.equal(modeIndex.xray), () => {
           // Beer–Lambert on the density above the x-ray's floor, scaled to the top of the scale
           const above = max(density.sub(xrayFloor / 255), 0).div(1 - xrayFloor / 255)
-          const mu = above.mul(opacity).mul(xrayExtinction)
+          const mu = above.mul(opacity).mul(xrayExtinction).mul(cue)
           transmittance.mulAssign(exp(mu.mul(stepLength).negate()))
         })
         .ElseIf(mode.equal(modeIndex.mip), () => {
-          most.assign(max(most, windowed(density)))
+          most.assign(max(most, windowed(density).mul(cue)))
         })
         .Else(() => {
           const color = colorSpaceToWorking(vec4(texel.rgb, 1), SRGBColorSpace).rgb
-          gathered.addAssign(color.mul(windowed(density).mul(stepLength).mul(opacity).mul(glowGain)))
+          gathered.addAssign(color.mul(cue).mul(windowed(density).mul(stepLength).mul(opacity).mul(glowGain)))
         })
       t.addAssign(stepLength)
     })

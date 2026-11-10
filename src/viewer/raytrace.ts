@@ -32,16 +32,18 @@ import { boneDensity } from '../volume/density.ts'
 import { bodyCoverage, type Triple } from '../volume/format.ts'
 import { hitDepth, rayQuad } from './rayQuad.ts'
 import { bisectionSteps, sceneToTexture, textureBox, type Mapped } from './rays.ts'
+import { cueAt } from './shading.ts'
 
 // The raytrace: each pixel's ray, from the quad, clipped to the box the cuts leave, is stepped through the body's
 // textures until it crosses a surface, the skin where the coverage passes the body decision or the bone where the
 // density passes the Bone threshold, and the crossing is narrowed by halving the last step. The surface there is lit
-// by its slope, in the colour of the tissue just inside it, and written as the pixel's depth, so that what else is
-// drawn composites with it. A ray that starts inside a surface, where a cut has opened the body, meets it at once, on
-// the cut face. Below full Opacity the ray carries on past the skin and lays the surfaces it meets over one another,
-// front to back, until it meets bone, has laid Layers of them, or has little light left; so the skin over the bone
-// over the far skin is ordered pixel by pixel with no sort. Shadows send a second march from each lit point toward
-// the light, through the whole grid, so that what the cuts take away still throws its shadow onto what they leave
+// by its slope, in the colour of the tissue just inside it, darkened by the depth cue as it lies farther, and written
+// as the pixel's depth, so that what else is drawn composites with it. A ray that starts inside a surface, where a cut
+// has opened the body, meets it at once, on the cut face. Below full Opacity the ray carries on past the skin and lays
+// the surfaces it meets over one another, front to back, until it meets bone, has laid Layers of them, or has little
+// light left; so the skin over the bone over the far skin is ordered pixel by pixel with no sort. Shadows send a second
+// march from each lit point toward the light, through the whole grid, so that what the cuts take away still throws its
+// shadow onto what they leave
 
 // The skin lies where the coverage crosses the body decision, where the surface style meshes it too
 const skinIso = bodyCoverage / 255
@@ -319,7 +321,8 @@ export function raytrace(): Raytrace {
       // section shows the photograph's own colours
       const glint = select(cutFace, float(0), pow(facing, shininess).mul(highlight))
       const edge = pow(facing.oneMinus(), rimPower).mul(rim).toVar()
-      const shaded = base.mul(sky.add(direct)).add(glint).add(edge)
+      // The depth cue darkens the whole of what the hit shows, its highlight and its rim with it, as fog would
+      const shaded = base.mul(sky.add(direct)).add(glint).add(edge).mul(cueAt(tHit.mul(viewDir.z.negate())))
       const alpha = select(bone, float(1), clamp(max(opacity, edge), 0, 1)).toVar()
       gathered.addAssign(shaded.mul(alpha.mul(transmittance)))
       transmittance.mulAssign(alpha.oneMinus())

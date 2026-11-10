@@ -18,6 +18,7 @@ import {
 import type { ViewOptions } from '../options.ts'
 import type { Triple } from '../volume/format.ts'
 import type { Level } from '../volume/levels.ts'
+import { depthShade } from './shading.ts'
 
 // The cell table: one RGBA texel per cell of a level, in splat order, which the splats' colour node reads by the cell's
 // index, carried in the splat's own colour bytes. Those bytes are copied into the splat's storage when it's built and
@@ -96,8 +97,8 @@ const cellIndex = int(dot(round(splatColor.rgb.mul(fullByte)), vec3(1, byteRange
 
 // The splats' colour node, which replaces three's own: its Gaussian falloff, out to two standard deviations as three
 // cuts it, in the cell's colour from the table, decoded from sRGB to the linear colour the renderer works in, so that
-// the output's encoding gives back the photographs' bytes. A cut cell's fragments are discarded rather than blended in
-// at no alpha
+// the output's encoding gives back the photographs' bytes, and darkened by the depth cue. A cut cell's fragments are
+// discarded rather than blended in at no alpha
 export function cellColor(table: CellTable) {
   const texels = textureLoad(table.texture)
   return Fn(() => {
@@ -112,6 +113,6 @@ export function cellColor(table: CellTable) {
       Discard()
     })
     const rgb = colorSpaceToWorking(texel, SRGBColorSpace).rgb
-    return vec4(rgb, exp(r2.mul(-0.5)).mul(splatColor.a).mul(texel.a))
+    return vec4(rgb.mul(depthShade), exp(r2.mul(-0.5)).mul(splatColor.a).mul(texel.a))
   })()
 }

@@ -234,6 +234,8 @@ export const viewOptions = {
   sagittal: slider({ folder: 'Cuts', label: 'Sagittal', default: 0, min: 0, max: 1, step: hundredths, shownFor: every }),
   // The section through the body shown on each of the surface's cuts
   caps: toggle({ folder: 'Cuts', label: 'Caps', default: true, shownFor: surface }),
+  // How far the far side of the body darkens, from none at 0 to black at 1
+  depthCue: slider({ folder: 'Scene', label: 'Depth cue', default: 0, min: 0, max: 1, step: hundredths, shownFor: every }),
 }
 
 // Each option's value, of the type its entry's default has: a slider's is any number, and a choice's one of its values
@@ -275,4 +277,5 @@ export const defaultOptions: ViewOptions = {
   coronal: viewOptions.coronal.default,
   sagittal: viewOptions.sagittal.default,
   caps: viewOptions.caps.default,
+  depthCue: viewOptions.depthCue.default,
 }
