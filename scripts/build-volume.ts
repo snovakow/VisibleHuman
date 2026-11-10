@@ -39,11 +39,17 @@ import { blockGains, boundaryRatio, deadBand, maxGain, minGain, type BoundaryWin
 import { densityFromColor, densityFromCt } from '../src/volume/density.ts'
 import { bodyCoverage, cellIndex, countBody, readVolume, writeVolume, type Triple, type Volume } from '../src/volume/format.ts'
 import {
-  dipWindow,
+  dipWindowMm,
   enclosedCells,
+  filesSpanning,
   fillMissingLayers,
+  frostedReason,
+  frostReachMm,
+  frostReferenceMm,
+  frostSide,
   isBodyCell,
   isBodyPixel,
+  isThinLayer,
   largestPiece,
   missingReason,
   type MissingReason,
@@ -170,8 +176,9 @@ interface WholeSums {
   blue: Uint32Array
 }
 
-// One slice's sums: for each cell, its body pixels' channels and their count; and the slice's body pixels in all.
-// Where the body fills what it encloses, every pixel's channels too, which is the colour a filled cell takes.
+// One slice's sums: for each cell, its body pixels' channels and their count; and the slice's body pixels in all, with
+// their red and blue summed, which tell a slice under frost. Where the body fills what it encloses, every pixel's
+// channels too, which is the colour a filled cell takes.
 // The slice's pixels aren't kept, only these. The stride through the pixels is the image's channel count
 function sliceSums(frame: Frame, position: number, image: RawImage, body: Body, field: Field) {
   const { layerCells, cellColumn, cellRowStart } = field
@@ -191,6 +198,8 @@ function sliceSums(frame: Frame, position: number, image: RawImage, body: Body, 
   const rowsEnd = body.height - (inset.bottom ?? 0)
   const { data, channels } = image
   let total = 0
+  let totalRed = 0
+  let totalBlue = 0
   for (let y = 0; y < body.height; y++) {
     const rowStart = cellRowStart[y]
     const inRows = y >= firstRow && y < rowsEnd
@@ -211,9 +220,11 @@ function sliceSums(frame: Frame, position: number, image: RawImage, body: Body, 
       blue[cell] += b
       bodyPixels[cell]++
       total++
+      totalRed += r
+      totalBlue += b
     }
   }
-  return { frame, position, red, green, blue, body: bodyPixels, whole, total, unread: null as Unread | null }
+  return { frame, position, red, green, blue, body: bodyPixels, whole, total, totalRed, totalBlue, unread: null as Unread | null }
 }
 type SliceSums = ReturnType<typeof sliceSums>
 
@@ -231,6 +242,8 @@ const emptySums = (frame: Frame, position: number, field: Field, unread: Unread)
   body: new Uint16Array(field.layerCells),
   whole: null,
   total: 0,
+  totalRed: 0,
+  totalBlue: 0,
 })
 
 // A slice's pixels, read from its file in the data root, or why it wasn't read: a file the body lists as absent isn't
@@ -266,11 +279,14 @@ async function readFrame(frame: Frame, position: number, body: Body, field: Fiel
 // The files that are read as missing when they can't be decoded, rather than stopping the build
 const unreadableOf = (body: Body) => new Set([...body.blankFiles, ...body.emptyFiles])
 
-// The window either side of a boundary between cryo blocks that its step is measured on: this many slices kept
-// before the boundary, and as many after it, past the first few kept after it, which the frost a block starts with
-// still tints (slices 2021 to 2024 of the male, after the four its frost leaves short)
-const gainWindow = 8
-const frostSkip = 4
+// The window either side of a boundary between cryo blocks that its step is measured on: the slices kept over this
+// many millimetres before the boundary, and as many after it, past those kept over the first few millimetres after
+// it, which the frost a block starts with still tints (slices 2021 to 2024 of the male, after the four its frost
+// leaves short; the female's 1497c to 1499b). Counted in millimetres, as the short rule's window is, so the windows
+// span as much of every body; kept here means kept by the blank and short rules, the frosted slices after a boundary
+// lying within the skip
+const gainWindowMm = 8
+const frostSkipMm = 4
 // Gains are recorded to this many decimals, and applied as recorded
 const gainDecimals = 4
 // A window whose strip readings range over more than this share of their mean is suspect: read on its white patch,
@@ -301,6 +317,7 @@ function windowSums(field: Field) {
 }
 type WindowSums = ReturnType<typeof windowSums>
 
+const unitTriple: Triple = [1, 1, 1]
 const luminanceOf = ([r, g, b]: Triple) => 0.299 * r + 0.587 * g + 0.114 * b
 const meanTriple = (values: readonly Triple[]): Triple => {
   const mean = (c: number) => values.reduce((sum, value) => sum + value[c], 0) / values.length
@@ -313,8 +330,8 @@ const meanTriple = (values: readonly Triple[]): Triple => {
 // The body reads everything that changed: its colour over the cells that are body in both windows, in pieces large
 // enough to be body, so both sides are the same stretch of it, since the tags and the cards pass the body rule too
 // and come and go from block to block (the male's legs start beside a card of coloured patches, 2436 to 2443). A slice
-// is kept or missing by the same rule as the build's (segment.ts), judged among the body's slices whatever --from and
-// --to say, so a range takes the gains the whole body does; only the boundaries before the range's last block are
+// is kept or missing by the build's blank and short rules (segment.ts), judged among the body's slices whatever --from
+// and --to say, so a range takes the gains the whole body does; only the boundaries before the range's last block are
 // measured. Prints both, per boundary, and the gains each would give
 async function measureBlocks(body: Body, level: Level, field: Field, to: number, root: string, match: Match | null): Promise<BlockGains> {
   const blocks = body.cryoBlocks.filter(([first]) => first <= to)
@@ -324,6 +341,9 @@ async function measureBlocks(body: Body, level: Level, field: Field, to: number,
   const frames = framesOf(body, 0, lastFrame(body))
   const blanks = unreadableOf(body)
   const { layerCells, cellPixels } = field
+  const dipWindow = filesSpanning(body.shortWindowMm ?? dipWindowMm, body.sliceSpacing)
+  const gainWindow = filesSpanning(gainWindowMm, body.sliceSpacing)
+  const frostSkip = filesSpanning(frostSkipMm, body.sliceSpacing)
   // Every pixel each slice read has that the rule passes, which is what judges it kept or missing
   const totals = new Map<number, Promise<number>>()
   let decoded = 0
@@ -351,7 +371,7 @@ async function measureBlocks(body: Body, level: Level, field: Field, to: number,
     return found
   }
   const isKept = async (position: number) =>
-    missingReason(await totalAt(position), await nonBlank(position - 1, -1), await nonBlank(position + 1, 1)) === null
+    missingReason(await totalAt(position), await nonBlank(position - 1, -1), await nonBlank(position + 1, 1), dipWindow) === null
   const positionOf = (slice: number) => frames.findIndex((frame) => frame.slice === slice)
   const lastPositionOf = (slice: number) => frames.findLastIndex((frame) => frame.slice === slice)
 
@@ -391,7 +411,12 @@ async function measureBlocks(body: Body, level: Level, field: Field, to: number,
         else missed.push(batch[m])
       })
     }
-    if (strips.length === 0) throw new Error(`No grey strip found in ${positions.map((p) => frames[p].name).join(', ')}`)
+    // A window with no strip in it has nothing to read the exposure by: the female's strip is out of frame from 1503a
+    // on, which the window after her first boundary reaches once it spans 8 mm of her slices
+    if (strips.length === 0) {
+      if (match === 'card') throw new Error(`No grey strip found in ${positions.map((p) => frames[p].name).join(', ')}`)
+      return { sums, card: null }
+    }
     const reference = strips.map((strip) => strip.patches[referencePatch])
     const luminances = reference.map(luminanceOf)
     const mean = luminances.reduce((a, b) => a + b, 0) / luminances.length
@@ -446,12 +471,19 @@ async function measureBlocks(body: Body, level: Level, field: Field, to: number,
     const after = await keptRun(start, lastPositionOf(blocks[n + 1][1]), 1, frostSkip)
     const sides = { before: await readWindow(before), after: await readWindow(after) }
     const cells = matched(sides.before.sums, sides.after.sums)
-    const cardWindow = { before: sides.before.card.reference, after: sides.after.card.reference }
+    // A boundary whose strip wasn't found on one side is read as no step by the strip, which only --match card would
+    // apply, and that stops the build where the strip is missing
+    const [beforeCard, afterCard] = [sides.before.card, sides.after.card]
+    const cardWindow = beforeCard && afterCard ? { before: beforeCard.reference, after: afterCard.reference } : { before: unitTriple, after: unitTriple }
     const bodyWindow = { before: meanOver(sides.before.sums, cells), after: meanOver(sides.after.sums, cells) }
     cardWindows.push(cardWindow)
     bodyWindows.push(bodyWindow)
     console.log(`  ${blocks[n][1]}/${blocks[n + 1][0]}: windows ${span(before)} and ${span(after)}`)
     for (const [side, { card }] of [['before', sides.before], ['after', sides.after]] as const) {
+      if (!card) {
+        console.log(`    strip ${side.padEnd(6)} not found in any slice of the window, so the strip reads no step here`)
+        continue
+      }
       const suspect = card.spread > suspectSpread ? `, past ${percent(suspectSpread)}: suspect` : ''
       const missed = card.missed.length > 0 ? `; no strip found in ${card.missed.map((p) => frames[p].name).join(', ')}` : ''
       console.log(
@@ -503,9 +535,10 @@ function gainOfSlice(gains: BlockGains, slice: number): Triple {
 // scaled to 255, the mean colour of its body pixels, each slice's scaled by its block's gain, and the density the
 // colour stand-in gives that mean as photographed, without the gain, so matching the blocks changes no density; and,
 // for a body that fills what it encloses, the mean colour of all its pixels, with the gain. Each
-// slice is decided once the dipWindow non-blank slices after it are read: a missing one adds nothing to its layer
-// (segment.ts). Memory holds the sums of the layer being built and of the slices waiting on that decision, never the
-// slices themselves
+// slice is decided once the non-blank slices within the short rule's window after it are read, and, for a body whose
+// blocks' faces are frosted, once the slices its frost is judged by are decided too: a missing one adds nothing to its
+// layer (segment.ts), and a layer left with too few slices is filled as a missing one. Memory holds the sums of the
+// layer being built and of the slices waiting on those decisions, never the slices themselves
 async function readLayers(
   body: Body,
   level: Level,
@@ -525,10 +558,30 @@ async function readLayers(
   const wholeColors = body.fillsEnclosed ? new Uint8Array(layerCells * layers * 3) : null
   // Channels whose mean the gain took past 255, held there
   let saturated = 0
-  // Each frame's body pixels, once read, by its position in frames
+  // Each frame's body pixels, once read, by its position in frames, their mean blue over red, and why it wasn't read
   const counts = new Int32Array(frames.length)
-  const missing: Record<MissingReason | Unread, number[]> = { blank: [], short: [], absent: [], undecodable: [] }
+  const blueOverRed = new Float64Array(frames.length)
+  const unread: (Unread | null)[] = Array.from({ length: frames.length }, () => null)
+  // Each frame's verdict by the blank and short rules, once the slices it's judged by are read: why it's missing, or
+  // null where it's kept; undefined until then
+  const verdicts: (MissingReason | Unread | null | undefined)[] = Array.from({ length: frames.length }, () => undefined)
+  const missing: Record<MissingReason | Unread, number[]> = { blank: [], short: [], frosted: [], absent: [], undecodable: [] }
   const missingLayers = Array.from({ length: layers }, () => false)
+  // The layers read as missing for keeping too few of their slices, each with its count kept and read
+  const thinLayers: { index: number; kept: number; slices: number }[] = []
+  const window = filesSpanning(body.shortWindowMm ?? dipWindowMm, body.sliceSpacing)
+  // The frost rule's reach and its references, in files, and the faces of the body's blocks within the slices read,
+  // each named by the position of the first file after it: the ends of the slices read aren't faces
+  const frost = body.frostedFaces
+    ? {
+        reach: filesSpanning(frostReachMm, body.sliceSpacing),
+        near: filesSpanning(frostReferenceMm[0], body.sliceSpacing),
+        far: filesSpanning(frostReferenceMm[1], body.sliceSpacing),
+        faces: body.cryoBlocks
+          .flatMap(([first, last]) => [first, last + 1].map((slice) => (slice - body.firstSlice) * body.naming.subSlices.length - frames[0].index))
+          .filter((face) => face > 0 && face < frames.length),
+      }
+    : null
   const blanks = unreadableOf(body)
   const pending: SliceSums[] = []
   let read = 0
@@ -538,6 +591,8 @@ async function readLayers(
   const layer = {
     index: 0,
     kept: 0,
+    // Its slices decided so far, kept or not
+    slices: 0,
     red: new Float64Array(layerCells),
     green: new Float64Array(layerCells),
     blue: new Float64Array(layerCells),
@@ -581,6 +636,10 @@ async function readLayers(
   const finishLayer = () => {
     const base = layer.index * layerCells
     missingLayers[layer.index] = layer.kept === 0
+    if (frost && layer.kept > 0 && isThinLayer(layer.kept, layer.slices)) {
+      missingLayers[layer.index] = true
+      thinLayers.push({ index: layer.index, kept: layer.kept, slices: layer.slices })
+    }
     for (let cell = 0; cell < layerCells; cell++) {
       const count = layer.body[cell]
       const pixels = layer.pixels[cell]
@@ -613,26 +672,71 @@ async function readLayers(
     }
     for (const sums of [layer.wholeRed, layer.wholeGreen, layer.wholeBlue]) sums.fill(0)
     layer.kept = 0
+    layer.slices = 0
     layer.index++
   }
 
-  // The body pixel counts of up to dipWindow non-blank slices read from start onwards, by step, nearest first
+  // The body pixel counts of up to the window's non-blank slices read from start onwards, by step, nearest first
   const nonBlank = (start: number, step: 1 | -1) => {
     const found: number[] = []
-    for (let position = start; position >= 0 && position < read && found.length < dipWindow; position += step) {
+    for (let position = start; position >= 0 && position < read && found.length < window; position += step) {
       if (counts[position] > 0) found.push(counts[position])
     }
     return found
   }
+  // A frame's verdict by the blank and short rules, once the window after it is read; a slice not read is missing for
+  // that reason, and listed by it rather than as blank
+  const verdictAt = (position: number) => {
+    const known = verdicts[position]
+    if (known !== undefined || position >= read) return known
+    const after = nonBlank(position + 1, 1)
+    if (after.length < window && read < frames.length) return undefined
+    const verdict = unread[position] ?? missingReason(counts[position], nonBlank(position - 1, -1), after, window)
+    verdicts[position] = verdict
+    return verdict
+  }
+  const isGap = (verdict: MissingReason | Unread | null | undefined) => verdict === 'blank' || verdict === 'short'
+  // Whether a kept slice is frosted, by the faces within reach of it, a block's or a run of blank or short slices',
+  // and the kept slices on the side away from the nearest; undefined until the slices it's judged by are decided
+  const frostAt = (position: number): MissingReason | null | undefined => {
+    if (!frost) return null
+    const { reach, near, far } = frost
+    const faces = [...frost.faces]
+    for (let q = position - 1; q >= Math.max(0, position - reach); q--) {
+      if (!isGap(verdictAt(q))) continue
+      faces.push(q + 1)
+      break
+    }
+    for (let q = position + 1; q <= Math.min(frames.length - 1, position + reach); q++) {
+      const verdict = verdictAt(q)
+      if (verdict === undefined) return undefined
+      if (!isGap(verdict)) continue
+      faces.push(q)
+      break
+    }
+    const side = frostSide(position, faces, reach)
+    if (side === null) return null
+    // Judged only where all of its references lie within the slices read, as a slice is judged short
+    if (position + side * far < 0 || position + side * far >= frames.length) return null
+    const references: number[] = []
+    for (let distance = near; distance <= far; distance++) {
+      const q = position + side * distance
+      const verdict = verdictAt(q)
+      if (verdict === undefined) return undefined
+      if (verdict === null) references.push(blueOverRed[q])
+    }
+    return frostedReason(blueOverRed[position], references)
+  }
   const decide = () => {
     while (pending.length > 0) {
       const sums = pending[0]
-      const after = nonBlank(sums.position + 1, 1)
-      if (after.length < dipWindow && read < frames.length) return
+      const verdict = verdictAt(sums.position)
+      if (verdict === undefined) return
+      const reason = verdict ?? frostAt(sums.position)
+      if (reason === undefined) return
       pending.shift()
       while (layerOf(sums.frame.index) - firstLayer > layer.index) finishLayer()
-      // A slice not read is missing for that reason, and listed by it rather than as blank
-      const reason = sums.unread ?? missingReason(sums.total, nonBlank(sums.position - 1, -1), after)
+      layer.slices++
       if (reason) missing[reason].push(sums.frame.index)
       else keep(sums)
     }
@@ -644,7 +748,11 @@ async function readLayers(
     const last = Math.min(frames.length - 1, first + batchSize - 1, layerEnd)
     const positions = Array.from({ length: last - first + 1 }, (_, n) => first + n)
     const sums = await Promise.all(positions.map((p) => readFrame(frames[p], p, body, field, root, blanks)))
-    for (const each of sums) counts[each.position] = each.total
+    for (const each of sums) {
+      counts[each.position] = each.total
+      blueOverRed[each.position] = each.totalRed > 0 ? each.totalBlue / each.totalRed : 0
+      unread[each.position] = each.unread
+    }
     pending.push(...sums)
     read = last + 1
     decide()
@@ -653,8 +761,8 @@ async function readLayers(
   while (layer.index < layers) finishLayer()
 
   if (saturated > 0) console.log(`Cell channels the block gains took past 255, held there: ${saturated.toLocaleString('en')}`)
-  // A layer made only of missing slices is filled from its nearest read layers, so the body stays one piece, and its
-  // colour blended between them
+  // A layer made only of missing slices, or keeping too few of its slices, is filled from its nearest read layers, so
+  // the body stays one piece, and its colour blended between them
   const layerText = (index: number) => {
     const first = Math.max(frames[0].index, (firstLayer + index) * level.slices)
     const last = Math.min(frames[frames.length - 1].index, (firstLayer + index + 1) * level.slices - 1)
@@ -662,6 +770,7 @@ async function readLayers(
   }
   if (missing.blank.length > 0) console.log(`Blank slices, read as missing: ${runsText(body, missing.blank)}`)
   if (missing.short.length > 0) console.log(`Short slices, read as missing: ${runsText(body, missing.short)}`)
+  if (missing.frosted.length > 0) console.log(`Frosted slices, read as missing: ${runsText(body, missing.frosted)}`)
   if (missing.absent.length > 0) console.log(`Slices the set lacks, read as missing: ${runsText(body, missing.absent)}`)
   if (missing.undecodable.length > 0) {
     console.log(`Slices that can't be decoded, read as missing: ${runsText(body, missing.undecodable)}`)
@@ -671,10 +780,12 @@ async function readLayers(
   const sources = fillMissingLayers(planes, layerCells, missingLayers, { colors, body: bodyCells })
   sources.forEach((source, index) => {
     if (source === index) return
+    const thin = thinLayers.find((each) => each.index === index)
+    const lacks = thin ? `keeps only ${thin.kept} of its ${thin.slices} slices` : 'has no slice'
     console.log(
       source < 0
-        ? `Layer ${layerText(index)} has no slice and nothing to fill it from`
-        : `Layer ${layerText(index)} has no slice, so its cells are filled from layer ${layerText(source)}`,
+        ? `Layer ${layerText(index)} ${lacks} and nothing to fill it from`
+        : `Layer ${layerText(index)} ${lacks}, so its cells are filled from layer ${layerText(source)}`,
     )
   })
   return { firstLayer, layers, body: bodyCells, share, colors, colorDensity, wholeColors }

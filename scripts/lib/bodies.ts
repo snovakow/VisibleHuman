@@ -85,6 +85,12 @@ export interface Body {
   // How many pixels in from each side of a slice never count as body, where the frame's edge can't be told from
   // tissue; they still count among their cells' pixels, so a cell wholly inside the strip is never body
   frameInset?: { left?: number; top?: number; right?: number; bottom?: number }
+  // The faces of its frozen blocks lie under frost, which the pixel rule reads as body: a slice near a face, or near a
+  // run of blank or short slices, whose body is bluer than the slices past the frost's reach is read as missing, and
+  // a layer keeping fewer than half its slices is filled from its neighbours (segment.ts)
+  frostedFaces?: true
+  // The short rule's window in millimetres, where the body keeps one of its own rather than segment.ts's 8 mm
+  shortWindowMm?: number
   // A pixel rule of the body's own, where the male's blue-gel rule doesn't fit its background
   segmentRule?: (r: number, g: number, b: number) => boolean
   // The cells its body encloses are filled in as body, in the colour of all their pixels: for a body whose pixel rule
@@ -168,7 +174,9 @@ export function frameText(body: Body, index: number) {
 
 // The male: 1,878 slices a millimetre apart, 2048 × 1216 pixels of 0.33 mm, photographed from four frozen blocks.
 // Slices 2424 to 2435 are black in the NLM's set, between the thighs' block and the legs'. Columns run from the body's
-// right to its left, rows from its back to its front, and slices down from the head (read from slice 1500)
+// right to its left, rows from its back to its front, and slices down from the head (read from slice 1500). The
+// faces where its first three blocks meet are frosted: 1505 and 2017 to 2020 read as short, and 1506 and 2016 as
+// frosted
 const male: Body = {
   id: 'male',
   label: 'Male',
@@ -196,6 +204,7 @@ const male: Body = {
   blankFiles: range(2424, 2435).map((slice) => `a_vm${slice}.png`),
   emptyFiles: [],
   absentFiles: [],
+  frostedFaces: true,
   // The frozen CT, scanned before the sectioning and numbered like the photographs: 1,877 slices, 1006 to 2882
   ct: {
     set: 'male-ct',
@@ -217,7 +226,10 @@ const femaleRun = (from: string, to: string) => {
 // a millimetre, which is why a number's three photographs span a millimetre, not 0.99. Four frozen blocks, each
 // started on a new run of tag numbers and ended by black frames: 1492b to 1497b, 1977c to 1978b, and 2329c to 2330a
 // beside the three names the set lacks. 2100a and 2100b are listed with no bytes on the NLM's server, in the middle of
-// a block. The axes are the male's: her previews face the camera head up with the profile facing right
+// a block. The axes are the male's: her previews face the camera head up with the profile facing right. Frost lies
+// on her blocks' faces as on the male's, but deeper, about 4 mm, a dozen photographs, either side of the black frames:
+// the gel rule reads it as body, so her body pixels thin and turn blue there, which tinted the layers beside each run
+// of black frames cyan before the frosted slices were read as missing
 const female: Body = {
   id: 'female',
   label: 'Female',
@@ -245,6 +257,7 @@ const female: Body = {
   blankFiles: [...femaleRun('1492b', '1497b'), ...femaleRun('1977c', '1978b'), 'avf2329c.png', 'avf2330a.png'],
   emptyFiles: ['avf2100a.png', 'avf2100b.png'],
   absentFiles: ['avf2328c.png', 'avf2329a.png', 'avf2329b.png', 'avf2730c.png'],
+  frostedFaces: true,
   // The CT taken before the body was frozen, in air: 1,734 slices, 1001 to 2734, a millimetre apart
   ct: {
     set: 'female-ct',
@@ -272,6 +285,11 @@ const female: Body = {
 // enamel 1065 to 1365, where cortical bone is 1200 to 1900 and enamel 2500 and over; soft tissue reads 0 to 10. A
 // line through the air and the fat gives 2.01 times the file's value less 9, so the values are doubled
 const headCatHounsfieldScale = 2
+
+// The head's short rule looks eight slices either way, 1.2 mm, the window its pixel rule was tuned and its file built
+// with. Its ice frosts over 500 to 508, and the builder reads 502 to 507 short; over 8 mm, 54 of its slices, it reads
+// 508 short too, which would change its file
+const headShortWindowMm = 8 * 0.147
 
 const head: Body = {
   id: 'head',
@@ -304,6 +322,7 @@ const head: Body = {
   frameInset: { right: 32 },
   segmentRule: isTissueOnIce,
   fillsEnclosed: true,
+  shortWindowMm: headShortWindowMm,
   // The CAT, 463 slices half a millimetre apart, and of the four MRI series the T2 at 512 × 512, 229 slices a
   // millimetre apart; both taken before the head was frozen
   scans: { ct: { set: 'head-cat-dicom', hounsfieldScale: headCatHounsfieldScale }, mri: { set: 'head-mri-dicom/T2_512' } },

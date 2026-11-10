@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { bodies, bodyOf, fileName, frameOf, framesOf, frameText, lastFrame, thumbnailName } from '../scripts/lib/bodies.ts'
-import { isTissueOnIce } from '../src/volume/segment.ts'
+import { filesSpanning, isTissueOnIce } from '../src/volume/segment.ts'
 
 // The volume script's bodies (scripts/lib/bodies.ts): the order a body's files are read in, the names it reads them
 // by, and the files its set lacks or holds empty. The page's reader of bodies.json is tested in bodies.test.ts
@@ -131,4 +131,15 @@ void test("the head's quirks are its own: its pixel rule, its fill, its tall fil
     assert.notEqual(body.ct, undefined)
   }
   assert.deepEqual(bodies.map((body) => body.id), ['male', 'female', 'head'])
+})
+
+void test("the male's and the female's blocks have frosted faces, read as missing, and the head's ice doesn't", () => {
+  assert.equal(male.frostedFaces, true)
+  assert.equal(female.frostedFaces, true)
+  // The head's pixel rule tells its frost from tissue, and its file is built as it was before the rule, its short rule
+  // looking eight of its slices either way, where the others look 8 mm
+  assert.equal(head.frostedFaces, undefined)
+  assert.equal(filesSpanning(head.shortWindowMm ?? 8, head.sliceSpacing), 8)
+  assert.equal(male.shortWindowMm, undefined)
+  assert.equal(female.shortWindowMm, undefined)
 })

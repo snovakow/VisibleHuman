@@ -51,23 +51,86 @@ export const isBodyCell = (bodyPixels: number, pixels: number) => bodyPixels > p
 // the thighs' block and the legs'; an all-dark slice has none either, since dark pixels aren't body.
 // A short slice has far fewer body pixels than the slices on either side of it, as the first slices of a block do
 // under a frosty cast that reads as gel (2017 to 2020). It's short when its count is under dipShare of the smaller of
-// two references: the largest count among the dipWindow nearest non-blank slices before it, and the same after it.
-// A slice within dipWindow slices of either end of the slices read, or of the body, has too few on that side to judge
-// it by, so it's never short: a taper isn't, and nor is the crown's second slice, 1002, which is a sixth smaller
-// than 1001 alone and was flagged when one slice was reference enough
-export const dipWindow = 8
+// two references: the largest count among the nearest non-blank slices within dipWindowMm before it, and the same
+// after it. The window is counted in millimetres, so that it reaches as far into every body: eight of the male's
+// slices, but 24 of the female's, a third of a millimetre apart, whose window of eight reached only 2.7 mm and took
+// slices under the same frost as the reference (her 1490a, at 319 thousand body pixels, was judged against 1498a at
+// 318 thousand, where the clear slices either side hold 690 to 830 thousand). A slice with fewer than the window's
+// slices on either side of it, within the slices read or the body, has too few on that side to judge it by, so it's
+// never short: a taper isn't, and nor is the crown's second slice, 1002, which is a sixth smaller than 1001 alone and
+// was flagged when one slice was reference enough. A body may keep a window of its own, as the head does
+export const dipWindowMm = 8
 export const dipShare = 0.85
 
-export type MissingReason = 'blank' | 'short'
+// How many of a body's files, sliceSpacing apart, span this many millimetres
+export const filesSpanning = (mm: number, sliceSpacing: number) => Math.round(mm / sliceSpacing)
 
-// Why a slice with this many body pixels is missing, or null if it isn't. Before and after hold the body pixel counts
-// of up to dipWindow non-blank slices on each side, nearest first
-export function missingReason(body: number, before: readonly number[], after: readonly number[]): MissingReason | null {
+export type MissingReason = 'blank' | 'short' | 'frosted'
+
+// Why a slice with this many body pixels is missing by the blank and short rules, or null if it isn't. Before and
+// after hold the body pixel counts of up to window non-blank slices on each side, nearest first, the window being
+// dipWindowMm in the body's files
+export function missingReason(
+  body: number,
+  before: readonly number[],
+  after: readonly number[],
+  window: number,
+): MissingReason | null {
   if (body === 0) return 'blank'
-  if (before.length < dipWindow || after.length < dipWindow) return null
+  if (before.length < window || after.length < window) return null
   const reference = Math.min(Math.max(...before), Math.max(...after))
   return body < reference * dipShare ? 'short' : null
 }
+
+// Frost at a block's faces. The first and last slices of a frozen block can lie under frost, bright, green and blue,
+// which the gel rule reads as body: as it takes the gel a slice's body pixels fall, which the short rule sees, and as
+// it covers the tissue their colour turns blue, which it doesn't. A slice within frostReachMm of a face of its block,
+// or of a run of blank or short slices, is frosted when its body pixels' mean blue over red is more than frostShare
+// above the median of the same ratio over the kept slices frostReferenceMm from it on the side away from that face,
+// which lie past the frost's reach. Measured on every slice of both bodies: the frost the short rule leaves raises the
+// ratio by 10.4 % or more (the female's 1499b and 1980c, 3 mm into their blocks, and up to 37 % at 1979b; the male's
+// 1506 by 12.3 % and 2016 by 12.1 %), and fades over 4 mm or less, the female's next slices rising 8.6 to 9.9 %. The
+// share sits between that and what tints a face's slices that isn't frost: the colour card photographed beside the
+// male's 2436 to 2443, whose patches pass the gel rule, raises the ratio of 2436 to 2442 by 8.1 to 9.3 % while the
+// legs beside it read as the slices after it do; at 8 % those seven slices of the legs were read as missing. Away
+// from the faces the ratio drifts with the anatomy by as much (a 4 mm layer by up to 10.7 % over the male's 1363 to
+// 1371 against the medians 8 to 16 mm either side), which is why only slices near a face are judged
+export const frostReachMm = 8
+export const frostReferenceMm = [8, 16] as const
+export const frostShare = 0.1
+
+// The side of a slice its frost is judged from: 1 for the slices after it, where the nearest face within reach lies
+// before it, -1 for those before it, where that face lies after it, or null where no face lies within reach, when it
+// isn't judged. Positions count files; a face is named by the position of the first file after it, so it lies half a
+// file before that file, and reach is frostReachMm in files
+export function frostSide(position: number, faces: readonly number[], reach: number): 1 | -1 | null {
+  let nearest = Infinity
+  let side: 1 | -1 | null = null
+  for (const face of faces) {
+    const distance = Math.abs(position - (face - 0.5))
+    if (distance >= reach || distance >= nearest) continue
+    nearest = distance
+    side = face <= position ? 1 : -1
+  }
+  return side
+}
+
+// Whether a slice whose body pixels' mean blue over red is blueOverRed is frosted, against the same ratio of the kept
+// slices it's judged by; null where there are none to judge it by
+export function frostedReason(blueOverRed: number, references: readonly number[]): MissingReason | null {
+  if (references.length === 0) return null
+  const sorted = references.toSorted((a, b) => a - b)
+  const middle = sorted.length >> 1
+  const median = sorted.length % 2 === 1 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2
+  return blueOverRed > median * (1 + frostShare) ? 'frosted' : null
+}
+
+// A layer that keeps fewer than this share of its slices is filled as a missing one, from its neighbours: the frosted
+// slices beside a face would otherwise leave layers made of one or two slices, whose cells hold too few pixels to
+// average and whose coverage thins where the frost took the gel's place
+export const thinShare = 0.5
+
+export const isThinLayer = (kept: number, slices: number) => kept < slices * thinShare
 
 // The planes a gap's colour is blended in: the colour, one of the planes filled, and the body decision it's blended
 // by, a byte per cell, non-zero for body
@@ -76,9 +139,10 @@ export interface GapBlend {
   body: Uint8Array
 }
 
-// Fills each layer made only of missing slices from its nearest read layers, so the body stays one piece across the
-// gap: in a run of missing layers, the upper half copies the read layer above it and the lower half the one below
-// (the middle one, in an odd run, from above). A run at either end of the grid copies the one read layer beside it.
+// Fills each layer marked missing, one made only of missing slices or keeping too few, from its nearest read layers,
+// so the body stays one piece across the gap: in a run of missing layers, the upper half copies the read layer above
+// it and the lower half the one below (the middle one, in an odd run, from above). A run at either end of the grid
+// copies the one read layer beside it.
 // Each plane holds the whole grid, layer after layer of layerCells cells, with any whole number of bytes per cell (one
 // for a cell's body or coverage, three for its colour), and every plane is filled the same way, except the colour
 // where blend names it: in a run between two read layers, the layer a fraction t of the way from the one above to the

@@ -2,13 +2,19 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
   enclosedCells,
+  filesSpanning,
   fillMissingLayers,
+  frostedReason,
+  frostShare,
+  frostSide,
   iceSpreadShare,
   isBodyCell,
   isBodyPixel,
+  isThinLayer,
   isTissueOnIce,
   largestPiece,
   missingReason,
+  thinShare,
 } from '../src/volume/segment.ts'
 
 // The body rule, on colours sampled from slice 1500; the missing slices, on counts measured around 2017 to 2020; and the
@@ -105,8 +111,8 @@ void test('the piece-keeping finds nothing in an empty grid', () => {
 })
 
 void test('a slice with no body pixels is blank', () => {
-  assert.equal(missingReason(0, [808_496], [742_292]), 'blank')
-  assert.equal(missingReason(0, [], []), 'blank')
+  assert.equal(missingReason(0, [808_496], [742_292], 8), 'blank')
+  assert.equal(missingReason(0, [], [], 8), 'blank')
 })
 
 void test('a slice far short of the slices on both sides is short', () => {
@@ -114,9 +120,9 @@ void test('a slice far short of the slices on both sides is short', () => {
   const before = [808_496, 811_062, 812_000, 813_000, 815_000, 816_000, 818_000, 820_000]
   const after = [721_827, 742_292, 740_000, 738_000, 736_000, 734_000, 732_000, 730_000]
   // 2017 to 2020, under their frosty cast; the reference is the smaller side's largest, 742,292
-  for (const body of [59_659, 150_138, 316_259, 585_625]) assert.equal(missingReason(body, before, after), 'short')
+  for (const body of [59_659, 150_138, 316_259, 585_625]) assert.equal(missingReason(body, before, after, 8), 'short')
   // 2021, nearly clear of it
-  assert.equal(missingReason(721_827, before, after), null)
+  assert.equal(missingReason(721_827, before, after, 8), null)
 })
 
 void test('a slice with fewer than eight counts on one side is never short', () => {
@@ -129,21 +135,111 @@ void test('a slice with fewer than eight counts on one side is never short', () 
   // 1002 has one slice before it, and 1008 only seven, so neither is judged, whatever the slices after them say
   const second = windows(1)
   assert.equal(second.before.length, 1)
-  assert.equal(missingReason(crown[1], second.before, second.after), null)
+  assert.equal(missingReason(crown[1], second.before, second.after, 8), null)
   const eighth = windows(7)
   assert.equal(eighth.before.length, 7)
-  assert.equal(missingReason(30_000, eighth.before, eighth.after), null)
+  assert.equal(missingReason(30_000, eighth.before, eighth.after, 8), null)
   // With eight on each side, the same count would be short
-  assert.equal(missingReason(30_000, crown.slice(0, 8).reverse(), crown.slice(8, 12).concat([80_000, 80_000, 80_000, 80_000])), 'short')
+  assert.equal(missingReason(30_000, crown.slice(0, 8).reverse(), crown.slice(8, 12).concat([80_000, 80_000, 80_000, 80_000]), 8), 'short')
 })
 
 void test('a taper is never short, since one side has no larger slice or no slice at all', () => {
   // The soles: the body shrinks to the last slice read
-  assert.equal(missingReason(20_000, [180_000, 200_000], []), null)
+  assert.equal(missingReason(20_000, [180_000, 200_000], [], 8), null)
   // The crown: the first slice read, before the head widens
-  assert.equal(missingReason(5_000, [], [30_000, 60_000]), null)
+  assert.equal(missingReason(5_000, [], [30_000, 60_000], 8), null)
   // A steady shrink: each slice is about as large as the next one
-  assert.equal(missingReason(500_000, [520_000, 540_000], [490_000, 480_000]), null)
+  assert.equal(missingReason(500_000, [520_000, 540_000], [490_000, 480_000], 8), null)
+})
+
+// The female's body pixel counts from 1484a to 1502c, in thousands, a, b and c in turn: clear to 1488c, thinning
+// under the frost from 1489a, the black frames 1492b to 1497b, then the frost thinning out again to 1500a. Some are
+// as measured (2026-11-10), the others between them about so
+const femaleFace = [
+  ...Array.from({ length: 15 }, () => 830), // 1484a to 1488c
+  782, 691, 621, // 1489
+  319, 180, 110, // 1490
+  70, 50, 40, // 1491
+  30, 0, 0, // 1492, its b and c black
+  ...Array.from({ length: 12 }, () => 0), // 1493 to 1496
+  0, 0, 230, // 1497, its a and b black
+  318, 444, 608, // 1498
+  689, 724, 750, // 1499
+  ...Array.from({ length: 9 }, () => 760), // 1500a to 1502c
+].map((thousands) => thousands * 1000)
+// The non-blank counts within a window of so many files either side of the file at a position, nearest first
+const windowsAt = (counts: readonly number[], position: number, window: number) => {
+  const take = (from: number, step: number) => {
+    const found: number[] = []
+    for (let p = from; p >= 0 && p < counts.length && found.length < window; p += step) if (counts[p] > 0) found.push(counts[p])
+    return found
+  }
+  return { before: take(position - 1, -1), after: take(position + 1, 1) }
+}
+
+void test("the short rule's window spans 8 mm of every body, in its own files", () => {
+  assert.equal(filesSpanning(8, 1), 8)
+  assert.equal(filesSpanning(8, 1 / 3), 24)
+  assert.equal(filesSpanning(8, 0.147), 54)
+})
+
+void test("over 8 mm of the female's slices, 1490a is short against 1499 to 1502, where eight files reach only frosted ones", () => {
+  // Her window of 24 files reaches back past 1484 and on past the black frames to 1503; the eight files 2.7 mm long
+  // reach 1498a after it, which the frost has thinned as much as 1490a
+  const counts = [...Array.from({ length: 12 }, () => 830_000), ...femaleFace, ...Array.from({ length: 6 }, () => 760_000)]
+  const at = 12 + 18 // 1490a
+  const wide = windowsAt(counts, at, 24)
+  assert.equal(missingReason(counts[at], wide.before, wide.after, 24), 'short')
+  const narrow = windowsAt(counts, at, 8)
+  assert.equal(Math.max(...narrow.after), 318_000)
+  assert.equal(missingReason(counts[at], narrow.before, narrow.after, 8), null)
+  // 1489c, at 621 thousand, is short only against the wider window too, and 1488c, clear of the frost, is kept by both
+  const frosty = windowsAt(counts, at - 1, 24)
+  assert.equal(missingReason(counts[at - 1], frosty.before, frosty.after, 24), 'short')
+  const clear = windowsAt(counts, at - 4, 24)
+  assert.equal(missingReason(counts[at - 4], clear.before, clear.after, 24), null)
+})
+
+void test('the frost rule flags a slice 11 % bluer than its reference and not one 9 % or 6 % bluer', () => {
+  // The male's 1506 rises 12.3 % and the female's 1499b 10.4 %; the colour card beside the male's 2436 to 2442 up to 9.3 %
+  const references = [0.55, 0.56, 0.54, 0.555, 0.545]
+  assert.equal(frostedReason(0.55 * 1.11, references), 'frosted')
+  assert.equal(frostedReason(0.55 * 1.09, references), null)
+  assert.equal(frostedReason(0.55 * 1.06, references), null)
+  // The reference is the median, so one frosted slice among the references doesn't move it
+  assert.equal(frostedReason(0.55 * 1.11, [...references, 0.8]), 'frosted')
+  // Exactly the share above isn't more than it
+  assert.equal(frostedReason(0.5 * (1 + frostShare), [0.5]), null)
+  assert.equal(frostedReason(0.9, []), null)
+})
+
+void test('a slice is judged for frost only within 8 mm of a face, from the side away from the nearest', () => {
+  // The female's files, a third of a millimetre apart: 8 mm is 24 of them. A face at 100 lies between files 99 and 100
+  const reach = filesSpanning(8, 1 / 3)
+  assert.equal(frostSide(100, [100], reach), 1)
+  // 23 files after it is 7.8 mm, judged by the slices after it; 24 after it is 8.2 mm, not judged
+  assert.equal(frostSide(123, [100], reach), 1)
+  assert.equal(frostSide(124, [100], reach), null)
+  // Before it, 24 files is 7.8 mm, judged by the slices before it, and 25 isn't
+  assert.equal(frostSide(76, [100], reach), -1)
+  assert.equal(frostSide(75, [100], reach), null)
+  // 12 mm from the nearest of two faces, 36 files, is never judged
+  assert.equal(frostSide(136, [100, 172], reach), null)
+  // Between two faces, the nearer decides: 4 files after one and 8 before the other is judged from the slices after
+  assert.equal(frostSide(104, [100, 113], reach), 1)
+  assert.equal(frostSide(104, [], reach), null)
+  // The male's, a millimetre apart: 8 files a side
+  assert.equal(frostSide(1007, [1000], filesSpanning(8, 1)), 1)
+  assert.equal(frostSide(1008, [1000], filesSpanning(8, 1)), null)
+})
+
+void test('a layer keeping fewer than half its slices is thin: five of twelve, not six', () => {
+  assert.equal(thinShare, 0.5)
+  assert.equal(isThinLayer(5, 12), true)
+  assert.equal(isThinLayer(6, 12), false)
+  // A layer cut short by the end of the slices read counts the slices it has
+  assert.equal(isThinLayer(5, 6), false)
+  assert.equal(isThinLayer(1, 4), true)
 })
 
 // A grid of layers of two cells, each layer's cells set and coloured by its number, and empty where missing
