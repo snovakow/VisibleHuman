@@ -2,7 +2,7 @@
 
 **TypeScript + React + three.js + React Three Fiber + Vite + WebGPU**
 
-VisibleHuman renders the [Visible Human Project](https://www.nlm.nih.gov/research/visible/visible_human.html)'s male body in the browser as Gaussian splats. The project photographed a body in cross-sections a millimetre apart, from the top of the head to the soles of the feet. Stacked back up, those photographs make a volume in true colour, and each small block of it becomes a soft blob of that colour at its place in the body. The body can then be turned in 3D and cut open along any of the three anatomical planes. The splats are drawn by three.js's own WebGPU-based Gaussian splat rendering.
+VisibleHuman renders the [Visible Human Project](https://www.nlm.nih.gov/research/visible/visible_human.html)'s male and female bodies in the browser as Gaussian splats. The project photographed each body in cross-sections a millimetre apart, the female's three times as finely, from the top of the head to the soles of the feet. Stacked back up, those photographs make a volume in true colour, and each small block of it becomes a soft blob of that colour at its place in the body. The body can then be turned in 3D and cut open along any of the three anatomical planes. The splats are drawn by three.js's own WebGPU-based Gaussian splat rendering.
 
 **Live demo: [snovakow.com/visiblehuman](https://snovakow.com/visiblehuman/)**
 
@@ -12,7 +12,7 @@ The page opens on the whole body, seen from the front. Drag to turn it, scroll o
 
 The panel at the top right groups its controls in folders:
 
-- **Body** chooses the body, so far only the male, and **Level** the file it's drawn from: 4 mm, which it opens on, or 2 mm, twice as fine along each axis and a larger download. Where the site doesn't have a level's file, the panel marks it not built and the body stays as it was.
+- **Body** chooses the body, the male or the female, and **Level** the file it's drawn from: 4 mm, which it opens on, or 2 mm, twice as fine along each axis and a larger download. Where the site doesn't have a level's file, the panel marks it not built and the body stays as it was. Adding `?body=female` to the address opens the page on the female, and the address follows the body chosen, so a link opens on the body it was copied from.
 - **Style** chooses how the body is drawn: splats, volume, raytrace or surface. The volume follows a ray from the eye through each pixel and samples the body in small steps along it; the raytrace follows the same ray until it reaches the skin or the bone, and lights the surface it finds there; the surface builds the skin and the bone as meshes, in a background thread, and lights them as solid objects. Adding `?style=` and a style's name to the address, as in `?style=volume`, opens the page on that style.
 - **Detail** sets the size of the blocks the body is drawn in: at the 4 mm level, 32 mm (about 4,500 splats), 16 mm (about 30,000), 8 mm (about 215,000, where it starts) or 4 mm (about 1.6 million, which has the most detail and runs slowest). The surface builds its skin from the same blocks, so the skin is as coarse or as fine as the splats at each Detail, while its bone keeps the loaded file's own grid.
 - **Size** shrinks or grows every splat, from half to twice its starting size.
@@ -44,7 +44,7 @@ VisibleHuman renders with WebGPU where the browser and the GPU can run it, and w
 
 ## Status
 
-The first version is complete and live. The body loads, draws at four levels of detail and cuts open along all three planes, under WebGPU or WebGL 2. Ideas for later include the female body, which was cut three times as finely; the CT and MRI scans taken of both bodies; and full-resolution photographs shown on the cut faces.
+The first version is complete and live. The body loads, draws at four levels of detail and cuts open along all three planes, under WebGPU or WebGL 2. The female body can now be chosen too, with her density from the CT taken of her before she was frozen. Ideas for later include the MRI scans taken of both bodies, and full-resolution photographs shown on the cut faces.
 
 ## Running it locally
 
@@ -77,7 +77,7 @@ It reads the slices from the local copy of the NLM's images that `npm run fetch`
 - `--previews` redraws the previews from the existing file, without reading any slice.
 - `--no-ct` estimates every block's density from its colour and reads no CT, for a local copy without the CT's images.
 - `--match card` or `--match body` evens out the colour where one frozen block of the body meets the next, by the grey scale card photographed beside every slice or by the body's own colour either side of the join. Without it each block keeps its colour as photographed. The script measures and reports both steps either way: on the male the card doesn't explain them, since across two of the joins it reads brighter where the body reads darker.
-- `--from` and `--to` read only a range of slices, numbered 1001 to 2878 from the head down; `--out` writes the file somewhere else; `--data` names the folder of the local copy, as it does for `npm run fetch`.
+- `--from` and `--to` read only a range of slices, numbered from 1001 at the head down, to 2878 for the male and 2730 for the female, whose three photographs to a number are lettered a, b and c, so that a bound may name one of them, as in `--from 1500b`; `--out` writes the file somewhere else; `--data` names the folder of the local copy, as it does for `npm run fetch`.
 
 ## Source data
 

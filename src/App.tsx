@@ -16,6 +16,24 @@ const requestedBackend: Backend = search.has('webgl') ? 'webgl' : search.has('we
 const requestedStyle = search.get('style')
 if (isStyle(requestedStyle)) useStore.getState().setOptions({ style: requestedStyle })
 
+// ?body=<id> opens on that body, and a body chosen in the panel is written there, so a reload or a shared link opens
+// on the body shown. A page opened without it isn't given one until another body is chosen
+const requestedBody = search.get('body')
+
+// Writes the body into the page's URL, in place, without a new history entry; the first body, which a bare URL opens
+// on, is written only over another
+function writeBody(body: string, isFirst: boolean) {
+  const written = new URLSearchParams(window.location.search).get('body')
+  if (written === body || (written === null && isFirst)) return
+  // The other parameters are kept as typed, as ?webgl, which URLSearchParams would write back as ?webgl=
+  const others = window.location.search
+    .slice(1)
+    .split('&')
+    .filter((part) => part !== '' && !part.startsWith('body=') && part !== 'body')
+  const query = [...others, `body=${encodeURIComponent(body)}`].join('&')
+  window.history.replaceState(window.history.state, '', `${window.location.pathname}?${query}${window.location.hash}`)
+}
+
 // The body is measured in millimetres and is about 1,900 of them tall, so the camera starts far enough back to see
 // all of it from the front, until the framing fits it to the window
 const camera = { fov: 50, near: 1, far: 20000, position: [0, 0, 2600] as const }
@@ -52,9 +70,16 @@ function App() {
   const load = useStore((s) => s.load)
   useEffect(() => {
     const controller = new AbortController()
-    void load(null, null, controller.signal)
+    void load(requestedBody, null, controller.signal)
     return () => controller.abort()
   }, [load])
+
+  // The body shown goes into the URL
+  const body = useStore((s) => s.body)
+  const firstBody = useStore((s) => s.bodies?.[0]?.id)
+  useEffect(() => {
+    if (body !== null) writeBody(body, body === firstBody)
+  }, [body, firstBody])
 
   const [backend, setBackend] = useState(requestedBackend)
   const [drawing, setDrawing] = useState<Drawing | null>(null)
