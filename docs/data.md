@@ -395,7 +395,7 @@ The page can't hold any of this, so [`npm run volume`](../README.md#the-volume-f
 | --- | --- | --- | ---: | ---: | --- | --- |
 | Male | 3.96 × 3.96 × 4 mm | 144 × 83 × 472 | 1,601,866 | 5.67 MB | 1,878 photographs, 1,873 CT slices | about 6 minutes |
 | Female | 3.96 × 3.96 × 4 mm | 136 × 75 × 435 | 1,281,284 | 4.56 MB | 5,186 photographs, 1,730 CT slices | about 15 minutes |
-| Head | 1.176 mm cubes | 130 × 193 × 187 | 2,778,717 | 10.78 MB | 1,477 photographs, the CT and the T2 MRI | about 5 minutes |
+| Head | 1.176 mm cubes | 130 × 193 × 187 | 2,778,775 | 10.77 MB | 1,477 photographs, the CT and the T2 MRI | about 5 minutes |
 
 The times are on a 2014 Intel Mac. Finer levels can be built and aren't committed: 2 mm for the male and the female, each about eight times the blocks, and 1 mm and 0.6 mm for the head.
 
