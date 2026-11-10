@@ -309,13 +309,17 @@ export interface SearchOptions {
   // Cryo pixels per millimetre, which the search's steps are given in
   pixelsPerMm: number
   useBody: boolean
+  // The flips tried, every one where not given
+  flips?: readonly Flip[]
 }
 
-// The search: every flip over translations ±80 mm at 4 mm steps around the start, then ±4 mm at 1 mm, then rotation
+// The search: every flip asked for over translations ±80 mm at 4 mm steps around the start, then ±4 mm at 1 mm, then rotation
 // ±3° at 0.25°, then ±2 mm at 1 mm once more, since a rotation about the CT centre shifts the body a little
 export function fitSimilarity(samples: readonly SamplePair[], start: Similarity, options: SearchOptions) {
-  const { centre, pixelsPerMm, useBody } = options
-  let best = { similarity: start, scores: score(samples, start, centre, useBody) }
+  const { centre, pixelsPerMm, useBody, flips: tried = flips } = options
+  // The start under a flip tried, so a flip left out can't win by being where the search began
+  const first = tried.includes(start.flip) ? start : { ...start, flip: tried[0] }
+  let best = { similarity: first, scores: score(samples, first, centre, useBody) }
   const consider = (similarity: Similarity) => {
     const scores = score(samples, similarity, centre, useBody)
     if (scores.total > best.scores.total) best = { similarity, scores }
@@ -328,7 +332,7 @@ export function fitSimilarity(samples: readonly SamplePair[], start: Similarity,
       }
     }
   }
-  for (const flip of flips) translations(start, 80, 4, flip)
+  for (const flip of tried) translations(start, 80, 4, flip)
   translations(best.similarity, 4, 1, best.similarity.flip)
   const centred = best.similarity
   for (let step = -12; step <= 12; step++) consider({ ...centred, rotationDeg: centred.rotationDeg + step * 0.25 })

@@ -1,7 +1,7 @@
 // The registration script: fits each segment of a body's CT to its cryosections and writes data/<body>/registration.json,
 // which the volume script reads to resample the CT into the density channel. Run by `npm run register`.
 //
-//   --body ID       which body: male (the female arrives with her milestone)
+//   --body ID       which body: male or female
 //   --samples N     how many slices of each segment the fit is made on, spread along it (8 by default)
 //   --preview       redraw the overlays from the registration as saved, fitting nothing
 //   --data PATH     the data root, else VHP_DATA, else ~/Data/VisibleHuman
@@ -9,7 +9,12 @@
 // A segment is a run of CT slices that share one geometry (field of view, centre, scan and how the body entered the
 // scanner, from the header texts) within one cryo block.
 // Each segment is fitted jointly on its sample slices, by the share of the CT's bone that lands on pale tissue in the
-// photographs and, where the CT shows the body alone, the overlap of the two body silhouettes.
+// photographs and, where the CT shows the body alone, the overlap of the two body silhouettes: on every slice of a CT
+// scanned in air, as the female's, and where the silhouettes' areas agree for the male's frozen CT.
+// Each segment is fitted under each of the four flips; the flip is then chosen per scan, by the scores summed over the
+// scan's segments, since a scan writes all its images one way.
+// A body photographed several times a number, as the female's a, b and c, is fitted on the middle photograph of each
+// sample number, against the CT slice of that number.
 // Overlays go to .cache/preview/register/<body>-<slice>.png: the slice at two pixels a millimetre, the CT bone outline
 // magenta where the search started and cyan where it ended
 
@@ -17,7 +22,7 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { parseArgs } from 'node:util'
 import { parseCtHeader, type CtHeader } from '../src/volume/ctHeader.ts'
-import { apply, ctToCryo, type Affine, type Point, type Similarity } from '../src/volume/similarity.ts'
+import { apply, ctToCryo, flips, type Affine, type Flip, type Point, type Similarity } from '../src/volume/similarity.ts'
 import { bodyOf, ctFileName, fileName, type Body } from './lib/bodies.ts'
 import { dataRoot, requireDataFile, setFolder } from './lib/data.ts'
 import { readGray, readRgb, writePng, type RawImage } from './lib/decode.ts'
@@ -182,9 +187,12 @@ interface Sample {
   outline: Float64Array
 }
 
+// The photograph a number's CT slice is matched with: the middle one of its sub-slices
+const sampleSub = (body: Body) => body.naming.subSlices[Math.floor((body.naming.subSlices.length - 1) / 2)]
+
 async function readSample(body: Body, slice: number, pixelMm: number, root: string): Promise<Sample> {
   const [cryo, ct] = await Promise.all([
-    readRgb(await requireDataFile(root, body.set, fileName(body, slice))),
+    readRgb(await requireDataFile(root, body.set, fileName(body, slice, sampleSub(body)))),
     readGray(await requireDataFile(root, body.ct!.set, ctFileName(body, 'image', slice))),
   ])
   if (cryo.width !== body.width || cryo.height !== body.height) {
@@ -223,7 +231,8 @@ function printTable(segments: readonly Segment[]) {
 async function main() {
   const { body, ct, samples: sampleCount, preview, root } = options()
   const started = performance.now()
-  const skip = new Set(body.blankFiles.map((file) => Number(file.replace(/\D/g, ''))))
+  // A number with a blank, empty or absent photograph sits beside a block's end or a gap, and is never a sample
+  const skip = new Set([...body.blankFiles, ...body.emptyFiles, ...body.absentFiles].map((file) => Number(file.replace(/\D/g, ''))))
   const overlayPath = (slice: number) => join(overlayFolder, `${body.id}-${slice}.png`)
 
   if (preview) {
@@ -248,18 +257,44 @@ async function main() {
   const ranges = segmentRanges(body, headers)
   console.log(`${headers.size} CT slices in ${ranges.length} segments`)
 
-  const segments: Segment[] = []
+  // Each segment fitted under each flip alone, its samples' images let go once fitted
+  const fits = []
   for (const range of ranges) {
     const { header } = range
     const slices = sampleSlices(range.first, range.last, sampleCount, skip)
-    const samples = await Promise.all(slices.map((slice) => readSample(body, slice, header.pixelMm, root)))
-    const pairs = samples.map((sample) => sample.pair)
+    const pairs = (await Promise.all(slices.map((slice) => readSample(body, slice, header.pixelMm, root)))).map((sample) => sample.pair)
     const centre = ctCentre(header)
-    const useBody = silhouettesComparable(pairs)
+    const useBody = ct.inAir === true || silhouettesComparable(pairs)
     const start = startOf(body, header.pixelMm)
     const fitStarted = performance.now()
-    const best = fitSimilarity(pairs, start, { centre, pixelsPerMm: 1 / body.pixelSize, useBody })
-    const seconds = ((performance.now() - fitStarted) / 1000).toFixed(0)
+    const search = { centre, pixelsPerMm: 1 / body.pixelSize, useBody }
+    const byFlip = new Map(flips.map((flip) => [flip, fitSimilarity(pairs, start, { ...search, flips: [flip] })]))
+    const seconds = Math.round((performance.now() - fitStarted) / 1000)
+    fits.push({ range, slices, pairs, centre, useBody, start, byFlip, seconds })
+  }
+
+  // A flip is how the scanner wrote the images, which holds for a whole scan: each scan takes the flip whose fits score
+  // best summed over its segments, so a segment the body's near symmetry leaves in doubt, as the female's shoulders at
+  // 440 mm, follows the rest of its scan rather than its own narrow best
+  const scanOf = (header: CtHeader) => `exam ${header.exam}, ${header.entry}`
+  const scanFlips = new Map<string, Flip>()
+  for (const scan of new Set(fits.map((fit) => scanOf(fit.range.header)))) {
+    const inScan = fits.filter((fit) => scanOf(fit.range.header) === scan)
+    const totals = flips.map((flip) => ({ flip, total: inScan.reduce((sum, fit) => sum + fit.byFlip.get(flip)!.scores.total, 0) }))
+    const best = totals.reduce((a, b) => (b.total > a.total ? b : a))
+    scanFlips.set(scan, best.flip)
+    console.log(
+      `Scan ${scan}, ${inScan.length} segments: summed scores ${totals.map(({ flip, total }) => `${flip} ${total.toFixed(3)}`).join(', ')}; ` +
+        `${best.flip} taken`,
+    )
+  }
+
+  const segments: Segment[] = []
+  for (const { range, slices, pairs, centre, useBody, start, byFlip, seconds } of fits) {
+    const { header } = range
+    const flip = scanFlips.get(scanOf(header))!
+    const best = byFlip.get(flip)!
+    const own = [...byFlip.values()].reduce((a, b) => (b.scores.total > a.scores.total ? b : a))
     const segment: Segment = {
       slices: [range.first, range.last],
       ctPixelMm: header.pixelMm,
@@ -275,17 +310,22 @@ async function main() {
       const scores = sampleScores(pair, best.similarity, centre, useBody)
       return `${pair.slice} ${scores.bone.toFixed(2)}${useBody ? `/${scores.body.toFixed(2)}` : ''}`
     })
+    const overruled =
+      own.similarity.flip === flip
+        ? ''
+        : ` (alone it scored best under a ${own.similarity.flip} flip, ${own.scores.total.toFixed(3)} against ${best.scores.total.toFixed(3)})`
     console.log(
       `Segment ${segments.length}, slices ${range.first}–${range.last} at ${header.dfovMm} mm, ${header.entry}, exam ${header.exam}: ` +
-        `${best.similarity.flip} flip, bone share ${best.scores.bone.toFixed(3)}` +
+        `${flip} flip${overruled}, bone share ${best.scores.bone.toFixed(3)}` +
         `${useBody ? `, silhouette Dice ${best.scores.body.toFixed(3)}` : ', silhouettes not comparable, so bone alone'}, ` +
         `fitted in ${seconds} s; per slice: ${perSlice.join(', ')}`,
     )
     const before = ctToCryo(start, centre)
     const after = ctToCryo(best.similarity, centre)
-    for (const sample of samples) {
-      await drawOverlay(overlayPath(sample.pair.slice), sample.cryo, sample.outline, before, after)
-      console.log(`Overlay: ${overlayPath(sample.pair.slice)}`)
+    for (const slice of slices) {
+      const sample = await readSample(body, slice, header.pixelMm, root)
+      await drawOverlay(overlayPath(slice), sample.cryo, sample.outline, before, after)
+      console.log(`Overlay: ${overlayPath(slice)}`)
     }
   }
 
