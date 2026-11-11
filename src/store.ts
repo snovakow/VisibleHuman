@@ -45,7 +45,9 @@ interface State {
   // started: everything, until one says otherwise; and whether the body shown has an MRI. The panel leaves out what's
   // missing
   capabilities: Capabilities
-  setCapabilities: (backend: BackendCapabilities) => void
+  // Whether the backend drawing is WebGPU, rather than the WebGL 2 fallback, once the renderer has said
+  webgpu: boolean | null
+  setCapabilities: (backend: BackendCapabilities, webgpu: boolean) => void
   // The triangles in each of the surface style's meshes, while it's drawn, for the panel
   triangles: Partial<Record<SurfaceKind, number>>
   setTriangles: (kind: SurfaceKind, count: number | undefined) => void
@@ -59,6 +61,30 @@ let shown: { body: string; level: string } | null = null
 // The list of bodies, fetched once for the page, so a load replaced while it's fetched, as StrictMode's first is, hands
 // the fetch on to the next and the preload in index.html is taken by the one request. A failed fetch is tried again
 let bodiesFetch: Promise<BodiesFile> | null = null
+
+// The Detail a body opens at on the WebGL 2 fallback, where that isn't its default. The head fills about 2.4 times
+// the window the male does, so its splats are held back by the pixels they cover: on a 2014 Intel Iris they orbit at
+// about 6 fps at its default 2.4 mm and 14 at 4.8 mm, and coarser they no longer show its anatomy
+const fallbackOpening: Partial<Record<string, string>> = { head: '4.8 mm' }
+
+// Waits until the renderer has said which backend draws, or the signal aborts
+function backendReported(api: StoreApi<State>, signal: AbortSignal) {
+  return new Promise<void>((resolve) => {
+    if (api.getState().webgpu !== null || signal.aborted) {
+      resolve()
+      return
+    }
+    const finish = () => {
+      unsubscribe()
+      signal.removeEventListener('abort', finish)
+      resolve()
+    }
+    const unsubscribe = api.subscribe((state) => {
+      if (state.webgpu !== null) finish()
+    })
+    signal.addEventListener('abort', finish, { once: true })
+  })
+}
 
 // The levels still to build after the first frame are built in slices of about this many milliseconds, one task each,
 // so a frame waits at most about this long for one. The build takes this many body voxels at a time between looks at
@@ -115,7 +141,7 @@ function buildRest(set: StoreApi<State>['setState'], get: StoreApi<State>['getSt
   setTimeout(slice, 0)
 }
 
-export const useStore = create<State>()((set, get) => ({
+export const useStore = create<State>()((set, get, api) => ({
   bodies: null,
   body: null,
   level: null,
@@ -159,11 +185,12 @@ export const useStore = create<State>()((set, get) => ({
   capabilities: { weighted: true, oit: true, mri: false },
   // A backend that lacks something takes the options that need it back to their defaults, as a switch to the
   // fallback may with an effect on
-  setCapabilities: (backend) =>
+  webgpu: null,
+  setCapabilities: (backend, webgpu) =>
     set((state) => {
       const capabilities = { ...state.capabilities, ...backend }
-      if (shallow(capabilities, state.capabilities)) return state
-      return { capabilities, options: drawableOptions(state.options, capabilities) }
+      if (shallow(capabilities, state.capabilities)) return state.webgpu === webgpu ? state : { webgpu }
+      return { capabilities, webgpu, options: drawableOptions(state.options, capabilities) }
     }),
   triangles: {},
   setTriangles: (kind, count) =>
@@ -235,10 +262,21 @@ export const useStore = create<State>()((set, get) => ({
       }
       if (!isLatest()) return
 
-      // A new level of the same body keeps the Detail's spacing where it has it; otherwise the level's own default.
-      // That level is built first, and the others once the body has drawn
-      const { options, levels: before, capabilities: held } = get()
-      const label = sameBody && before ? levelOf(before, options.detail)?.label : undefined
+      // A body that opens at another Detail on the fallback first hears which backend draws, which the renderer
+      // says as it starts, by now as a rule
+      const onFallback = sameBody ? undefined : fallbackOpening[body.id]
+      if (onFallback !== undefined) {
+        await backendReported(api, controller.signal)
+        if (!isLatest()) return
+      }
+
+      // A new level of the same body keeps the Detail's spacing where it has it; another body opens at its Detail on
+      // the fallback while that's the backend, and otherwise at the level's own default. That level is built first,
+      // and the others once the body has drawn. A Detail picked later stays, as does the one shown when the page
+      // switches to the fallback
+      const { options, levels: before, capabilities: held, webgpu } = get()
+      const kept = sameBody && before ? levelOf(before, options.detail)?.label : undefined
+      const label = kept ?? (webgpu === false ? onFallback : undefined)
       const start = performance.now()
       const staged = stageBody(loaded.volume, { opening: label })
       const buildMs = performance.now() - start

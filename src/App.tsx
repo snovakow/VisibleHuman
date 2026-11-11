@@ -94,7 +94,7 @@ function App() {
         () => setBackend('webgl'),
         (renderer, webgpu, capabilities) => {
           setDrawing({ renderer, webgpu })
-          setCapabilities(capabilities)
+          setCapabilities(capabilities, webgpu)
         },
       ),
     [backend, setCapabilities],
