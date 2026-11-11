@@ -17,6 +17,25 @@
     <!-- No icon of its own: an empty one keeps the browser from asking the server for a favicon that isn't there -->
     <link rel="icon" href="data:," />
     <title>VisibleHuman</title>
+    <script>
+      // Starts the downloads of the list of bodies and of the default file of the body the address names, or of the
+      // first body where ?body= names none, as the page does, while the page's script is still loading. Each is
+      // preloaded as the CORS fetch the page makes, so the page's own fetch takes the preloaded response instead of
+      // asking again. The table lists each body's default file in bodies.json's order, which a test holds it to
+      (function () {
+        var files = { "male": "volume/male-4mm.bin", "female": "volume/female-4mm.bin", "head": "volume/head-1.2mm.bin" };
+        var body = new URLSearchParams(window.location.search).get('body');
+        var file = Object.prototype.hasOwnProperty.call(files, body) ? files[body] : files[Object.keys(files)[0]];
+        ['volume/bodies.json', file].forEach(function (href) {
+          var link = document.createElement('link');
+          link.rel = 'preload';
+          link.as = 'fetch';
+          link.crossOrigin = 'anonymous';
+          link.href = href;
+          document.head.appendChild(link);
+        });
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

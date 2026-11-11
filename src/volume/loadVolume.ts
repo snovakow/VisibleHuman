@@ -26,15 +26,14 @@ const isMissing = (response: Response) =>
   response.status === 404 || (response.ok && (response.headers.get('content-type') ?? '').startsWith('text/html'))
 
 // Fetches the list of bodies and their levels, with a message that says whether the fetch failed or the list was
-// refused
-export async function loadBodies(signal: AbortSignal): Promise<BodiesFile> {
+// refused. It isn't aborted, since whichever load runs next needs the list
+export async function loadBodies(): Promise<BodiesFile> {
   let json: unknown
   try {
-    const response = await fetch(bodiesUrl, { signal })
+    const response = await fetch(bodiesUrl)
     if (!response.ok) throw new Error(httpText(response))
     json = await response.json()
   } catch (error) {
-    if (isAbort(error)) throw error
     throw new Error(`Couldn't fetch the list of bodies, ${bodiesUrl}: ${messageOf(error)}`, { cause: error })
   }
   try {

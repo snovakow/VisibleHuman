@@ -1,7 +1,7 @@
 import { create, type StoreApi } from 'zustand'
 import { shallow } from 'zustand/shallow'
 import { defaultOptions, drawableOptions, type BackendCapabilities, type Capabilities, type ViewOptions } from './options.ts'
-import { defaultLevel, type BodyEntry } from './volume/bodies.ts'
+import { defaultLevel, type BodiesFile, type BodyEntry } from './volume/bodies.ts'
 import type { Volume } from './volume/format.ts'
 import { levelOf, stageBody, type Bounds, type Detail, type DetailEntry, type Levels, type StagedBody } from './volume/levels.ts'
 import type { SurfaceKind } from './surface/surfaceWorker.ts'
@@ -56,6 +56,9 @@ const messageOf = (error: unknown) => (error instanceof Error ? error.message : 
 // The load in progress, which the next one aborts, and the level whose volume the store holds
 let current: AbortController | null = null
 let shown: { body: string; level: string } | null = null
+// The list of bodies, fetched once for the page, so a load replaced while it's fetched, as StrictMode's first is, hands
+// the fetch on to the next and the preload in index.html is taken by the one request. A failed fetch is tried again
+let bodiesFetch: Promise<BodiesFile> | null = null
 
 // The levels still to build after the first frame are built in slices of about this many milliseconds, one task each,
 // so a frame waits at most about this long for one. The build takes this many body voxels at a time between looks at
@@ -184,7 +187,13 @@ export const useStore = create<State>()((set, get) => ({
       let { bodies } = get()
       if (!bodies) {
         set({ status: 'loading', error: null })
-        bodies = (await loadBodies(controller.signal)).bodies
+        const fetching = (bodiesFetch ??= loadBodies())
+        try {
+          bodies = (await fetching).bodies
+        } catch (error) {
+          if (bodiesFetch === fetching) bodiesFetch = null
+          throw error
+        }
         if (!isLatest()) return
         set({ bodies })
       }
