@@ -155,7 +155,7 @@ Around them are drei's helpers, a leva control panel, zustand for app state, and
 
 ## Workflow
 
-- **Planned in phases.** The project was set up by following a written plan, and its next stage has [one of its own](docs/phase2-plan.md). Each phase is one focused thread, and the phases that change code end with lint, the tests and a type-checked production build passing.
+- **Planned in phases.** The project was set up by following a written plan, and a second took it to three bodies and four styles. Each phase is one focused thread, and the phases that change code end with lint, the tests and a type-checked production build passing.
 - **Reviewed before it's committed.** Every batch of work goes through `/commit`, a [Claude Code skill](.claude/skills/commit/SKILL.md) that serves as the final code review. It's adapted from a shared [baseline](https://github.com/snovakow/Claude-Skills/tree/main/skills/commit), and it runs in a fresh thread, so the review starts without the author's assumptions. It reads every changed line for bugs, React Three Fiber and three.js pitfalls, type and lint escapes, new dependencies, leftovers and anything that shouldn't be public. Then it runs the checks, splits the work into focused commits with descriptive messages, and keeps this README accurate.
 - **Tested where it's pure.** The parts with no GPU or React in them, such as the volume file's reader and writer and the rule that tells the body from its surroundings, have tests that build their own inputs, and each review runs them with the other checks.
 - **Versioned checkpoints.** Versions start at 0.0.0 and count up: each reviewed batch ends with a version commit, which marks where the next review starts.
