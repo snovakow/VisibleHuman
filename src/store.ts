@@ -1,9 +1,9 @@
-import { create } from 'zustand'
+import { create, type StoreApi } from 'zustand'
 import { shallow } from 'zustand/shallow'
 import { defaultOptions, drawableOptions, type BackendCapabilities, type Capabilities, type ViewOptions } from './options.ts'
 import { defaultLevel, type BodyEntry } from './volume/bodies.ts'
 import type { Volume } from './volume/format.ts'
-import { buildBody, levelOf, type Bounds, type Levels } from './volume/levels.ts'
+import { levelOf, stageBody, type Bounds, type Detail, type DetailEntry, type Levels, type StagedBody } from './volume/levels.ts'
 import type { SurfaceKind } from './surface/surfaceWorker.ts'
 import { isAbort, loadBodies, loadVolume, NotBuiltError } from './volume/loadVolume.ts'
 
@@ -23,10 +23,16 @@ interface State {
   error: string | null
   // Levels whose files this host turned out not to have, by levelKey
   notBuilt: readonly string[]
-  // The level's volume, the body's bounds in it and its splat levels
+  // The level's volume, the body's bounds in it, its splat levels built so far, and every Detail it has, built or not.
+  // The opening level is built before the body is ready, and the others after its first frame
   volume: Volume | null
   bounds: Bounds | null
   levels: Levels | null
+  details: readonly DetailEntry[] | null
+  // A Detail picked before its level was built, which the options take once it is, the level drawn staying till then
+  waiting: Detail | null
+  // Called by a style when it first draws a body's volume, which starts the build of the levels still to build
+  drawn: (volume: Volume) => void
   // Loads a level of a body, the body's default level where level is null and the first body where body is null or
   // names none.
   // A load replaces any still in progress, and an older load never overwrites a newer one. Aborting the signal
@@ -51,6 +57,56 @@ const messageOf = (error: unknown) => (error instanceof Error ? error.message : 
 let current: AbortController | null = null
 let shown: { body: string; level: string } | null = null
 
+// The levels still to build after the first frame are built in slices of about this many milliseconds, one task each,
+// so a frame waits at most about this long for one. The build takes this many body voxels at a time between looks at
+// the clock, which on a 2014 Intel Mac takes about 1.4 ms
+const sliceMs = 8
+const sliceVoxels = 16_384
+
+// The volume shown, its levels as they're built, and whether the build of the rest has started
+let staging: { volume: Volume; body: string; staged: StagedBody; started: boolean } | null = null
+
+// Builds the levels still to build, a slice at a time from a task of its own, the level waited for first, until a
+// new volume replaces this one
+function buildRest(set: StoreApi<State>['setState'], get: StoreApi<State>['getState']) {
+  const mine = staging
+  if (!mine || mine.started) return
+  mine.started = true
+  const start = performance.now()
+  // The levels built with the opening, by the search for it, which the log of the rest leaves out
+  const builtFirst = mine.staged.levels
+  let slices = 0
+  const slice = () => {
+    if (staging !== mine) return
+    const { staged } = mine
+    const before = staged.levels
+    const end = performance.now() + sliceMs
+    let more = true
+    while (more && performance.now() < end) more = staged.advance(sliceVoxels, get().waiting ?? undefined)
+    slices++
+    if (staged.levels !== before) {
+      const { waiting, options, capabilities } = get()
+      const arrived = waiting !== null && levelOf(staged.levels, waiting) !== undefined
+      set({
+        levels: staged.levels,
+        details: staged.details,
+        ...(arrived ? { waiting: null, options: drawableOptions({ ...options, detail: waiting }, capabilities) } : {}),
+      })
+    }
+    if (more) {
+      setTimeout(slice, 0)
+      return
+    }
+    const rest = staged.levels.filter((level) => !builtFirst.includes(level))
+    const counts = rest.map((each) => `${each.count.toLocaleString('en')} at ${each.label}`)
+    console.info(
+      `VisibleHuman: the ${mine.body}'s other levels, as ${counts.join(', ') || 'none'}, built in ` +
+        `${Math.round(performance.now() - start)} ms over ${slices} slices after its first frame`,
+    )
+  }
+  setTimeout(slice, 0)
+}
+
 export const useStore = create<State>()((set, get) => ({
   bodies: null,
   body: null,
@@ -61,13 +117,32 @@ export const useStore = create<State>()((set, get) => ({
   volume: null,
   bounds: null,
   levels: null,
+  details: null,
+  waiting: null,
+  drawn: (volume) => {
+    if (staging?.volume === volume) buildRest(set, get)
+  },
   options: defaultOptions,
-  // Unchanged values keep the same options object, so the scene doesn't redo anything for nothing
-  setOptions: (changes) =>
+  // Unchanged values keep the same options object, so the scene doesn't redo anything for nothing. A Detail whose
+  // level is still to build waits for it, and the level it's built ahead of the others; one the body hasn't got is
+  // left as it was
+  setOptions: (changes) => {
+    let taken = changes
+    const { levels, details, waiting } = get()
+    const { detail } = changes
+    if (detail !== undefined && levels && !levelOf(levels, detail)) {
+      const { detail: _, ...rest } = changes
+      taken = rest
+      if (details?.some((entry) => entry.block === detail)) {
+        set({ waiting: detail })
+        buildRest(set, get)
+      }
+    } else if (detail !== undefined && waiting !== null) set({ waiting: null })
     set((state) => {
-      const options = drawableOptions({ ...state.options, ...changes }, state.capabilities)
+      const options = drawableOptions({ ...state.options, ...taken }, state.capabilities)
       return shallow(options, state.options) ? state : { options }
-    }),
+    })
+  },
   capabilities: { weighted: true, oit: true, mri: false },
   // A backend that lacks something takes the options that need it back to their defaults, as a switch to the
   // fallback may with an effect on
@@ -121,8 +196,9 @@ export const useStore = create<State>()((set, get) => ({
         level: level.id,
         status: 'loading',
         error: null,
-        ...(sameBody ? {} : { volume: null, bounds: null, levels: null }),
+        ...(sameBody ? {} : { volume: null, bounds: null, levels: null, details: null, waiting: null }),
       })
+      if (!sameBody) staging = null
 
       let loaded
       try {
@@ -140,13 +216,16 @@ export const useStore = create<State>()((set, get) => ({
       }
       if (!isLatest()) return
 
-      const start = performance.now()
-      const { bounds, levels, defaultDetail } = buildBody(loaded.volume)
-      // A new level of the same body keeps the Detail's spacing where it has it; otherwise the level's own default
+      // A new level of the same body keeps the Detail's spacing where it has it; otherwise the level's own default.
+      // That level is built first, and the others once the body has drawn
       const { options, levels: before, capabilities: held } = get()
       const label = sameBody && before ? levelOf(before, options.detail)?.label : undefined
-      const detail = levels.find((candidate) => candidate.label === label)?.block ?? defaultDetail
+      const start = performance.now()
+      const staged = stageBody(loaded.volume, { opening: label })
+      const buildMs = performance.now() - start
+      const { bounds, opening } = staged
       shown = { body: body.id, level: level.id }
+      staging = { volume: loaded.volume, body: body.id, staged, started: false }
       // A body without an MRI takes the options that read one back to their defaults
       const mri = loaded.volume.mri !== undefined
       const capabilities = held.mri === mri ? held : { ...held, mri }
@@ -154,18 +233,21 @@ export const useStore = create<State>()((set, get) => ({
         status: 'ready',
         volume: loaded.volume,
         bounds,
-        levels,
+        levels: staged.levels,
+        details: staged.details,
+        waiting: null,
         capabilities,
-        options: drawableOptions({ ...options, detail }, capabilities),
+        options: drawableOptions({ ...options, detail: opening.block }, capabilities),
       })
 
-      const counts = levels.map((each) => `${each.count.toLocaleString('en')} at ${each.label}`)
       const extent = bounds.half.map((half) => Math.round(half * 2)).join(' × ')
+      const others = staged.details.filter((each) => !levelOf(staged.levels, each.block)).length
       console.info(
         `VisibleHuman: ${level.file}, ${loaded.bytes.toLocaleString('en')} bytes, decoded in ` +
           `${Math.round(loaded.gunzipMs + loaded.readMs)} ms (gunzip ${Math.round(loaded.gunzipMs)} ms, ` +
-          `read ${Math.round(loaded.readMs)} ms); the body, ${extent} mm, as ${counts.join(', ')}, ` +
-          `built in ${Math.round(performance.now() - start)} ms`,
+          `read ${Math.round(loaded.readMs)} ms); the body, ${extent} mm, as ` +
+          `${opening.count.toLocaleString('en')} at ${opening.label}, built in ${Math.round(buildMs)} ms, and ` +
+          `${others} more ${others === 1 ? 'level' : 'levels'} after its first frame`,
       )
     } catch (error) {
       if (isAbort(error) || !isLatest()) return

@@ -6,8 +6,9 @@ import { createGaussianSplatGeometry, writeCovariance } from 'three/addons/utils
 import { useShallow } from 'zustand/react/shallow'
 import type { Blend } from '../options.ts'
 import { useStore } from '../store.ts'
-import { levelOf, type Detail, type Level } from '../volume/levels.ts'
+import { levelOf, type Detail, type Level, type Levels } from '../volume/levels.ts'
 import { cellColor, createCellTable, paintCellTable, writeCellIndex, type CellTable, type TablePaint } from './cellTable.ts'
+import { reportFirstDraw } from './firstDraw.ts'
 import { asWebGPU } from './renderer.ts'
 
 // A round splat's standard deviation, as a share of its level's spacing, at Size 1. three draws a splat out to two of
@@ -22,10 +23,11 @@ interface BuiltLevel {
 }
 
 // The levels built so far at one Size and Blend: show builds a level's splat the first time it's asked for and shows
-// it alone, and paint repaints the shown level's table if what it's painted from has changed
+// it alone, and paint repaints the shown level's table if what it's painted from has changed. Each takes the body's
+// levels as the store has built them so far, which grow after the body first draws
 interface Drawn {
-  show: (detail: Detail) => void
-  paint: (detail: Detail, paint: TablePaint) => void
+  show: (detail: Detail, levels: Levels) => void
+  paint: (detail: Detail, paint: TablePaint, levels: Levels) => void
 }
 
 // Whether a blend lays the splats over one another in order, back to front. Added light doesn't depend on the order
@@ -57,9 +59,10 @@ function buildLevel(level: Level, size: number, blend: Blend): BuiltLevel {
 
 // The body as splats, at the level Detail asks for. Each level's splat is built the first time it's shown and kept,
 // hidden while another is shown, until Size, Blend or the volume changes or this unmounts. Opacity and the cuts
-// repaint the shown level's table, and rebuild nothing
+// repaint the shown level's table, and rebuild nothing, nor does a level built after the body first draws
 export function BodySplats() {
   const get = useThree((s) => s.get)
+  const volume = useStore((s) => s.volume)
   const levels = useStore((s) => s.levels)
   const bounds = useStore((s) => s.bounds)
   const detail = useStore((s) => s.options.detail)
@@ -80,24 +83,26 @@ export function BodySplats() {
   // Shows and paints the level Detail asks for, with the inputs as they stand, for the effect that builds the splats,
   // which then needn't depend on them
   const showNow = useEffectEvent((current: Drawn) => {
-    current.show(detail)
-    current.paint(detail, paint)
+    if (!levels) return
+    current.show(detail, levels)
+    current.paint(detail, paint, levels)
   })
 
   // Owns every splat built at this Size and Blend, and frees them all when either or the volume changes or this
   // unmounts. GaussianSplat has no dispose(): its storage buffers go when it's garbage-collected, so nothing else
   // keeps a splat
   useEffect(() => {
-    if (!levels || !bounds) return undefined
+    if (!volume || !bounds) return undefined
     const { scene, gl, camera } = get()
     const renderer = asWebGPU(gl)
     const fallback = !('isWebGPUBackend' in renderer.backend)
     const built = new Map<Detail, BuiltLevel>()
     const current: Drawn = {
-      show: (shown) => {
-        const source = levelOf(levels, shown)
+      show: (shown, soFar) => {
+        const source = levelOf(soFar, shown)
         if (source && !built.has(shown)) {
           const level = buildLevel(source, size, blend)
+          reportFirstDraw(level.splat, volume)
           scene.add(level.splat)
           // On the WebGL 2 fallback, only a sort moves the splat's data into the textures its shader reads, and the
           // shader is built for one or the other on its first draw, so an unsorted splat sorts once now, before it's
@@ -107,9 +112,9 @@ export function BodySplats() {
         }
         for (const [d, { splat }] of built) splat.visible = d === shown
       },
-      paint: (shown, inputs) => {
+      paint: (shown, inputs, soFar) => {
         const level = built.get(shown)
-        const source = levelOf(levels, shown)
+        const source = levelOf(soFar, shown)
         if (level && source && level.table.painted !== inputs) paintCellTable(level.table, source, bounds.half, inputs)
       },
     }
@@ -126,16 +131,16 @@ export function BodySplats() {
       built.clear()
       drawn.current = null
     }
-  }, [get, levels, bounds, size, blend])
+  }, [get, volume, bounds, size, blend])
 
   // A level shown for the first time is built here, then painted before any frame draws it; one built already is
   // shown again, and repainted only if the table's inputs have changed since
   useEffect(() => {
     const current = drawn.current
-    if (!current) return
-    current.show(detail)
-    current.paint(detail, paint)
-  }, [detail, paint])
+    if (!current || !levels) return
+    current.show(detail, levels)
+    current.paint(detail, paint, levels)
+  }, [detail, paint, levels])
 
   return null
 }

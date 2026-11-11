@@ -5,6 +5,7 @@ import { NodeMaterial, type Mesh } from 'three/webgpu'
 import { useShallow } from 'zustand/react/shallow'
 import { useStore } from '../store.ts'
 import { cutBox, type Cuts } from './cuts.ts'
+import { reportFirstDraw } from './firstDraw.ts'
 import { stepShare } from './quality.ts'
 import { createRayQuad } from './rayQuad.ts'
 import { raytrace, traceIndex, type Raytrace } from './raytrace.ts'
@@ -87,6 +88,7 @@ export function BodyRaytrace() {
     const coverage = acquireCoverageTexture(volume)
     current.tracer.show(colour, coverage, volume, bounds.center)
     current.quad.visible = true
+    reportFirstDraw(current.quad, volume)
     return () => {
       current.quad.visible = false
       releaseCoverageTexture(volume)

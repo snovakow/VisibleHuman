@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { axesFromBytes, cellCount, cellIndex, scenePosition, type Triple, type Volume } from '../src/volume/format.ts'
-import { bodyBounds, bodyIndices, buildBody, buildLevel, levelOf } from '../src/volume/levels.ts'
+import { bodyBounds, bodyIndices, buildBody, buildLevel, levelOf, stageBody } from '../src/volume/levels.ts'
 
 // The levels: every body voxel, and the coarser levels' blocks, each at the centre of its body voxels and coloured by
 // their mean, all centred on the body's bounds
@@ -220,4 +220,138 @@ void test('a cell\'s coverage is its voxel\'s, and a block\'s the mean over all 
   const merged = buildLevel(volume, bounds, 2)
   // (255 + 127 + 10 + 128 + 40 + 0 + 200 + 1) / 8 = 95.125, and (240 + 100 + 20 + 0) / 8 = 45
   assert.deepEqual([...merged.coverage], [95, 45])
+})
+
+// A body of scattered voxels over several layers of blocks, with a margin, partial blocks at the grid's far edges, and
+// colours and coverages that vary voxel by voxel, from a fixed sequence so every run builds the same
+function scatteredVolume(): Volume {
+  const size: Triple = [13, 11, 19]
+  let seed = 12345
+  const next = () => {
+    seed = (seed * 1103515245 + 12345) % 2147483648
+    return seed / 2147483648
+  }
+  const cells: { at: Triple; rgb: Triple }[] = []
+  for (let k = 1; k < size[2]; k++) {
+    for (let j = 1; j < size[1]; j++) {
+      for (let i = 1; i < size[0]; i++) {
+        if (next() < 0.6) cells.push({ at: [i, j, k], rgb: [Math.floor(next() * 256), Math.floor(next() * 256), Math.floor(next() * 256)] })
+      }
+    }
+  }
+  const volume = volumeOf(size, cells)
+  for (let index = 0; index < volume.coverage.length; index++) {
+    volume.coverage[index] = volume.coverage[index] === 200 ? 128 + Math.floor(next() * 128) : Math.floor(next() * 128)
+  }
+  return volume
+}
+
+void test('the levels built a share at a time, in any order, equal those built at once, element for element', () => {
+  const volume = scatteredVolume()
+  // Limits under which the opening is the 16 mm level, which leaves the 4 mm level to build after it
+  const limits = { maxCells: 5000, defaultCells: 100 }
+  const atOnce = buildBody(volume, limits)
+  assert.equal(atOnce.levels.length, 4)
+  assert.equal(atOnce.defaultDetail, 4)
+  const coarsestFirst = (built: readonly { block: number }[]) => [8, 4, 2, 1].find((block) => !built.some((level) => level.block === block))
+  for (const opening of [undefined, '8 mm', '32 mm', '4 mm']) {
+    for (const voxels of [1, 7, 1000]) {
+      for (const order of ['finest', 'coarsest', 'alternating'] as const) {
+        const staged = stageBody(volume, { limits, opening })
+        let turn = 0
+        for (;;) {
+          const first = order === 'finest' ? undefined : order === 'coarsest' || turn % 2 === 0 ? coarsestFirst(staged.levels) : 1
+          turn++
+          if (!staged.advance(voxels, first)) break
+        }
+        assert.deepEqual(staged.bounds, atOnce.bounds)
+        assert.deepEqual(staged.levels, atOnce.levels, `opening ${opening}, ${voxels} voxels a share, ${order} first`)
+        assert.deepEqual(
+          staged.details,
+          atOnce.levels.map((level) => ({ block: level.block, label: level.label })),
+        )
+      }
+    }
+  }
+})
+
+void test('the opening level is built first, without the finest, whose count is the body voxel count', () => {
+  const volume = scatteredVolume()
+  const limits = { maxCells: 5000, defaultCells: 100 }
+  const bodyVoxels = bodyIndices(volume).length
+  assert.ok(bodyVoxels > limits.defaultCells && bodyVoxels <= limits.maxCells)
+  // The 8 mm level is over the opening's limit, which is only known once it's built, so the search builds it on its
+  // way to the 16 mm level; the 4 mm and 32 mm levels wait, and every Detail is listed from the start
+  const staged = stageBody(volume, { limits })
+  assert.equal(staged.opening.block, 4)
+  assert.deepEqual(
+    staged.levels.map((level) => level.block),
+    [2, 4],
+  )
+  assert.deepEqual(
+    staged.details.map((detail) => detail.label),
+    ['4 mm', '8 mm', '16 mm', '32 mm'],
+  )
+  // An opening by label builds that level alone
+  const coarsest = stageBody(volume, { limits, opening: '32 mm' })
+  assert.equal(coarsest.opening.block, 8)
+  assert.deepEqual(
+    coarsest.levels.map((level) => level.block),
+    [8],
+  )
+  // A label the body has only over the cap, or not at all, opens as the default does
+  for (const opening of ['4 mm', '2 mm']) {
+    const capped = stageBody(volume, { limits: { maxCells: bodyVoxels - 1, defaultCells: 100 }, opening })
+    assert.equal(capped.opening.block, 4)
+    assert.deepEqual(
+      capped.details.map((detail) => detail.label),
+      ['8 mm', '16 mm', '32 mm'],
+    )
+  }
+})
+
+// An L of body voxels, fifteen along i and j, under a cap of ten cells: the 4 mm level, a cell per body voxel, is over
+// it, and the 8 mm blocks could hold up to fifteen cells but hold seven
+const lLimits = { maxCells: 10, defaultCells: 5 }
+function lVolume(): Volume {
+  const cells: { at: Triple; rgb: Triple }[] = []
+  for (let n = 0; n < 8; n++) cells.push({ at: [n, 0, 0], rgb: [n, 0, 0] })
+  for (let n = 1; n < 8; n++) cells.push({ at: [0, n, 0], rgb: [0, n, 0] })
+  return volumeOf([8, 8, 1], cells)
+}
+
+void test('a level not known to be within the cap is listed only once it is built and kept', () => {
+  const volume = lVolume()
+  const staged = stageBody(volume, { limits: lLimits, opening: '16 mm' })
+  assert.deepEqual(
+    staged.details.map((detail) => detail.label),
+    ['16 mm', '32 mm'],
+  )
+  while (staged.advance(4));
+  assert.deepEqual(
+    staged.details.map((detail) => detail.label),
+    ['8 mm', '16 mm', '32 mm'],
+  )
+  assert.equal(levelOf(staged.levels, 2)?.count, 7)
+  assert.deepEqual(staged.levels, buildBody(volume, lLimits).levels)
+})
+
+void test('a label opens its level wherever it is within the cap, and the finest over the cap is never built', () => {
+  const volume = lVolume()
+  const share = bodyIndices(volume).length
+  const atOnce = buildBody(volume, lLimits).levels
+  // The 8 mm level could be over the cap, as a finer file's level of the Detail shown can be, but isn't, so it opens
+  // as the 16 mm level does
+  for (const [opening, block] of [
+    ['8 mm', 2],
+    ['16 mm', 4],
+  ] as const) {
+    const staged = stageBody(volume, { limits: lLimits, opening })
+    assert.equal(staged.opening.block, block, `opening ${opening}`)
+    // A share of every body voxel builds one level a call: the two still to build, and never the 4 mm level
+    let calls = 1
+    while (staged.advance(share)) calls++
+    assert.equal(calls, 2, `opening ${opening}`)
+    assert.deepEqual(staged.levels, atOnce)
+  }
 })

@@ -10,6 +10,7 @@ import { blockGrid, type BlockGrid } from '../volume/blockGrid.ts'
 import { bodyCoverage, scenePosition, type Triple, type Volume } from '../volume/format.ts'
 import { labelOf, type Bounds } from '../volume/levels.ts'
 import { cutPlanes, type Cuts } from './cuts.ts'
+import { reportFirstDraw } from './firstDraw.ts'
 import { isBackShell, isOit } from './styles.ts'
 import { createBodySampler, rimAt, type BodySampler } from './surfaceShading.ts'
 import { acquireCoverageTexture, acquireVolumeTexture, releaseCoverageTexture, releaseVolumeTexture } from './volumeTexture.ts'
@@ -372,6 +373,7 @@ function mesh(
       geometry.userData.volume = volume
       const meshes = build(geometry, owned.materials)
       discard(owned, kind)
+      for (const each of meshes) reportFirstDraw(each, volume)
       owned.group.add(...meshes)
       owned[kind] = { geometry, meshes }
       const triangles = built.indices.length / 3

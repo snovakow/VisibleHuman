@@ -5,6 +5,7 @@ import { NodeMaterial, type Mesh } from 'three/webgpu'
 import { useShallow } from 'zustand/react/shallow'
 import { useStore } from '../store.ts'
 import { cutBox, type Cuts } from './cuts.ts'
+import { reportFirstDraw } from './firstDraw.ts'
 import { stepShare } from './quality.ts'
 import { createRayQuad } from './rayQuad.ts'
 import { asWebGPU } from './renderer.ts'
@@ -75,6 +76,7 @@ export function BodyVolume() {
     const texture = readsMri ? acquireMriTexture(volume) : acquireVolumeTexture(volume)
     current.march.show(texture, volume, bounds.center)
     current.quad.visible = true
+    reportFirstDraw(current.quad, volume)
     return () => {
       current.quad.visible = false
       if (readsMri) releaseMriTexture(volume)

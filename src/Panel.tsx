@@ -102,9 +102,12 @@ export function Panel({ renderer }: { renderer: string }) {
   const bodies = useStore((s) => s.bodies)
   const body = useStore((s) => s.bodies?.find((candidate) => candidate.id === s.body))
   const levels = useStore((s) => s.levels)
+  const details = useStore((s) => s.details)
+  // The label of a Detail picked before its level was built, while the build goes on
+  const waiting = useStore((s) => s.details?.find((each) => each.block === s.waiting)?.label)
   const grid = useStore((s) => s.volume?.size)
   const triangles = useStore((s) => s.triangles)
-  // The splats shown, while the splats are the style drawn
+  // The splats shown, while the splats are the style drawn: the shown Detail's level is always built
   const shown = levels && style === 'splats' ? levelOf(levels, detail)?.count : undefined
   // The surface's triangles, each mesh's by name, while the surface is the style drawn
   const meshed =
@@ -115,7 +118,7 @@ export function Panel({ renderer }: { renderer: string }) {
       : ''
 
   // The selects' options: the bodies, the body's levels, each marked where the host hasn't got its file, and its
-  // splat levels by their spacing, coarsest first
+  // Details by their spacing, coarsest first, every one the body has whether its level is built yet or not
   const bodyOptions = useMemo(
     () => (bodies ? Object.fromEntries(bodies.map((each) => [each.label, each.id])) : loadingOption),
     [bodies],
@@ -133,8 +136,8 @@ export function Panel({ renderer }: { renderer: string }) {
     [body, notBuilt],
   )
   const detailOptions = useMemo(
-    () => (levels ? Object.fromEntries(levels.toReversed().map((each) => [each.label, each.block])) : null),
-    [levels],
+    () => (details ? Object.fromEntries(details.toReversed().map((each) => [each.label, each.block])) : null),
+    [details],
   )
 
   const [, set] = useControls(() => {
@@ -289,9 +292,9 @@ export function Panel({ renderer }: { renderer: string }) {
       grid: grid ? `${grid.join(' × ')} voxels` : '',
       shown: shown === undefined ? '' : shown.toLocaleString('en'),
       triangles: meshed,
-      status: error ?? statusText[status],
+      status: error ?? (waiting && status === 'ready' ? `Building the ${waiting} level…` : statusText[status]),
     })
-  }, [set, renderer, grid, shown, meshed, status, error])
+  }, [set, renderer, grid, shown, meshed, status, error, waiting])
 
   return null
 }

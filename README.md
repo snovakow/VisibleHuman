@@ -75,7 +75,7 @@ The MRI's controls and choices are offered only for the head, and choosing a bod
 
 ### Info
 
-- **Renderer**, **Grid**, **Splats shown**, **Triangles** and **Status** tell you whether WebGPU or WebGL 2 is drawing, how many voxels the loaded file holds along each axis, how many splats are being drawn, how many triangles each of the surface's meshes holds, and whether the body is still loading, is ready, or failed and why.
+- **Renderer**, **Grid**, **Splats shown**, **Triangles** and **Status** tell you whether WebGPU or WebGL 2 is drawing, how many voxels the loaded file holds along each axis, how many splats are being drawn, how many triangles each of the surface's meshes holds, and whether the body is still loading, is ready, is still building a Detail picked as it opened, or failed and why.
 
 The counter at the top left shows the frame rate.
 
