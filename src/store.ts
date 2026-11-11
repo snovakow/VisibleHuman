@@ -63,6 +63,11 @@ let shown: { body: string; level: string } | null = null
 const sliceMs = 8
 const sliceVoxels = 16_384
 
+// What the page's first frame of a body logs, from the load that drew it, until it has: the times since navigation
+// and the times to fetch, decode and build
+let firstFrame: { volume: Volume; body: string; line: string } | 'logged' | null = null
+const ms = (value: number) => Math.round(value).toLocaleString('en')
+
 // The volume shown, its levels as they're built, and whether the build of the rest has started
 let staging: { volume: Volume; body: string; staged: StagedBody; started: boolean } | null = null
 
@@ -120,6 +125,11 @@ export const useStore = create<State>()((set, get) => ({
   details: null,
   waiting: null,
   drawn: (volume) => {
+    if (firstFrame !== null && firstFrame !== 'logged' && firstFrame.volume === volume) {
+      const { body, line } = firstFrame
+      console.info(`VisibleHuman: the ${body}'s first frame at ${ms(performance.now())} ms since navigation; ${line}`)
+      firstFrame = 'logged'
+    }
     if (staging?.volume === volume) buildRest(set, get)
   },
   options: defaultOptions,
@@ -239,6 +249,17 @@ export const useStore = create<State>()((set, get) => ({
         capabilities,
         options: drawableOptions({ ...options, detail: opening.block }, capabilities),
       })
+
+      if (firstFrame !== 'logged') {
+        firstFrame = {
+          volume: loaded.volume,
+          body: body.id,
+          line:
+            `${level.file} requested at ${ms(loaded.requestedAt)} ms, fetched in ${ms(loaded.fetchMs)} ms, ` +
+            `decoded in ${ms(loaded.gunzipMs + loaded.readMs)} ms and its ${opening.label} level built in ` +
+            `${ms(buildMs)} ms`,
+        }
+      }
 
       const extent = bounds.half.map((half) => Math.round(half * 2)).join(' × ')
       const others = staged.details.filter((each) => !levelOf(staged.levels, each.block)).length

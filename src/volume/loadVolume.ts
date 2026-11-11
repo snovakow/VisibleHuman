@@ -56,8 +56,11 @@ async function gunzip(bytes: Uint8Array<ArrayBuffer>) {
 
 interface LoadedVolume {
   volume: Volume
-  // The file's bytes as fetched, and the milliseconds to decompress them and to read them
+  // The file's bytes as fetched, when it was asked for in the page's clock, and the milliseconds to fetch it whole, to
+  // decompress it and to read it
   bytes: number
+  requestedAt: number
+  fetchMs: number
   gunzipMs: number
   readMs: number
 }
@@ -66,6 +69,7 @@ interface LoadedVolume {
 // and a NotBuiltError where the host doesn't have it
 export async function loadVolume(level: LevelEntry, signal: AbortSignal): Promise<LoadedVolume> {
   const url = level.file
+  const requestedAt = performance.now()
   let bytes: Uint8Array<ArrayBuffer>
   try {
     const response = await fetch(url, { signal })
@@ -82,7 +86,14 @@ export async function loadVolume(level: LevelEntry, signal: AbortSignal): Promis
     const unzipped = performance.now()
     const volume = readVolume(raw)
     const read = performance.now()
-    return { volume, bytes: bytes.length, gunzipMs: unzipped - start, readMs: read - unzipped }
+    return {
+      volume,
+      bytes: bytes.length,
+      requestedAt,
+      fetchMs: start - requestedAt,
+      gunzipMs: unzipped - start,
+      readMs: read - unzipped,
+    }
   } catch (error) {
     throw new Error(`The volume file, ${url}, was refused. ${messageOf(error)}`, { cause: error })
   }
