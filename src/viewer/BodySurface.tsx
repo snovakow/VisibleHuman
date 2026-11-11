@@ -1,7 +1,7 @@
 import { useThree } from '@react-three/fiber'
 import { useEffect, useRef } from 'react'
 import { BackSide, BufferAttribute, BufferGeometry, Mesh, Plane, SRGBColorSpace, Uint8BufferAttribute } from 'three'
-import { colorSpaceToWorking, max, normalWorldGeometry, positionWorld, uniform, vec3, vec4, vertexColor } from 'three/tsl'
+import { colorSpaceToWorking, context, max, normalWorldGeometry, positionWorld, uniform, vec3, vec4, vertexColor } from 'three/tsl'
 import { ClippingGroup, MeshBasicNodeMaterial, MeshStandardNodeMaterial, type Node, type UniformNode } from 'three/webgpu'
 import { useShallow } from 'zustand/react/shallow'
 import { useStore } from '../store.ts'
@@ -127,6 +127,14 @@ export function BodySurface() {
       shell: lit(skinRoughness),
     }
     for (const material of [materials.skin, materials.back]) material.opacityNode = max(opacityUniform, edge)
+    // A see-through face's colour is kept only where its depth equals what its depth-only pass wrote, and the two
+    // passes are different shaders, which may round the same vertex's position differently: WebGPU did, leaving
+    // scattered pixels, more of them nearer the camera, that showed what's behind and moved as the view turned. Marked
+    // invariant in both, the position is computed the same way in each
+    const samePosition = context({ invariant: true })
+    for (const material of [materials.skin, materials.skinDepth, materials.back, materials.backDepth]) {
+      material.contextNode = samePosition
+    }
     const planes: [Plane, Plane, Plane] = [new Plane(), new Plane(), new Plane()]
     const group = new ClippingGroup()
     group.clippingPlanes = planes
