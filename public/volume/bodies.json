@@ -79,7 +79,61 @@
             1.98,
             2
           ],
-          "optional": true
+          "optional": true,
+          "size": [
+            286,
+            165,
+            941
+          ],
+          "bytes": 37949648,
+          "textureBytes": 177623160,
+          "density": "ct",
+          "blockGains": [
+            {
+              "slices": [
+                1001,
+                1505
+              ],
+              "gain": [
+                1,
+                1,
+                1
+              ]
+            },
+            {
+              "slices": [
+                1506,
+                2016
+              ],
+              "gain": [
+                1,
+                1,
+                1
+              ]
+            },
+            {
+              "slices": [
+                2017,
+                2423
+              ],
+              "gain": [
+                1,
+                1,
+                1
+              ]
+            },
+            {
+              "slices": [
+                2436,
+                2878
+              ],
+              "gain": [
+                1,
+                1,
+                1
+              ]
+            }
+          ]
         }
       ]
     },
@@ -162,7 +216,61 @@
             1.98,
             2
           ],
-          "optional": true
+          "optional": true,
+          "size": [
+            269,
+            154,
+            867
+          ],
+          "bytes": 30989134,
+          "textureBytes": 143665368,
+          "density": "ct",
+          "blockGains": [
+            {
+              "slices": [
+                1001,
+                1492
+              ],
+              "gain": [
+                1,
+                1,
+                1
+              ]
+            },
+            {
+              "slices": [
+                1497,
+                1977
+              ],
+              "gain": [
+                1,
+                1,
+                1
+              ]
+            },
+            {
+              "slices": [
+                1978,
+                2328
+              ],
+              "gain": [
+                1,
+                1,
+                1
+              ]
+            },
+            {
+              "slices": [
+                2330,
+                2730
+              ],
+              "gain": [
+                1,
+                1,
+                1
+              ]
+            }
+          ]
         }
       ]
     },
@@ -212,7 +320,28 @@
             1.029,
             1.029
           ],
-          "optional": true
+          "optional": true,
+          "size": [
+            148,
+            221,
+            213
+          ],
+          "bytes": 15638382,
+          "textureBytes": 27867216,
+          "density": "ct",
+          "blockGains": [
+            {
+              "slices": [
+                1,
+                1477
+              ],
+              "gain": [
+                1,
+                1,
+                1
+              ]
+            }
+          ]
         },
         {
           "id": "0.6mm",
