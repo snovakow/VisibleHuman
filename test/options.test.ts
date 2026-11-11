@@ -8,11 +8,12 @@ import {
   optionKeys,
   viewOptions,
   type Dependence,
+  type Dependences,
   type Folder,
   type ShownWhile,
   type ViewOptions,
 } from '../src/options.ts'
-import { styles, type Style } from '../src/viewer/styles.ts'
+import { isBackShell, isOit, styles, type Style } from '../src/viewer/styles.ts'
 import { boneDensity } from '../src/volume/density.ts'
 
 // The options table: the defaults the store opens on, the ranges and choices the panel is built from, and the splats'
@@ -20,15 +21,20 @@ import { boneDensity } from '../src/volume/density.ts'
 
 const folders: Folder[] = ['Body', 'Look', 'Cuts', 'Scene']
 
-// Every control a control's showing depends on, in every style
+// Every control a control's showing depends on, in every style, however deep its rules nest
 function dependencesOf(shownWhile: ShownWhile): Dependence[] {
   const listed = 'byStyle' in shownWhile ? Object.values(shownWhile.byStyle) : [shownWhile]
-  return listed.flatMap((each) => ('all' in each ? [...each.all] : [each]))
+  const flatten = (rule: Dependences): Dependence[] =>
+    'all' in rule ? rule.all.flatMap(flatten) : 'any' in rule ? rule.any.flatMap(flatten) : [rule]
+  return listed.flatMap(flatten)
 }
 
 // Whether an option's control shows in a style, with the options as given
 const shows = (option: keyof ViewOptions, style: Style, options: ViewOptions) =>
   isShown(viewOptions[option], style, (key) => (isOption(key) ? options[key] : undefined))
+
+// The defaults with some options changed
+const at = (changes: Partial<ViewOptions>): ViewOptions => ({ ...defaultOptions, ...changes })
 
 void test('the defaults hold every option in the table, each at its entry\'s default', () => {
   assert.deepEqual(Object.keys(defaultOptions).sort(), optionKeys.slice().sort())
@@ -101,8 +107,17 @@ void test('the raytrace traces both surfaces, lays two layers below full Opacity
   // The brain is a choice too, for a body with an MRI
   assert.deepEqual(Object.values(trace.choices).sort(), ['bone', 'both', 'brain', 'skin'])
   assert.deepEqual([layers.min, layers.max, layers.step, layers.default], [1, 4, 1, 2])
-  // The layers matter only where a ray sees through the skin
-  assert.deepEqual(layers.shownWhile, { option: 'opacity', below: 1 })
+  // The layers matter only where a ray sees through the skin: below full Opacity, with the skin traced, since a ray
+  // stops at the bone, and at the brain, which is traced as the bone is
+  for (const [traced, opacity, shown] of [
+    ['both', 0.5, true],
+    ['skin', 0.5, true],
+    ['both', 1, false],
+    ['bone', 0.5, false],
+    ['brain', 0.5, false],
+  ] as const) {
+    assert.equal(shows('layers', 'raytrace', at({ trace: traced, opacity })), shown, `Layers, tracing ${traced} at Opacity ${opacity}`)
+  }
   assert.equal(shadows.default, false)
   // The light starts above and to the left of the camera, and its sliders show only while shadows are cast
   assert.ok(lightAzimuth.default < 0 && lightElevation.default > 0)
@@ -126,8 +141,14 @@ void test('the surface draws the skin and the bone, no back shell until asked be
   assert.deepEqual([skin.default, bone.default, backShell.default, caps.default], [true, true, false, true])
   for (const entry of [skin, bone, backShell]) assert.deepEqual([entry.folder, entry.shownFor], ['Look', { styles: ['surface'] }])
   assert.deepEqual([caps.folder, caps.shownFor], ['Cuts', { styles: ['surface'] }])
-  // The far side shows only under a see-through near side
-  assert.deepEqual(backShell.shownWhile, { option: 'opacity', below: 1 })
+  // The far side shows only under a see-through near side, which needs the skin
+  for (const [opacity, skinOn, shown] of [
+    [0.5, true, true],
+    [1, true, false],
+    [0.5, false, false],
+  ] as const) {
+    assert.equal(shows('backShell', 'surface', at({ opacity, skin: skinOn })), shown, `Back shell at Opacity ${opacity}, Skin ${skinOn}`)
+  }
   // The bone threshold and the rim serve the surface as they serve the raytrace
   for (const entry of [boneThreshold, rim]) assert.deepEqual(entry.shownFor, { styles: ['raytrace', 'surface'] })
   // The switches come before the shared sliders, and Caps after the cuts
@@ -177,11 +198,10 @@ void test('the page opens with no effect on: no bloom, the sorted blend, and the
   for (const entry of [bloom, bloomRadius, bloomThreshold]) {
     assert.deepEqual([entry.folder, entry.shownFor, entry.needs], ['Scene', 'every', undefined])
   }
-  // The surface's order-independent transparency acts only on a see-through skin, and needs a capable backend
-  assert.deepEqual(
-    [oit.kind, oit.folder, oit.shownFor, oit.shownWhile, oit.needs],
-    ['switch', 'Scene', { styles: ['surface'] }, { option: 'opacity', below: 1 }, 'oit'],
-  )
+  // The surface's order-independent transparency acts only on what's see-through, and needs a capable backend
+  assert.deepEqual([oit.kind, oit.folder, oit.shownFor, oit.needs], ['switch', 'Scene', { styles: ['surface'] }, 'oit'])
+  assert.equal(shows('oit', 'surface', at({ opacity: 0.5 })), true)
+  assert.equal(shows('oit', 'surface', defaultOptions), false)
   assert.deepEqual([bloom.label, bloomRadius.label, bloomThreshold.label, oit.label], ['Bloom', 'Bloom radius', 'Bloom threshold', 'OIT'])
   // They come after the depth cue, the switch last
   assert.deepEqual(optionKeys.slice(optionKeys.indexOf('depthCue')), ['depthCue', 'bloom', 'bloomRadius', 'bloomThreshold', 'oit'])
@@ -237,7 +257,6 @@ void test('the volume draws the photographs\' colour until Grey is asked for, a 
 })
 
 void test('the Bone threshold shows while the bone is drawn, and the MRI threshold while the brain is', () => {
-  const at = (changes: Partial<ViewOptions>): ViewOptions => ({ ...defaultOptions, ...changes })
   // The raytrace's bone is traced alone or with the skin, and its brain on its own
   for (const [trace, bone, brain] of [['skin', false, false], ['bone', true, false], ['both', true, false], ['brain', false, true]] as const) {
     assert.equal(shows('boneThreshold', 'raytrace', at({ trace })), bone, `Bone threshold, tracing ${trace}`)
@@ -264,6 +283,95 @@ void test('the Bone threshold shows while the bone is drawn, and the MRI thresho
   }
   // A body without an MRI holds Inner at its default, where the surface's Bone switch alone decides
   assert.equal(shows('boneThreshold', 'surface', drawableOptions(at({ inner: 'brain' }), { weighted: true, oit: true, mri: false })), true)
+  // With the skin traced alone, the bone still shadows a cut face, so its threshold shows while Shadows are cast on
+  // an open cut, and not otherwise
+  for (const [shadows, coronal, shown] of [
+    [true, 0.4, true],
+    [true, 0, false],
+    [false, 0.4, false],
+  ] as const) {
+    assert.equal(shows('boneThreshold', 'raytrace', at({ trace: 'skin', shadows, coronal })), shown, `Shadows ${shadows}, Coronal ${coronal}`)
+  }
+  // The brain's shadows on a cut face are the brain's own, at the MRI threshold
+  assert.equal(shows('boneThreshold', 'raytrace', at({ trace: 'brain', shadows: true, coronal: 0.4 })), false)
+  // With the surface's inner mesh off, its threshold still sets which part of a see-through cap's section is solid,
+  // so it shows while a cap shows below full Opacity
+  for (const inner of ['bone', 'brain'] as const) {
+    const threshold = inner === 'bone' ? 'boneThreshold' : 'mriThreshold'
+    const other = inner === 'bone' ? 'mriThreshold' : 'boneThreshold'
+    for (const [opacity, caps, axial, shown] of [
+      [0.5, true, 0.3, true],
+      [1, true, 0.3, false],
+      [0.5, false, 0.3, false],
+      [0.5, true, 0, false],
+    ] as const) {
+      const options = at({ bone: false, inner, opacity, caps, axial })
+      assert.equal(shows(threshold, 'surface', options), shown, `${threshold}, Inner ${inner}, Opacity ${opacity}, Caps ${caps}, Axial ${axial}`)
+      assert.equal(shows(other, 'surface', options), false, `${other}, Inner ${inner}`)
+    }
+  }
+})
+
+void test('Opacity shows wherever something is see-through: every splat and step, the raytrace\'s skin, and the surface\'s skin or caps', () => {
+  for (const style of ['splats', 'volume'] as const) {
+    assert.equal(shows('opacity', style, at({ trace: 'bone', skin: false })), true, style)
+  }
+  // The raytrace lays the skin see-through and nothing else: a ray stops at the bone, and at the brain
+  for (const [trace, shown] of [['skin', true], ['both', true], ['bone', false], ['brain', false]] as const) {
+    assert.equal(shows('opacity', 'raytrace', at({ trace })), shown, `tracing ${trace}`)
+  }
+  // The surface's bone and shell are opaque, so with the skin off only a cap's section is left to see through
+  for (const [skin, caps, sagittal, shown] of [
+    [true, true, 0, true],
+    [false, true, 0.5, true],
+    [false, true, 0, false],
+    [false, false, 0.5, false],
+  ] as const) {
+    assert.equal(shows('opacity', 'surface', at({ skin, caps, sagittal })), shown, `Skin ${skin}, Caps ${caps}, Sagittal ${sagittal}`)
+  }
+})
+
+void test('each of the surface\'s controls shows while there\'s a mesh or a cap for it to act on', () => {
+  // Detail sets the blocks of the skin and the shell, and Caps shows on an open cut
+  for (const [skin, depth, shown] of [[true, 0, true], [false, 10, true], [false, 0, false]] as const) {
+    assert.equal(shows('detail', 'surface', at({ skin, depth })), shown, `Detail, Skin ${skin}, Depth ${depth}`)
+  }
+  assert.equal(shows('detail', 'splats', at({ skin: false })), true)
+  assert.deepEqual([shows('caps', 'surface', defaultOptions), shows('caps', 'surface', at({ coronal: 0.2 }))], [false, true])
+  // Colour and Rim act on whatever is meshed, and Rim on every traced surface
+  for (const option of ['colour', 'rim'] as const) {
+    assert.equal(shows(option, 'surface', at({ skin: false, bone: false })), false, option)
+    for (const changes of [{ skin: false }, { bone: false }, { skin: false, bone: false, depth: 5 }]) {
+      assert.equal(shows(option, 'surface', at(changes)), true, `${option} ${JSON.stringify(changes)}`)
+    }
+  }
+  for (const trace of ['skin', 'bone', 'both', 'brain'] as const) assert.equal(shows('rim', 'raytrace', at({ trace })), true, trace)
+  // Inner names the inner mesh, and the solid part of a see-through cap's section with that mesh off
+  for (const [bone, opacity, axial, shown] of [
+    [true, 1, 0, true],
+    [false, 0.5, 0.3, true],
+    [false, 1, 0.3, false],
+    [false, 0.5, 0, false],
+  ] as const) {
+    assert.equal(shows('inner', 'surface', at({ bone, opacity, axial })), shown, `Inner, Bone ${bone}, Opacity ${opacity}, Axial ${axial}`)
+  }
+})
+
+void test('OIT and the back shell show exactly where the scene draws them, so neither is at work while it\'s hidden', () => {
+  for (const style of ['splats', 'volume', 'raytrace', 'surface'] as const) {
+    for (const opacity of [0.5, 1]) {
+      for (const skin of [false, true]) {
+        for (const caps of [false, true]) {
+          for (const coronal of [0, 0.4]) {
+            const options = at({ style, opacity, skin, caps, coronal, oit: true, backShell: true })
+            const state = `${style}, Opacity ${opacity}, Skin ${skin}, Caps ${caps}, Coronal ${coronal}`
+            assert.equal(isOit(options), shows('oit', style, options), `OIT, ${state}`)
+            assert.equal(isBackShell(options), shows('backShell', style, options), `Back shell, ${state}`)
+          }
+        }
+      }
+    }
+  }
 })
 
 void test('a control shows while every control it depends on allows it, by the style drawn where they differ', () => {
@@ -277,7 +385,13 @@ void test('a control shows while every control it depends on allows it, by the s
   const all = { shownFor: 'every', shownWhile: { all: [{ option: 'a', above: 0 }, { option: 'b', below: 1 }] } } as const
   const both = (a: number, b: number) => (key: string) => (key === 'a' ? a : b)
   assert.deepEqual([isShown(all, 'splats', both(1, 0)), isShown(all, 'splats', both(0, 0)), isShown(all, 'splats', both(1, 1))], [true, false, false])
+  // Any of several, and groups nested in groups
+  const any = { shownFor: 'every', shownWhile: { any: [{ option: 'a', above: 0 }, { all: [{ option: 'b', below: 1 }, { option: 'a', below: 0 }] }] } } as const
+  assert.deepEqual(
+    [isShown(any, 'splats', both(1, 5)), isShown(any, 'splats', both(-1, 0)), isShown(any, 'splats', both(-1, 5)), isShown(any, 'splats', both(0, 0))],
+    [true, true, false, false],
+  )
   // A single dependence, as most entries have
-  assert.equal(isShown(viewOptions.layers, 'raytrace', (key) => (key === 'opacity' ? 0.5 : undefined)), true)
-  assert.equal(isShown(viewOptions.layers, 'raytrace', (key) => (key === 'opacity' ? 1 : undefined)), false)
+  assert.equal(isShown(viewOptions.bloomRadius, 'splats', (key) => (key === 'bloom' ? 0.5 : undefined)), true)
+  assert.equal(isShown(viewOptions.bloomRadius, 'splats', (key) => (key === 'bloom' ? 0 : undefined)), false)
 })

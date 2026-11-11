@@ -29,15 +29,22 @@ export function isWeighted(options: { style: Style; blend: Blend }) {
   return options.blend === 'weighted' && options.style === 'splats'
 }
 
-// Whether the far side of the body is drawn under its near side, so that it reads as hollow glass: the Back shell
-// switch on, with the surface below full Opacity. At full Opacity the surface is opaque, so the far side is hidden and
-// the switch draws nothing
-export function isBackShell(options: { style: Style; backShell: boolean; opacity: number }) {
-  return options.backShell && options.style === 'surface' && options.opacity < 1
+// Whether the surface's caps show a section: the Caps switch on, with a cut open
+export function isCapped(options: { caps: boolean; axial: number; coronal: number; sagittal: number }) {
+  return options.caps && (options.axial > 0 || options.coronal > 0 || options.sagittal > 0)
 }
 
-// Whether the surface's see-through skin is summed without an order rather than shown by its depth pass: the OIT switch
-// on, with the surface below full Opacity. At full Opacity nothing is see-through, so the switch draws nothing
-export function isOit(options: { style: Style; oit: boolean; opacity: number }) {
-  return options.oit && options.style === 'surface' && options.opacity < 1
+// Whether the far side of the body is drawn under its near side, so that it reads as hollow glass: the Back shell
+// switch on, with the surface's skin below full Opacity. At full Opacity the surface is opaque, so the far side is
+// hidden, and with the skin off there's no far side to draw, so the switch draws nothing
+export function isBackShell(options: { style: Style; backShell: boolean; opacity: number; skin: boolean }) {
+  return options.backShell && options.style === 'surface' && options.opacity < 1 && options.skin
+}
+
+// Whether the surface's see-through layers are summed without an order rather than shown by the skin's depth pass:
+// the OIT switch on, with the surface below full Opacity and something see-through to sum, the skin or a cap's
+// section. At full Opacity, or with neither, there's nothing to sum, and the pass that sums would only draw the opaque
+// meshes again, which on the WebGL 2 fallback it does without multisampling, so their edges would lose their smoothing
+export function isOit(options: { style: Style; oit: boolean; opacity: number; skin: boolean } & Parameters<typeof isCapped>[0]) {
+  return options.oit && options.style === 'surface' && options.opacity < 1 && (options.skin || isCapped(options))
 }

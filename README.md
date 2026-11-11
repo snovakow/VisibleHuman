@@ -15,16 +15,16 @@ The panel at the top right groups its controls in folders, and shows in each onl
 ### Body
 
 - **Body** chooses the body: the male, the female or the head. Adding `?body=female` or `?body=head` to the address opens the page on that body, and the address follows the body chosen, so a link opens on the body it was copied from.
-- **Level** chooses the file the body is drawn from: for the male and the female 4 mm, which they open on, or 2 mm, twice as fine along each axis and a larger download, and for the head 1.2 mm, which it opens on, then 1 mm and 0.6 mm. The view stays where it was left, as a new body's doesn't: each body opens framed whole from the front. Where the site doesn't have a level's file, the panel marks it not built and the body stays as it was.
+- **Level** chooses the file the body is drawn from: for the male and the female 4 mm, which they open on, or 2 mm, twice as fine along each axis and a larger download, and for the head 1.2 mm, which it opens on, then 1 mm and 0.6 mm. The view stays where it was left, as a new body's doesn't: each body opens framed whole from the front. A body chosen again opens at the level it was left at, and at the Detail last picked for it, where that level has it. Where the site doesn't have a level's file, the panel marks it not built and the body stays as it was.
 
 ### Look
 
 - **Style** chooses how the body is drawn: splats, volume, raytrace or surface. The splats draw each block of the body as a soft blob of its colour. The volume follows a ray from the eye through each pixel and samples the body in small steps along it; the raytrace follows the same ray until it reaches the skin or the bone, and lights the surface it finds there; the surface builds the skin and the bone as meshes, in a background thread, and lights them as solid objects. Adding `?style=` and a style's name to the address, as in `?style=volume`, opens the page on that style.
-- **Opacity** fades the whole body, so you can see into it. In the raytrace and the surface it makes the skin see-through, with the bone solid behind it.
+- **Opacity** fades the whole body, so you can see into it. In the raytrace and the surface it makes the skin see-through, with the bone solid behind it, so it shows there while there's skin to see through, or, in the surface, a cap's section.
 
 With the splats:
 
-- **Detail** sets the size of the blocks the body is drawn in: at the male's 4 mm level, 32 mm (about 4,500 splats), 16 mm (about 30,000), 8 mm (about 215,000, where it starts) or 4 mm (about 1.6 million, which has the most detail and runs slowest), and about a fifth fewer at each on the female's. At the head's 1.2 mm level it's 9.6 mm (about 6,500), 4.8 mm (about 47,000, where it starts under WebGL 2) or 2.4 mm (about 360,000, where it starts under WebGPU): the file's own 1.2 mm blocks, nearly 2.8 million, are more than the page draws. The surface builds its skin from the same blocks, so Detail shows for the surface too, and the skin is as coarse or as fine as the splats at each Detail, while its bone keeps the loaded file's own grid.
+- **Detail** sets the size of the blocks the body is drawn in: at the male's 4 mm level, 32 mm (about 4,500 splats), 16 mm (about 30,000), 8 mm (about 215,000, where it starts) or 4 mm (about 1.6 million, which has the most detail and runs slowest), and about a fifth fewer at each on the female's. At the head's 1.2 mm level it's 9.6 mm (about 6,500), 4.8 mm (about 47,000, where it starts under WebGL 2) or 2.4 mm (about 360,000, where it starts under WebGPU): the file's own 1.2 mm blocks, nearly 2.8 million, are more than the page draws. The surface builds its skin, and the shell a Depth draws, from the same blocks, so Detail shows for the surface too while either is drawn, and the skin is as coarse or as fine as the splats at each Detail, while its bone keeps the loaded file's own grid.
 - **Size** shrinks or grows every splat, from half to twice its starting size.
 - **Blend** chooses how the splats lie over one another. *normal* draws them back to front, each over what's behind it; *glow* adds each one's light to what's behind, so the body brightens where splats pile up, which a low Opacity keeps from burning out; *weighted* mixes them by how near and how opaque each is, with no order at all, so at a low Opacity the body reads like an X-ray in its own colours.
 
@@ -43,39 +43,39 @@ With the volume or the raytrace:
 With the raytrace:
 
 - **Trace** chooses which surfaces the raytrace follows each ray to: the *skin*, the *bone*, or *both*, whichever comes first. For the head there's also *brain*, the surface where its MRI passes the MRI threshold, which is the brain's once a cut opens the skull.
-- **Layers**, below full Opacity, sets how many surfaces a ray lays over one another before it stops: the skin alone at 1, then the bone or the far side of the skin behind it, and so on. A ray stops at bone whatever the count.
+- **Layers**, below full Opacity with the skin traced, sets how many surfaces a ray lays over one another before it stops: the skin alone at 1, then the bone or the far side of the skin behind it, and so on. A ray stops at bone whatever the count.
 - **Shadows** casts the body's shadows onto its surfaces, from a light above and to the left of the eye, and shows **Light azimuth** and **Light elevation** to move the light around the eye, in degrees. The whole body casts the shadows, so what a cut takes away still throws its shadow, the bone's, onto the section it leaves. It costs frame rate, so it starts off.
 
 With the surface:
 
 - **Skin** and **Bone** switch the surface's skin and bone meshes on and off.
-- **Back shell**, below full Opacity, draws the far side of the skin under the near side, so the body reads as a hollow glass shell rather than a single film.
-- **Inner**, for the head, chooses the mesh that the Bone switch shows: the *bone*, or the *brain*, the surface where the MRI passes the MRI threshold.
+- **Back shell**, below full Opacity with the skin on, draws the far side of the skin under the near side, so the body reads as a hollow glass shell rather than a single film.
+- **Inner**, for the head, chooses the mesh that the Bone switch shows: the *bone*, or the *brain*, the surface where the MRI passes the MRI threshold. Below full Opacity it also chooses which part of a cap's section is solid, so it stays while a cap shows with the Bone switch off.
 - **Colour** chooses where the surface's colour comes from. *texture*, which it starts on, reads the tissue just under each point of a mesh, at the loaded file's own grid whatever the Detail, so the skin shows the photographs' skin tone and the bone its cream; *cells* colours each vertex of a mesh from the blocks either side of it on the grid the mesh was built from, so the skin is coloured much as the splats are at that Detail.
 - **Depth** draws the closed surface that lies that many millimetres under the skin all over the body, opaque, so that through a see-through skin, or with the skin switched off, it shows the tissue at that depth. At 0 there's none. The surface builds it again at each new depth.
 
 With the raytrace or the surface:
 
-- **Bone threshold** sets the density from which tissue counts as bone, on the scale the file stores it in, where the default is bone's. Lowering it toward 90 shows the ribs whole at the 4 mm level, where a block holds as much soft tissue as bone; raising it keeps only the densest bone. The surface builds its bone mesh again at each new value. It shows while there's bone to draw: while the raytrace traces it, or while the surface's Bone switch is on with Inner on the bone.
-- **MRI threshold**, for the head, sets the MRI value, on the file's scale of 1 to 255, at which the raytrace's brain and the surface's inner brain are drawn. It starts at 45, between the skull, which the MRI shows dark, and the brain inside it, and the surface builds the brain again at each new value. It shows while the raytrace traces the brain, or while the surface's Bone switch is on with Inner on the brain.
+- **Bone threshold** sets the density from which tissue counts as bone, on the scale the file stores it in, where the default is bone's. Lowering it toward 90 shows the ribs whole at the 4 mm level, where a block holds as much soft tissue as bone; raising it keeps only the densest bone. The surface builds its bone mesh again at each new value. It shows wherever it changes the picture: while the raytrace traces the bone, or traces the skin alone with Shadows on and a cut open, since the bone shadows a cut face; and in the surface with Inner on the bone, while the Bone switch is on or, below full Opacity, while a cap shows, whose solid part it sets.
+- **MRI threshold**, for the head, sets the MRI value, on the file's scale of 1 to 255, at which the raytrace's brain and the surface's inner brain are drawn. It starts at 45, between the skull, which the MRI shows dark, and the brain inside it, and the surface builds the brain again at each new value. It shows while the raytrace traces the brain, and in the surface with Inner on the brain while the Bone switch is on or, below full Opacity, while a cap shows.
 - **Rim** lights a surface's edges where they turn away from the eye, which draws the skin as a glass shell at a low Opacity.
 
-The MRI's controls and choices are offered only for the head, and choosing a body without an MRI puts Density, Trace and Inner back to their defaults.
+The MRI's controls and choices are offered only for the head. A body without an MRI is drawn with Density, Trace and Inner at their defaults where they're set to read the MRI, and they come back as they were set when the head is chosen again.
 
 ### Cuts
 
 - **Axial**, **Coronal** and **Sagittal** cut the body open. Axial cuts down from the head, coronal back from the front, and sagittal across from the body's right. At 0 nothing is cut, and at 1 the whole body is cut away. The raytrace draws each cut face as the photographs show it, with the bone's section flush with the tissue's.
-- **Caps**, with the surface, shows the section on each cut in the same way: the part of it that belongs to the mesh inside the skin is solid, the bone's or, with Inner on the brain, the brain's, and the rest of the tissue's is at the skin's Opacity.
+- **Caps**, with the surface and a cut open, shows the section on each cut in the same way: the part of it that belongs to the mesh inside the skin is solid, the bone's or, with Inner on the brain, the brain's, and the rest of the tissue's is at the skin's Opacity.
 
 ### Scene
 
 - **Depth cue** darkens the body with distance, from nothing at its near side to the slider's share at its far side, so near and far read apart, most of all in a body you can see through. It works in every style.
 - **Bloom** spreads a glow around the bright parts of the picture, and shows **Bloom radius**, how far it spreads, and **Bloom threshold**, the brightness below which nothing glows. It suits the splats' glow and the volume's.
-- **OIT**, for the surface below full Opacity, shows every layer of the see-through skin over the bone, mixed by how near each is, where the skin otherwise shows its nearest layer alone. It needs nothing drawn in order, which is what its name, order-independent transparency, says. The panel leaves it out where the browser can't draw it, and the weighted Blend likewise.
+- **OIT**, for the surface below full Opacity with the skin on or a cap showing, shows every layer of the see-through skin over the bone, mixed by how near each is, where the skin otherwise shows its nearest layer alone. It needs nothing drawn in order, which is what its name, order-independent transparency, says. The panel leaves it out where the browser can't draw it, and the weighted Blend likewise.
 
 ### Info
 
-- **Renderer**, **Grid**, **Splats shown**, **Triangles** and **Status** tell you whether WebGPU or WebGL 2 is drawing, how many voxels the loaded file holds along each axis, how many splats are being drawn, how many triangles each of the surface's meshes holds, and whether the body is still loading, is ready, is still building a Detail picked as it opened, or failed and why.
+- **Renderer**, **Grid**, **Splats shown**, **Triangles** and **Status** tell you whether WebGPU or WebGL 2 is drawing, how many voxels the loaded file holds along each axis, how many splats are being drawn, with the splats, how many triangles each of the surface's meshes holds, with the surface, and whether the body is still loading, is ready, is still building a Detail picked as it opened, or failed and why.
 
 The counter at the top left shows the frame rate.
 

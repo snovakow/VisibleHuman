@@ -67,10 +67,11 @@ export type Dependence =
   | { option: string; above: number }
   | { option: string; below: number }
 
-// When a control shows, among the styles it's shown for: while one control allows it, or while every one of several
-// does, or, where that differs from style to style, as the style drawn says, a style that says nothing showing it
-// throughout
-type Dependences = Dependence | { all: readonly Dependence[] }
+// When a control shows, among the styles it's shown for: while one control allows it, while every one of several rules
+// does or while any of them does, each rule a control or a group of its own; or, where that differs from style to
+// style, as the style drawn says, a style that says nothing showing it throughout. A control shows wherever its value
+// changes the picture and nowhere else, so that nothing the panel hides can still be at work
+export type Dependences = Dependence | { all: readonly Dependences[] } | { any: readonly Dependences[] }
 export type ShownWhile = Dependences | { byStyle: Partial<Record<Style, Dependences>> }
 
 interface Control<T> {
@@ -79,7 +80,7 @@ interface Control<T> {
   default: T
   shownFor: ShownFor
   shownWhile?: ShownWhile
-  // What the control needs of the backend or of the body shown, without which the panel leaves it out
+  // What the control needs of the backend or of the body shown, without which the panel hides it
   needs?: Capability
 }
 
@@ -140,20 +141,45 @@ const notXray: Dependence = { option: 'mode', isNot: 'xray' }
 const translucent: Dependence = { option: 'opacity', below: 1 }
 // While the shadows are cast, which is all the light's direction is for
 const shadowed: Dependence = { option: 'shadows', is: true }
-// While the bone is drawn: traced by the raytrace, alone or with the skin, or meshed by the surface under its Bone
-// switch with Inner on the bone, which a body without an MRI always has
+// While the raytrace traces the skin, alone or with the bone: the only surface it draws see-through, as a ray stops at
+// the first bone it meets, and at the brain, which is traced as the bone is
+const skinTraced: Dependence = { option: 'trace', oneOf: ['skin', 'both'] }
+// While any of the three cuts is open
+const cutOpen: Dependences = {
+  any: [
+    { option: 'axial', above: 0 },
+    { option: 'coronal', above: 0 },
+    { option: 'sagittal', above: 0 },
+  ],
+}
+// While the surface's caps show a section: their switch on, with a cut open
+const capped: Dependences = { all: [{ option: 'caps', is: true }, cutOpen] }
+// While a cap's section is partly see-through, below full Opacity, where its solid part, the section of the mesh inside
+// the skin, is set by the Inner choice and that mesh's threshold, even with the mesh itself switched off
+const cappedSeeThrough: Dependences = { all: [capped, translucent] }
+// The surface's meshes: the skin, the mesh inside it under the Bone switch, and the shell under the skin at a Depth
+const skinOn: Dependence = { option: 'skin', is: true }
+const innerOn: Dependence = { option: 'bone', is: true }
+const shelled: Dependence = { option: 'depth', above: 0 }
+// While the surface meshes anything at all
+const meshed: Dependences = { any: [skinOn, innerOn, shelled] }
+// While the surface has something to draw see-through below full Opacity: the skin, or a cap's section
+const seeThrough: Dependences = { any: [skinOn, capped] }
+// While the bone is drawn: traced by the raytrace, alone or with the skin, or, with the skin traced alone, casting the
+// shadows on a cut face, which bone alone shadows; or, in the surface with Inner on the bone, which a body without an
+// MRI always has, meshed under the Bone switch or setting where a see-through cap's section turns solid
 const boneDrawn: ShownWhile = {
   byStyle: {
-    raytrace: { option: 'trace', oneOf: ['bone', 'both'] },
-    surface: { all: [{ option: 'bone', is: true }, { option: 'inner', isNot: 'brain' }] },
+    raytrace: { any: [{ option: 'trace', oneOf: ['bone', 'both'] }, { all: [{ option: 'trace', is: 'skin' }, shadowed, cutOpen] }] },
+    surface: { all: [{ option: 'inner', isNot: 'brain' }, { any: [innerOn, cappedSeeThrough] }] },
   },
 }
-// While the brain is drawn, from the MRI: traced by the raytrace, or meshed by the surface under its Bone switch
-// with Inner on the brain
+// While the brain is drawn, from the MRI: traced by the raytrace, or, in the surface with Inner on the brain, meshed
+// under the Bone switch or setting where a see-through cap's section turns solid
 const brainDrawn: ShownWhile = {
   byStyle: {
     raytrace: { option: 'trace', is: 'brain' },
-    surface: { all: [{ option: 'bone', is: true }, { option: 'inner', is: 'brain' }] },
+    surface: { all: [{ option: 'inner', is: 'brain' }, { any: [innerOn, cappedSeeThrough] }] },
   },
 }
 
@@ -172,8 +198,15 @@ const mriThresholdDefault = 45
 export const viewOptions = {
   style: styleChoice({ folder: 'Look', label: 'Style', default: 'splats', shownFor: every }),
   // Block 2 is the 8 mm level of the male's 4 mm file, which is where a load opens it; each load picks its own default.
-  // The surface meshes its skin on the same blocks, so that the mesh and the splats agree on the body
-  detail: detailChoice({ folder: 'Look', label: 'Detail', default: 2, shownFor: blocky }),
+  // The surface meshes its skin, and the shell under it, on the same blocks, so that the mesh and the splats agree on
+  // the body; it shows there while either is meshed
+  detail: detailChoice({
+    folder: 'Look',
+    label: 'Detail',
+    default: 2,
+    shownFor: blocky,
+    shownWhile: { byStyle: { surface: { any: [skinOn, shelled] } } },
+  }),
   // The splats' size, as a share of the grid spacing's. A new Size rebuilds every splat, so it's committed when a
   // drag or an edit ends
   size: slider({ folder: 'Look', label: 'Size', default: 1, min: 0.5, max: 2, step: hundredths, deferred: true, shownFor: splats }),
@@ -245,8 +278,18 @@ export const viewOptions = {
     choiceNeeds: { brain: 'mri' },
     shownFor: raytrace,
   }),
-  // How many surfaces a ray lays over one another below full Opacity before it stops; it stops at bone regardless
-  layers: slider({ folder: 'Look', label: 'Layers', default: 2, min: 1, max: 4, step: 1, shownFor: raytrace, shownWhile: translucent }),
+  // How many surfaces a ray lays over one another below full Opacity before it stops; it stops at bone regardless, so
+  // the count matters only while the skin is traced
+  layers: slider({
+    folder: 'Look',
+    label: 'Layers',
+    default: 2,
+    min: 1,
+    max: 4,
+    step: 1,
+    shownFor: raytrace,
+    shownWhile: { all: [translucent, skinTraced] },
+  }),
   // Casts the body's shadow on its surfaces, by a second march from each hit toward the light, so it's off until asked for
   shadows: toggle({ folder: 'Look', label: 'Shadows', default: false, shownFor: raytrace }),
   // Where the light the shadows fall from is, in degrees from the camera's view: across, from the left to the right,
@@ -272,17 +315,25 @@ export const viewOptions = {
     shownWhile: shadowed,
   }),
   // The surface's two meshes, each a switch, and the far side of the skin drawn under its near side below full
-  // Opacity, so that the body reads as a hollow shell
+  // Opacity, so that the body reads as a hollow shell, while there's a skin to draw it of
   skin: toggle({ folder: 'Look', label: 'Skin', default: true, shownFor: surface }),
   bone: toggle({ folder: 'Look', label: 'Bone', default: true, shownFor: surface }),
-  backShell: toggle({ folder: 'Look', label: 'Back shell', default: false, shownFor: surface, shownWhile: translucent }),
-  // What the mesh inside the skin is of, which the Bone switch shows: offered only for a body with an MRI
+  backShell: toggle({
+    folder: 'Look',
+    label: 'Back shell',
+    default: false,
+    shownFor: surface,
+    shownWhile: { all: [translucent, skinOn] },
+  }),
+  // What the mesh inside the skin is of, which the Bone switch shows, and so which part of a see-through cap's section
+  // is solid: offered only for a body with an MRI
   inner: choice<Inner>({
     folder: 'Look',
     label: 'Inner',
     default: 'bone',
     choices: { bone: 'bone', brain: 'brain' },
     shownFor: surface,
+    shownWhile: { any: [innerOn, cappedSeeThrough] },
     needs: 'mri',
   }),
   colour: choice<SurfaceColour>({
@@ -291,6 +342,7 @@ export const viewOptions = {
     default: 'texture',
     choices: { texture: 'texture', cells: 'cells' },
     shownFor: surface,
+    shownWhile: meshed,
   }),
   // How far under the skin the shell inside it lies, in millimetres: the closed surface that far in from the skin
   // everywhere, which shows the tissue at that depth through a see-through skin or with the skin off. At 0 there is
@@ -298,7 +350,7 @@ export const viewOptions = {
   depth: slider({ folder: 'Look', label: 'Depth (mm)', default: 0, min: 0, max: 100, step: 1, shownFor: surface }),
   // The density, on the file's scale, from which a voxel counts as bone. The default is the scale's, which the
   // density channel was built to; the range runs from dense soft tissue to the densest bone. It shows while the bone
-  // is drawn, though it also sets where the surface's caps turn solid and what shadows a cut face of the raytrace
+  // is drawn, which takes in where it sets the solid part of a see-through cap and what shadows a cut face
   boneThreshold: slider({
     folder: 'Look',
     label: 'Bone threshold',
@@ -324,15 +376,35 @@ export const viewOptions = {
     needs: 'mri',
   }),
   // How much a surface's edges light up where it turns away from the eye, which draws it as a glass shell
-  rim: slider({ folder: 'Look', label: 'Rim', default: 0, min: 0, max: 1, step: hundredths, shownFor: surfaces }),
-  opacity: slider({ folder: 'Look', label: 'Opacity', default: 1, min: 0, max: 1, step: hundredths, shownFor: every }),
+  rim: slider({
+    folder: 'Look',
+    label: 'Rim',
+    default: 0,
+    min: 0,
+    max: 1,
+    step: hundredths,
+    shownFor: surfaces,
+    shownWhile: { byStyle: { surface: meshed } },
+  }),
+  // How opaque the body is. The raytrace lays only its skin see-through, and the surface its skin and the tissue's part
+  // of a cap's section, so it shows there while the skin is traced, or while the skin is meshed or a cap shows
+  opacity: slider({
+    folder: 'Look',
+    label: 'Opacity',
+    default: 1,
+    min: 0,
+    max: 1,
+    step: hundredths,
+    shownFor: every,
+    shownWhile: { byStyle: { raytrace: skinTraced, surface: seeThrough } },
+  }),
   // The cuts run from 0, nothing cut, to 1, the whole body cut away: down from the head, back from the front, and
   // across from the body's right
   axial: slider({ folder: 'Cuts', label: 'Axial', default: 0, min: 0, max: 1, step: hundredths, shownFor: every }),
   coronal: slider({ folder: 'Cuts', label: 'Coronal', default: 0, min: 0, max: 1, step: hundredths, shownFor: every }),
   sagittal: slider({ folder: 'Cuts', label: 'Sagittal', default: 0, min: 0, max: 1, step: hundredths, shownFor: every }),
-  // The section through the body shown on each of the surface's cuts
-  caps: toggle({ folder: 'Cuts', label: 'Caps', default: true, shownFor: surface }),
+  // The section through the body shown on each of the surface's cuts, while one is open
+  caps: toggle({ folder: 'Cuts', label: 'Caps', default: true, shownFor: surface, shownWhile: cutOpen }),
   // How far the far side of the body darkens, from none at 0 to black at 1
   depthCue: slider({ folder: 'Scene', label: 'Depth cue', default: 0, min: 0, max: 1, step: hundredths, shownFor: every }),
   // The strength of a glow spread around the bright parts of the scene, how far it spreads, from 0 to 1, and the
@@ -361,8 +433,15 @@ export const viewOptions = {
   }),
   // Order-independent transparency: the surface's see-through skin summed by how near and how opaque each layer is, in
   // place of the depth pass that shows only the nearest, so that every layer of skin shows over the bone and nothing
-  // depends on the order the triangles are drawn in. It acts only below full Opacity
-  oit: toggle({ folder: 'Scene', label: 'OIT', default: false, shownFor: surface, shownWhile: translucent, needs: 'oit' }),
+  // depends on the order the triangles are drawn in. It acts only below full Opacity, on the skin or a cap's section
+  oit: toggle({
+    folder: 'Scene',
+    label: 'OIT',
+    default: false,
+    shownFor: surface,
+    shownWhile: { all: [translucent, seeThrough] },
+    needs: 'oit',
+  }),
 }
 
 // Each option's value, of the type its entry's default has: a slider's is any number, and a choice's one of its values
@@ -427,7 +506,11 @@ export function isShown(entry: { shownFor: ShownFor; shownWhile?: ShownWhile }, 
     if ('above' in dependence) return typeof value === 'number' && value > dependence.above
     return typeof value === 'number' && value < dependence.below
   }
-  const allow = (dependences: Dependences) => ('all' in dependences ? dependences.all.every(allows) : allows(dependences))
+  const allow = (dependences: Dependences): boolean => {
+    if ('all' in dependences) return dependences.all.every(allow)
+    if ('any' in dependences) return dependences.any.some(allow)
+    return allows(dependences)
+  }
   const { shownWhile } = entry
   if (!shownWhile) return true
   if (!('byStyle' in shownWhile)) return allow(shownWhile)
@@ -435,9 +518,9 @@ export function isShown(entry: { shownFor: ShownFor; shownWhile?: ShownWhile }, 
   return forStyle === undefined || allow(forStyle)
 }
 
-// The options as the backend can draw them and the body shown allows: a choice or a switch that needs what the
-// backend or the body lacks goes back to its default, and the rest stand. The same object comes back where nothing
-// changes
+// The options to draw, from those picked, as the backend can draw them and the body shown allows: a choice or a switch
+// that needs what the backend or the body lacks is drawn at its default, while the store keeps the pick for a backend
+// or a body that can draw it, and the rest stand. The same object comes back where nothing changes
 export function drawableOptions(options: ViewOptions, capabilities: Capabilities): ViewOptions {
   const lacking = (need: Capability | undefined) => need !== undefined && !capabilities[need]
   const blend = lacking(viewOptions.blend.choiceNeeds?.[options.blend]) ? viewOptions.blend.default : options.blend

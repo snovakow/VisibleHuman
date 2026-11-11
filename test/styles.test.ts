@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { viewOptions } from '../src/options.ts'
-import { isBackShell, isOit, isStyle, isWeighted, styles, type Style } from '../src/viewer/styles.ts'
+import { isBackShell, isCapped, isOit, isStyle, isWeighted, styles, type Style } from '../src/viewer/styles.ts'
 
 // The styles' lookup and the rules the effects read
 
@@ -29,25 +29,55 @@ void test('the splats are weighted in the weighted blend alone, and no other sty
   }
 })
 
-void test('the back shell is drawn for the surface below full Opacity with its switch on, and never otherwise', () => {
+// The cuts, none open or one of each open
+const cutStates = [
+  { axial: 0, coronal: 0, sagittal: 0 },
+  { axial: 0.3, coronal: 0, sagittal: 0 },
+  { axial: 0, coronal: 0.3, sagittal: 0 },
+  { axial: 0, coronal: 0, sagittal: 0.3 },
+]
+
+void test('the caps show a section with their switch on and a cut open, and never otherwise', () => {
+  for (const caps of [false, true]) {
+    for (const cuts of cutStates) {
+      const open = cuts.axial > 0 || cuts.coronal > 0 || cuts.sagittal > 0
+      assert.equal(isCapped({ caps, ...cuts }), caps && open, `${caps} ${JSON.stringify(cuts)}`)
+    }
+  }
+})
+
+void test('the back shell is drawn for the surface\'s skin below full Opacity with its switch on, and never otherwise', () => {
   for (const style of ids) {
     for (const backShell of [false, true]) {
       for (const opacity of [0, 0.5, 0.99, 1]) {
-        assert.equal(
-          isBackShell({ style, backShell, opacity }),
-          backShell && style === 'surface' && opacity < 1,
-          `${style} ${backShell} ${opacity}`,
-        )
+        for (const skin of [false, true]) {
+          assert.equal(
+            isBackShell({ style, backShell, opacity, skin }),
+            backShell && style === 'surface' && opacity < 1 && skin,
+            `${style} ${backShell} ${opacity} ${skin}`,
+          )
+        }
       }
     }
   }
 })
 
-void test('the surface\'s layers are summed without an order below full Opacity with OIT on, and never otherwise', () => {
+void test('the surface\'s layers are summed without an order below full Opacity with OIT on and the skin or a cap to see through, and never otherwise', () => {
   for (const style of ids) {
     for (const oit of [false, true]) {
       for (const opacity of [0, 0.5, 0.99, 1]) {
-        assert.equal(isOit({ style, oit, opacity }), oit && style === 'surface' && opacity < 1, `${style} ${oit} ${opacity}`)
+        for (const skin of [false, true]) {
+          for (const caps of [false, true]) {
+            for (const cuts of cutStates) {
+              const open = cuts.axial > 0 || cuts.coronal > 0 || cuts.sagittal > 0
+              assert.equal(
+                isOit({ style, oit, opacity, skin, caps, ...cuts }),
+                oit && style === 'surface' && opacity < 1 && (skin || (caps && open)),
+                `${style} ${oit} ${opacity} ${skin} ${caps} ${JSON.stringify(cuts)}`,
+              )
+            }
+          }
+        }
       }
     }
   }

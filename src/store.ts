@@ -38,7 +38,10 @@ interface State {
   // A load replaces any still in progress, and an older load never overwrites a newer one. Aborting the signal
   // stops the load and leaves the status to the load that takes over
   load: (body: string | null, level: string | null, signal?: AbortSignal) => Promise<void>
-  // The view options, as the panel sets them from the table in options.ts, held to what the backend can draw
+  // The view options as the panel last set them, from the table in options.ts, and as they're drawn: the picks held to
+  // what the backend and the body shown can draw. A pick that can't be drawn is drawn at its default meanwhile, and is
+  // kept, so that it comes back once a body or a backend that can draw it is shown
+  picked: ViewOptions
   options: ViewOptions
   setOptions: (changes: Partial<ViewOptions>) => void
   // What the backend drawing can make of the effects that need more than a plain frame, as the renderer found when it
@@ -61,6 +64,10 @@ let shown: { body: string; level: string } | null = null
 // The list of bodies, fetched once for the page, so a load replaced while it's fetched, as StrictMode's first is, hands
 // the fetch on to the next and the preload in index.html is taken by the one request. A failed fetch is tried again
 let bodiesFetch: Promise<BodiesFile> | null = null
+// What each body was left at, by its id, so that a body chosen again opens as it was: the level last shown, and the
+// Detail last picked, by its label, which holds across the body's levels wherever one has its spacing
+const lastLevels = new Map<string, string>()
+const pickedDetails = new Map<string, string>()
 
 // The Detail a body opens at on the WebGL 2 fallback, where that isn't its default. The head fills about 2.4 times
 // the window the male does, so its splats are held back by the pixels they cover: on a 2014 Intel Iris they orbit at
@@ -119,12 +126,13 @@ function buildRest(set: StoreApi<State>['setState'], get: StoreApi<State>['getSt
     while (more && performance.now() < end) more = staged.advance(sliceVoxels, get().waiting ?? undefined)
     slices++
     if (staged.levels !== before) {
-      const { waiting, options, capabilities } = get()
+      const { waiting, picked, capabilities } = get()
       const arrived = waiting !== null && levelOf(staged.levels, waiting) !== undefined
+      const taken = arrived ? { ...picked, detail: waiting } : picked
       set({
         levels: staged.levels,
         details: staged.details,
-        ...(arrived ? { waiting: null, options: drawableOptions({ ...options, detail: waiting }, capabilities) } : {}),
+        ...(arrived ? { waiting: null, picked: taken, options: drawableOptions(taken, capabilities) } : {}),
       })
     }
     if (more) {
@@ -161,14 +169,17 @@ export const useStore = create<State>()((set, get, api) => ({
     }
     if (staging?.volume === volume) buildRest(set, get)
   },
+  picked: defaultOptions,
   options: defaultOptions,
-  // Unchanged values keep the same options object, so the scene doesn't redo anything for nothing. A Detail whose
+  // Unchanged values keep the same options objects, so the scene doesn't redo anything for nothing. A Detail whose
   // level is still to build waits for it, and the level it's built ahead of the others; one the body hasn't got is
-  // left as it was
+  // left as it was. A Detail picked is kept for its body by its label, for its other levels and its next visit
   setOptions: (changes) => {
     let taken = changes
-    const { levels, details, waiting } = get()
+    const { levels, details, waiting, body } = get()
     const { detail } = changes
+    const label = detail === undefined ? undefined : details?.find((entry) => entry.block === detail)?.label
+    if (body !== null && label !== undefined) pickedDetails.set(body, label)
     if (detail !== undefined && levels && !levelOf(levels, detail)) {
       const { detail: _, ...rest } = changes
       taken = rest
@@ -178,19 +189,22 @@ export const useStore = create<State>()((set, get, api) => ({
       }
     } else if (detail !== undefined && waiting !== null) set({ waiting: null })
     set((state) => {
-      const options = drawableOptions({ ...state.options, ...taken }, state.capabilities)
-      return shallow(options, state.options) ? state : { options }
+      const picked = { ...state.picked, ...taken }
+      if (shallow(picked, state.picked)) return state
+      const options = drawableOptions(picked, state.capabilities)
+      return { picked, options: shallow(options, state.options) ? state.options : options }
     })
   },
   capabilities: { weighted: true, oit: true, mri: false },
-  // A backend that lacks something takes the options that need it back to their defaults, as a switch to the
-  // fallback may with an effect on
+  // A backend that lacks something draws the options that need it at their defaults, as a switch to the fallback may
+  // with an effect on, and keeps them as picked
   webgpu: null,
   setCapabilities: (backend, webgpu) =>
     set((state) => {
       const capabilities = { ...state.capabilities, ...backend }
       if (shallow(capabilities, state.capabilities)) return state.webgpu === webgpu ? state : { webgpu }
-      return { capabilities, webgpu, options: drawableOptions(state.options, capabilities) }
+      const options = drawableOptions(state.picked, capabilities)
+      return { capabilities, webgpu, options: shallow(options, state.options) ? state.options : options }
     }),
   triangles: {},
   setTriangles: (kind, count) =>
@@ -224,9 +238,16 @@ export const useStore = create<State>()((set, get, api) => ({
         if (!isLatest()) return
         set({ bodies })
       }
-      // A name no body has, as a mistyped ?body= gives, opens the first body, as an unknown ?style= opens the first style
+      // A name no body has, as a mistyped ?body= gives, opens the first body, as an unknown ?style= opens the first style.
+      // A body chosen without a level opens at the one it was last shown at, unless the host turned out not to have
+      // it, and otherwise at its default
       const body = bodies.find((candidate) => candidate.id === bodyId) ?? bodies[0]
-      const level = levelId === null ? defaultLevel(body) : body.levels.find((candidate) => candidate.id === levelId)
+      const last = lastLevels.get(body.id)
+      const lastLevel =
+        last === undefined || get().notBuilt.includes(levelKey(body.id, last))
+          ? undefined
+          : body.levels.find((candidate) => candidate.id === last)
+      const level = levelId === null ? (lastLevel ?? defaultLevel(body)) : body.levels.find((candidate) => candidate.id === levelId)
       if (!level) throw new Error(`The ${body.id} has no level ${levelId}`)
 
       // Back to the level already held, which a load in progress was replacing
@@ -270,22 +291,26 @@ export const useStore = create<State>()((set, get, api) => ({
         if (!isLatest()) return
       }
 
-      // A new level of the same body keeps the Detail's spacing where it has it; another body opens at its Detail on
-      // the fallback while that's the backend, and otherwise at the level's own default. That level is built first,
-      // and the others once the body has drawn. A Detail picked later stays, as does the one shown when the page
-      // switches to the fallback
-      const { options, levels: before, capabilities: held, webgpu } = get()
+      // A body opens at the Detail last picked for it, where the level has its spacing, and otherwise at the level's
+      // own default. With none picked, a new level of the same body keeps the Detail's spacing where it has it, and
+      // another body opens at its Detail on the fallback while that's the backend, or else at the level's own default.
+      // That level is built first, and the others once the body has drawn. A Detail picked later stays, as does the one
+      // shown when the page switches to the fallback
+      const { picked, options, levels: before, capabilities: held, webgpu } = get()
       const kept = sameBody && before ? levelOf(before, options.detail)?.label : undefined
-      const label = kept ?? (webgpu === false ? onFallback : undefined)
+      const label = pickedDetails.get(body.id) ?? kept ?? (webgpu === false ? onFallback : undefined)
       const start = performance.now()
       const staged = stageBody(loaded.volume, { opening: label })
       const buildMs = performance.now() - start
       const { bounds, opening } = staged
       shown = { body: body.id, level: level.id }
+      lastLevels.set(body.id, level.id)
       staging = { volume: loaded.volume, body: body.id, staged, started: false }
-      // A body without an MRI takes the options that read one back to their defaults
+      // A body without an MRI draws the options that read one at their defaults, and keeps them as picked, so that
+      // they come back with a body that has one
       const mri = loaded.volume.mri !== undefined
       const capabilities = held.mri === mri ? held : { ...held, mri }
+      const taken = { ...picked, detail: opening.block }
       set({
         status: 'ready',
         volume: loaded.volume,
@@ -294,7 +319,8 @@ export const useStore = create<State>()((set, get, api) => ({
         details: staged.details,
         waiting: null,
         capabilities,
-        options: drawableOptions({ ...options, detail: opening.block }, capabilities),
+        picked: taken,
+        options: drawableOptions(taken, capabilities),
       })
 
       if (firstFrame !== 'logged') {

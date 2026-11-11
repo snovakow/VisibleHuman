@@ -80,18 +80,20 @@ export function PanelRoot() {
   )
 }
 
-// The leva panel: the view options go to the store as they change, Size when a drag or an edit ends, since a new
-// Size rebuilds every splat. The Body, Level and Detail selects list what the store has loaded, a control or a choice
-// the backend can't draw is left out, and the renderer, the grid, the splats shown, the surface's triangles and the
-// load's status come back read-only
+// The leva panel: the view options go to the store as they're picked, Size when a drag or an edit ends, since a new
+// Size rebuilds every splat. The Body, Level and Detail selects list what the store has loaded, a control the backend
+// or the body shown can't use is hidden and a choice it can't draw left out, and the renderer, the grid, the splats
+// shown, the surface's triangles and the load's status come back read-only
 export function Panel({ renderer }: { renderer: string }) {
-  const { level, detail, blend, density, trace, style, notBuilt, status, error } = useStore(
+  const { level, detail, blend, density, trace, inner, oit, style, notBuilt, status, error } = useStore(
     useShallow((s) => ({
       level: s.level,
       detail: s.options.detail,
       blend: s.options.blend,
       density: s.options.density,
       trace: s.options.trace,
+      inner: s.options.inner,
+      oit: s.options.oit,
       style: s.options.style,
       notBuilt: s.notBuilt,
       status: s.status,
@@ -143,15 +145,17 @@ export function Panel({ renderer }: { renderer: string }) {
   const [, set] = useControls(() => {
     const { load, setOptions, options } = useStore.getState()
 
-    // The control of one option, which sets the option as it changes, shown for the styles its entry names and while
+    // The control of one option, which sets the option as it's picked, shown for the styles its entry names and while
     // the controls its entry depends on allow. Its value is the store's, so that a rebuilt panel keeps what's set. A
-    // control the panel leaves out, for a capability the backend or the body lacks, is read at its default, where
-    // the store holds it then, as Inner is on a body without an MRI
+    // control the backend or the body shown can't use, as Inner on a body without an MRI, stays in the panel hidden,
+    // so that it keeps its place among the others and takes the store's value as set echoes it; the others' rules
+    // read it at its default, which the store draws then
     const control = <K extends keyof ViewOptions>(option: K) => {
       const entry = viewOptions[option]
       const render =
-        entry.shownFor !== 'every' || entry.shownWhile
+        entry.shownFor !== 'every' || entry.shownWhile || entry.needs !== undefined
           ? (get: (path: string) => unknown) => {
+              if (!capable(entry.needs, capabilities)) return false
               const drawn = get(stylePath)
               const valueOf = (key: string) => {
                 if (!isOption(key)) throw new Error(`No option is named ${key}`)
@@ -160,7 +164,10 @@ export function Panel({ renderer }: { renderer: string }) {
               return isShown(entry, isStyle(drawn) ? drawn : viewOptions.style.default, valueOf)
             }
           : undefined
-      const onChange = (value: ViewOptions[K]) => {
+      // Only a pick goes to the store: leva also calls this as it builds a control, with the value it held, and as set
+      // echoes the store's value, which would hand a value the store drew in place of a pick back to it as one
+      const onChange = (value: ViewOptions[K], _path?: string, context?: ChangeContext) => {
+        if (context && (context.initial || !context.fromPanel)) return
         const changes: Partial<ViewOptions> = {}
         changes[option] = value
         setOptions(changes)
@@ -193,7 +200,7 @@ export function Panel({ renderer }: { renderer: string }) {
           options: detailOptions ?? loadingOption,
           value: detailOptions ? options.detail : '',
           onChange: (picked: unknown, _path: string, context: ChangeContext) => {
-            if (!context.initial && ofOption(picked)) onChange(picked)
+            if (!context.initial && context.fromPanel && ofOption(picked)) onChange(picked)
           },
         }
       }
@@ -207,14 +214,9 @@ export function Panel({ renderer }: { renderer: string }) {
       }
       return { ...common, options: styleOptions, value: isStyle(current) ? current : entry.default, onChange }
     }
-    // A folder's controls, in the table's order, less those the backend can't draw, as leva's schema, so that the
-    // keys set below stay typed by name
+    // A folder's controls, in the table's order, as leva's schema, so that the keys set below stay typed by name
     const controls = (name: Folder): FolderSchema =>
-      Object.fromEntries(
-        optionKeys
-          .filter((option) => viewOptions[option].folder === name && capable(viewOptions[option].needs, capabilities))
-          .map((option) => [option, control(option)]),
-      )
+      Object.fromEntries(optionKeys.filter((option) => viewOptions[option].folder === name).map((option) => [option, control(option)]))
 
     return {
       Body: folder({
@@ -242,32 +244,35 @@ export function Panel({ renderer }: { renderer: string }) {
           },
         },
       }),
-      // Detail, Blend, Density and Trace are named beside the table's controls, which hold them already, so that set
-      // below knows them by name
+      // Detail, Blend, Density, Trace, Inner and OIT are named beside the table's controls, which hold them already in
+      // their places, so that set below knows them by name
       Look: folder({
         ...controls('Look'),
         detail: control('detail'),
         blend: control('blend'),
         density: control('density'),
         trace: control('trace'),
+        inner: control('inner'),
       }),
       Cuts: folder(controls('Cuts')),
       // Scene starts folded: it holds what's drawn around the body, which a visitor reaches for after the look
-      Scene: folder(controls('Scene'), { collapsed: true }),
+      Scene: folder({ ...controls('Scene'), oit: control('oit') }, { collapsed: true }),
+      // The splats shown and the surface's triangles are read out only for the style that draws them
       Info: folder({
         renderer: { label: 'Renderer', value: '', editable: false },
         grid: { label: 'Grid', value: '', editable: false },
-        shown: { label: 'Splats shown', value: '', editable: false },
-        triangles: { label: 'Triangles', value: '', editable: false },
+        shown: { label: 'Splats shown', value: '', editable: false, render: (get) => get(stylePath) === 'splats' },
+        triangles: { label: 'Triangles', value: '', editable: false, render: (get) => get(stylePath) === 'surface' },
         status: { label: 'Status', value: '', editable: false },
       }),
     }
   }, [bodyOptions, levelOptions, detailOptions, capabilities])
 
-  // The store's choices go back to the selects, after leva has taken each rebuilt list, since a rebuilt control keeps
+  // The store's choices go back to the controls, after leva has taken each rebuilt list, since a rebuilt control keeps
   // the value it held: a load picks its body, its level and its Detail, a level found not built goes back to the
-  // one shown, and a Blend the backend turned out not to draw goes back to the default, as do a Density and a Trace
-  // that read an MRI when a body without one is chosen. set is new whenever the lists are
+  // one shown, and an option the backend or the body can't draw shows the default the store draws in its place, and
+  // its pick again once it can: Blend and OIT on a backend without them, and Density, Trace and Inner on a body
+  // without an MRI. set is new whenever the lists are
   useEffect(() => {
     if (body) set({ body: body.id })
   }, [set, body])
@@ -286,6 +291,12 @@ export function Panel({ renderer }: { renderer: string }) {
   useEffect(() => {
     set({ trace })
   }, [set, trace])
+  useEffect(() => {
+    set({ inner })
+  }, [set, inner])
+  useEffect(() => {
+    set({ oit })
+  }, [set, oit])
   useEffect(() => {
     set({
       renderer: renderer || 'Starting…',
