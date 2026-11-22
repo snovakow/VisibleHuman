@@ -23,6 +23,13 @@ export const styles = [
 // Whether a value, such as one from the page's URL, is a style's id
 export const isStyle = (value: unknown): value is Style => styles.some((style) => style.id === value)
 
+// Whether a style shades every pixel of the window from the ray quad, one ray to a pixel: the volume and the raytrace.
+// With a single sample a pixel, the edges they find step from pixel to pixel and crawl as the view moves, which the
+// renderer's multisampling can't smooth, as it smooths only the edges of what's drawn, and the quad covers the window
+export function isQuad(style: Style) {
+  return style === 'volume' || style === 'raytrace'
+}
+
 // Whether the splats are summed by weight rather than laid over one another: the weighted Blend, in the splats style,
 // as the other styles take no Blend
 export function isWeighted(options: { style: Style; blend: Blend }) {

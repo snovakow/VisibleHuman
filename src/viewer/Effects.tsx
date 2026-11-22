@@ -3,13 +3,14 @@ import { useEffect, useRef } from 'react'
 import { Color, Vector4 } from 'three'
 import type BloomNode from 'three/addons/tsl/display/BloomNode.js'
 import { bloom } from 'three/addons/tsl/display/BloomNode.js'
+import { fxaa } from 'three/addons/tsl/display/FXAANode.js'
 import { oitPass } from 'three/addons/tsl/display/OITPassNode.js'
 import { float, mix, output, pass, positionView, smoothstep, texture, uniform, vec4 } from 'three/tsl'
 import { RenderPipeline, RenderTarget, type Node, type PassNode } from 'three/webgpu'
 import { useStore } from '../store.ts'
 import { asWebGPU } from './renderer.ts'
 import { cueFar, cueNear } from './shading.ts'
-import { isOit, isWeighted } from './styles.ts'
+import { isOit, isQuad, isWeighted } from './styles.ts'
 import { weightedBlend } from './weighted.ts'
 
 // Above R3F's own render, which a frame callback at a higher priority takes over until it unmounts
@@ -40,6 +41,12 @@ function uncoveredBy(layers: PassNode): Node<'float'> {
   return sums instanceof RenderTarget && sums.textures.length > 1 ? texture(sums.textures[1]).r : float(0)
 }
 
+// Whether a node is a vec4 by the type it was built as: @types/three leaves fxaa()'s node untyped, where three builds
+// it as a vec4. A later three that built it otherwise would leave the edges unsmoothed rather than break the pipeline
+function isVec4(node: Node): node is Node<'vec4'> {
+  return node.nodeType === 'vec4'
+}
+
 // The pipeline and the pass that draws the scene into it, which last while the effects are mounted
 interface Stage {
   pipeline: RenderPipeline
@@ -48,12 +55,14 @@ interface Stage {
 
 // The scene drawn through a pipeline of passes, in place of R3F's own render: the weighted blend sums the splats into
 // two targets and composites them, order-independent transparency does the same for the surface's see-through layers
-// over its opaque ones, and bloom spreads a glow around the scene's bright parts. It renders only while it's mounted,
-// so the scene renders directly whenever there's no effect to apply
+// over its opaque ones, FXAA smooths the edges the ray quad's styles find a ray to a pixel, and bloom spreads a glow
+// around the scene's bright parts. It renders only while it's mounted, so the scene renders directly whenever there's
+// no effect to apply
 export function Effects() {
   const get = useThree((s) => s.get)
   const weighted = useStore((s) => isWeighted(s.options))
   const oit = useStore((s) => isOit(s.options))
+  const smoothed = useStore((s) => isQuad(s.options.style))
   const bloomOn = useStore((s) => s.options.bloom > 0)
   const strength = useStore((s) => s.options.bloom)
   const radius = useStore((s) => s.options.bloomRadius)
@@ -110,6 +119,15 @@ export function Effects() {
       made.push(layers, uncovered, sceneColor)
     }
 
+    if (smoothed) {
+      // FXAA finds the edges by their contrast and blends across them, colour and alpha together, which the
+      // premultiplied colour over the page's black takes as it should. It goes ahead of the bloom, so that the glow
+      // spreads from the smoothed edges
+      const edges = fxaa(sceneColor)
+      made.push(edges)
+      if (isVec4(edges)) sceneColor = edges
+    }
+
     let result: Node<'vec4'> = sceneColor
 
     if (bloomOn) {
@@ -126,7 +144,7 @@ export function Effects() {
       glow.current = null
       for (const node of made) node.dispose()
     }
-  }, [get, weighted, oit, bloomOn])
+  }, [get, weighted, oit, smoothed, bloomOn])
 
   useEffect(() => {
     if (glow.current) glow.current.strength.value = strength
