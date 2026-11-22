@@ -1,9 +1,11 @@
 import { Canvas } from '@react-three/fiber'
 import { useCallback, useEffect, useState } from 'react'
 import { Panel } from './Panel.tsx'
+import { launchPreset, presetOf, presetOptions } from './presets.ts'
 import { useStore } from './store.ts'
 import { createRenderer, type Backend } from './viewer/renderer.ts'
-import { isStyle } from './viewer/styles.ts'
+import { isQuad, isStyle } from './viewer/styles.ts'
+import { frontView } from './viewer/viewAngle.ts'
 import { Viewer } from './viewer/Viewer.tsx'
 
 const search = new URLSearchParams(window.location.search)
@@ -12,9 +14,21 @@ const search = new URLSearchParams(window.location.search)
 // shader compiled there all the same
 const requestedBackend: Backend = search.has('webgl') ? 'webgl' : search.has('webgpu') ? 'webgpu' : 'auto'
 
-// ?style=<id> opens on that style
+// ?preset=<id> opens on that preset, and an address that names no preset opens on the launch preset, unless it names
+// a style: ?style=<id> alone opens on that style at the panel's defaults, framed from the front, as the page opened
+// before it had presets, and beside a preset it takes the place of the preset's style. An unknown preset opens the
+// launch one, and an unknown style is passed over, as if the address named none
+const requestedPreset = search.get('preset')
 const requestedStyle = search.get('style')
+const preset = presetOf(requestedPreset) ?? (requestedPreset === null && isStyle(requestedStyle) ? null : launchPreset)
+if (preset) useStore.getState().setOptions(presetOptions(preset))
 if (isStyle(requestedStyle)) useStore.getState().setOptions({ style: requestedStyle })
+// The angle every body is framed from
+const framedFrom = preset?.view ?? frontView
+// A page opened on a preset sways the view to and fro about the body, unless the visitor's system asks for less
+// motion; one opened on a style alone holds still, as the page did before it had presets
+const lessMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+useStore.getState().setSwaying(preset !== null && !lessMotion)
 
 // ?body=<id> opens on that body, and a body chosen in the panel is written there, so a reload or a shared link opens
 // on the body shown. A page opened without it isn't given one until another body is chosen
@@ -102,13 +116,13 @@ function App() {
 
   // The volume and raytrace styles shade every pixel of the window from one quad, which the fallback draws at a
   // pixel ratio of 1. The ratio is a Canvas prop, which R3F applies again whenever it configures the Canvas
-  const quadStyle = useStore((s) => s.options.style === 'volume' || s.options.style === 'raytrace')
+  const quadStyle = useStore((s) => isQuad(s.options.style))
   const dpr = drawing && !drawing.webgpu && quadStyle ? fallbackQuadDpr : fullDpr
 
   return (
     <>
       <Canvas key={backend} gl={gl} camera={camera} dpr={dpr} flat>
-        <Viewer />
+        <Viewer view={framedFrom} />
       </Canvas>
       <Panel renderer={drawing?.renderer ?? ''} />
       <LoadStatus />

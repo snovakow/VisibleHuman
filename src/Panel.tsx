@@ -1,4 +1,5 @@
-import { folder, Leva, useControls } from 'leva'
+import { folder, Leva, levaStore, useControls } from 'leva'
+import { createPlugin, styled, useInputContext } from 'leva/plugin'
 import { useEffect, useMemo, useRef } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import {
@@ -12,6 +13,7 @@ import {
   type Folder,
   type ViewOptions,
 } from './options.ts'
+import { presetOptions, presets, type Preset } from './presets.ts'
 import { levelKey, useStore, type Status } from './store.ts'
 import { isStyle, styles } from './viewer/styles.ts'
 import { levelOf } from './volume/levels.ts'
@@ -34,6 +36,57 @@ const stylePath = pathOf('style')
 
 // The styles by their labels in the panel
 const styleOptions = Object.fromEntries(styles.map((style) => [style.label, style.id]))
+
+// The options a preset sets, every one but the Detail
+const presetOptionKeys = optionKeys.filter((option) => option !== 'detail')
+
+// Puts a preset's options in the store, and every control it sets at the store's option, as drawn. The useControls
+// hook's set knows by name only the controls the panel names, so the panel's store is set by their paths, which calls
+// no control's onChange as a pick, so nothing goes back to the store
+function choose(preset: Preset) {
+  useStore.getState().setOptions(presetOptions(preset))
+  const { options } = useStore.getState()
+  levaStore.set(Object.fromEntries(presetOptionKeys.map((option) => [pathOf(option), options[option]])), false)
+}
+
+// A row of buttons across the panel, each an equal share of it, drawn as leva draws its own buttons. leva's button
+// group sets its buttons as bare text at the row's end, which doesn't read as buttons, and its single button takes a
+// row each
+interface RowButton {
+  label: string
+  onClick: () => void
+}
+const ButtonRowGrid = styled('div', { display: 'grid', gridAutoFlow: 'column', gridAutoColumns: '1fr', columnGap: '$colGap' })
+const ButtonRowButton = styled('button', {
+  $reset: '',
+  fontWeight: '$button',
+  height: '$rowHeight',
+  borderStyle: 'none',
+  borderRadius: '$sm',
+  color: '$highlight3',
+  backgroundColor: '$accent2',
+  cursor: 'pointer',
+  $hover: '$accent3',
+  $active: '$accent3 $accent1',
+  $focus: '',
+})
+function ButtonRowInput() {
+  const { settings } = useInputContext<{ settings: { buttons: readonly RowButton[] } }>()
+  return (
+    <ButtonRowGrid>
+      {settings.buttons.map(({ label, onClick }) => (
+        <ButtonRowButton key={label} type="button" onClick={onClick}>
+          {label}
+        </ButtonRowButton>
+      ))}
+    </ButtonRowGrid>
+  )
+}
+// Its value is nothing: a press acts, and leaves nothing set
+const buttonRow = createPlugin<readonly RowButton[], string, { buttons: readonly RowButton[] }>({
+  normalize: (buttons) => ({ value: '', settings: { buttons } }),
+  component: ButtonRowInput,
+})
 
 // Whether the backend, or the body shown, has what a control or a choice needs; most need nothing
 function capable(need: Capability | undefined, capabilities: Capabilities) {
@@ -80,10 +133,11 @@ export function PanelRoot() {
   )
 }
 
-// The leva panel: the view options go to the store as they're picked, Size when a drag or an edit ends, since a new
-// Size rebuilds every splat. The Body, Level and Detail selects list what the store has loaded, a control the backend
-// or the body shown can't use is hidden and a choice it can't draw left out, and the renderer, the grid, the splats
-// shown, the surface's triangles and the load's status come back read-only
+// The leva panel: a preset's button at the top sets every view option but the Detail at once, the switch under them
+// sways the view, and the view options go to the store as they're picked, Size when a drag or an edit ends, since a
+// new Size rebuilds every splat. The Body, Level and Detail selects list what the store has loaded, a control the
+// backend or the body shown can't use is hidden and a choice it can't draw left out, and the renderer, the grid, the
+// splats shown, the surface's triangles and the load's status come back read-only
 export function Panel({ renderer }: { renderer: string }) {
   const { level, detail, blend, density, trace, inner, oit, style, notBuilt, status, error } = useStore(
     useShallow((s) => ({
@@ -109,6 +163,7 @@ export function Panel({ renderer }: { renderer: string }) {
   const waiting = useStore((s) => s.details?.find((each) => each.block === s.waiting)?.label)
   const grid = useStore((s) => s.volume?.size)
   const triangles = useStore((s) => s.triangles)
+  const swaying = useStore((s) => s.swaying)
   // The splats shown, while the splats are the style drawn: the shown Detail's level is always built
   const shown = levels && style === 'splats' ? levelOf(levels, detail)?.count : undefined
   // The surface's triangles, each mesh's by name, while the surface is the style drawn
@@ -219,6 +274,22 @@ export function Panel({ renderer }: { renderer: string }) {
       Object.fromEntries(optionKeys.filter((option) => viewOptions[option].folder === name).map((option) => [option, control(option)]))
 
     return {
+      // The presets come first, as the quickest way to a finished look: a button each, in one row across the panel. A
+      // press sets every option but the Detail, those the preset doesn't name at their defaults, so pressed again it
+      // puts back what's been moved since; the view stays where it was left. Under them, the sway's switch, which the
+      // visitor's first move of the view turns off
+      Presets: folder({
+        presets: buttonRow(presets.map((preset) => ({ label: preset.id, onClick: () => choose(preset) }))),
+        sway: {
+          label: 'Sway',
+          value: useStore.getState().swaying,
+          transient: false,
+          onChange: (picked: unknown, _path: string, context: ChangeContext) => {
+            if (context.initial || !context.fromPanel || typeof picked !== 'boolean') return
+            useStore.getState().setSwaying(picked)
+          },
+        },
+      }),
       Body: folder({
         body: {
           label: 'Body',
@@ -297,6 +368,10 @@ export function Panel({ renderer }: { renderer: string }) {
   useEffect(() => {
     set({ oit })
   }, [set, oit])
+  // The sway stops when the visitor moves the view, which the switch shows
+  useEffect(() => {
+    set({ sway: swaying })
+  }, [set, swaying])
   useEffect(() => {
     set({
       renderer: renderer || 'Starting…',

@@ -54,6 +54,11 @@ interface State {
   // The triangles in each of the surface style's meshes, while it's drawn, for the panel
   triangles: Partial<Record<SurfaceKind, number>>
   setTriangles: (kind: SurfaceKind, count: number | undefined) => void
+  // Whether the view sways to and fro about the body, as it does from the start on a preset, until the visitor moves
+  // the view or the panel's switch stops it. It moves the camera, not what's drawn, so it isn't a view option, and a
+  // preset leaves it as it is
+  swaying: boolean
+  setSwaying: (swaying: boolean) => void
 }
 
 const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error))
@@ -215,6 +220,8 @@ export const useStore = create<State>()((set, get, api) => ({
       else triangles[kind] = count
       return { triangles }
     }),
+  swaying: false,
+  setSwaying: (swaying) => set((state) => (state.swaying === swaying ? state : { swaying })),
   load: async (bodyId, levelId, signal) => {
     current?.abort()
     const controller = new AbortController()
@@ -238,9 +245,9 @@ export const useStore = create<State>()((set, get, api) => ({
         if (!isLatest()) return
         set({ bodies })
       }
-      // A name no body has, as a mistyped ?body= gives, opens the first body, as an unknown ?style= opens the first style.
-      // A body chosen without a level opens at the one it was last shown at, unless the host turned out not to have
-      // it, and otherwise at its default
+      // A name no body has, as a mistyped ?body= gives, opens the first body, as an unknown ?preset= opens the launch
+      // preset. A body chosen without a level opens at the one it was last shown at, unless the host turned out not to
+      // have it, and otherwise at its default
       const body = bodies.find((candidate) => candidate.id === bodyId) ?? bodies[0]
       const last = lastLevels.get(body.id)
       const lastLevel =

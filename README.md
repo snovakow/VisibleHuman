@@ -8,18 +8,29 @@ VisibleHuman renders the [Visible Human Project](https://www.nlm.nih.gov/researc
 
 ## Using it
 
-The page opens on the whole male body, seen from the front. Drag to turn it, scroll or pinch to zoom, and right-drag or drag with two fingers to move it.
+The page opens on the whole male body cut open from the front, so that its organs, its spine and its brain show in the photographs' own colours, seen from a little above, with the view swaying slowly round to either side and back. Drag to turn it, scroll or pinch to zoom, and right-drag or drag with two fingers to move it; the first of these stops the sway.
+
+That opening is one of four presets, looks made from the panel's own controls to show the body off, each with its button under **Presets**, at the top of the panel:
+
+- *cutaway*, which the page opens on, draws the raytrace with the front of the body cut away to a little past its middle, the skin's edges lit, a glow about the brightest parts, and the far side darkened.
+- *skeleton* draws the volume with its window's low end raised past the soft tissue, so the bone stands alone in its own colour, shaded and glowing.
+- *x-ray* draws the volume's MIP windowed to the bone, so the skeleton glows white.
+- *glass* draws the raytrace with the skin nearly clear and its edges lit, so the bone shows solid inside it.
+
+A preset's button sets every control in the Look, Cuts and Scene folders but the Detail, at its own values or at their defaults, and leaves the body, its level and the view as they are, so the controls take it on from there, and pressed again it puts back whatever has been moved since. Adding `?preset=` and a preset's name to the address, as in `?preset=skeleton`, opens the page on that preset.
+
+Under the buttons, **Sway** swings the view slowly to and fro about the body, never so far that a cut from the front turns away. It's on as the page opens on a preset, unless the system asks for less motion, the first drag, scroll or pinch turns it off, and the switch turns it back on.
 
 The panel at the top right groups its controls in folders, and shows in each only the controls that act on what's being drawn.
 
 ### Body
 
 - **Body** chooses the body: the male, the female or the head. Adding `?body=female` or `?body=head` to the address opens the page on that body, and the address follows the body chosen, so a link opens on the body it was copied from.
-- **Level** chooses the file the body is drawn from: for the male and the female 4 mm, which they open on, or 2 mm, twice as fine along each axis and a larger download, and for the head 1.2 mm, which it opens on, then 1 mm and 0.6 mm. The view stays where it was left, as a new body's doesn't: each body opens framed whole from the front. A body chosen again opens at the level it was left at, and at the Detail last picked for it, where that level has it. Where the site doesn't have a level's file, the panel marks it not built and the body stays as it was.
+- **Level** chooses the file the body is drawn from: for the male and the female 4 mm, which they open on, or 2 mm, twice as fine along each axis and a larger download, and for the head 1.2 mm, which it opens on, then 1 mm and 0.6 mm. The view stays where it was left, as a new body's doesn't: each body opens framed whole, from the angle the page opened at. A body chosen again opens at the level it was left at, and at the Detail last picked for it, where that level has it. Where the site doesn't have a level's file, the panel marks it not built and the body stays as it was.
 
 ### Look
 
-- **Style** chooses how the body is drawn: splats, volume, raytrace or surface. The splats draw each block of the body as a soft blob of its colour. The volume follows a ray from the eye through each pixel and samples the body in small steps along it; the raytrace follows the same ray until it reaches the skin or the bone, and lights the surface it finds there; the surface builds the skin and the bone as meshes, in a background thread, and lights them as solid objects. Adding `?style=` and a style's name to the address, as in `?style=volume`, opens the page on that style.
+- **Style** chooses how the body is drawn: splats, volume, raytrace or surface. The splats draw each block of the body as a soft blob of its colour. The volume follows a ray from the eye through each pixel and samples the body in small steps along it; the raytrace follows the same ray until it reaches the skin or the bone, and lights the surface it finds there; the surface builds the skin and the bone as meshes, in a background thread, and lights them as solid objects. Adding `?style=` and a style's name to the address, as in `?style=volume`, opens the page on that style, with the panel's other controls at their defaults and the body seen from the front, or, beside a preset, in place of the preset's style.
 - **Opacity** fades the whole body, so you can see into it. In the raytrace and the surface it makes the skin see-through, with the bone solid behind it, so it shows there while there's skin to see through, or, in the surface, a cap's section.
 
 With the splats:

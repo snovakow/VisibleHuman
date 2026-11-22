@@ -51,8 +51,8 @@ export type BackendCapabilities = Record<BackendCapability, boolean>
 export type Capability = BackendCapability | 'mri'
 export type Capabilities = Record<Capability, boolean>
 
-// The panel's folders that hold options. Body holds the body and level choosers, which are the page's load state
-// rather than view options, and Info the read-outs; both are the panel's own
+// The panel's folders that hold options. Presets holds a button for each preset, Body the body and level choosers,
+// which are the page's load state rather than view options, and Info the read-outs; all three are the panel's own
 export type Folder = 'Body' | 'Look' | 'Cuts' | 'Scene'
 
 // Which styles show a control: every style, or the styles named
