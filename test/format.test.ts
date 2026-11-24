@@ -5,6 +5,7 @@ import {
   cellCount,
   cellIndex,
   countBody,
+  fieldBytes,
   headerBytes,
   isBodyVoxel,
   readVolume,
@@ -94,6 +95,29 @@ void test('asked for the MRI, the texture bytes carry the MRI block where the de
   assert.deepEqual([...rgbaBytes({ ...volume, mri })], [...rgbaBytes(volume)])
   // A volume without the block has nothing to give
   assert.throws(() => rgbaBytes(volume, 'mri'), /no MRI block/)
+})
+
+void test('the fields bytes pair each voxel\'s coverage with the RGBA texture\'s fourth byte, whichever that holds', () => {
+  // The trace sets the bone's threshold on the second byte where the volume and the surface set it on the RGBA's
+  // fourth, so the two must agree
+  const fourthOf = (rgba: Uint8Array) => [...rgba.filter((_, n) => n % 4 === 3)]
+  const firstOf = (fields: Uint8Array) => [...fields.filter((_, n) => n % 2 === 0)]
+  const secondOf = (fields: Uint8Array) => [...fields.filter((_, n) => n % 2 === 1)]
+  const fields = fieldBytes(volume)
+  assert.equal(fields.length, 24)
+  assert.deepEqual([...fields.subarray(0, 4)], [200, 65, 127, 0])
+  assert.deepEqual(firstOf(fields), [...coverage])
+  assert.deepEqual(secondOf(fields), fourthOf(rgbaBytes(volume)))
+  // Asked for the MRI, the MRI block in the density's place
+  const mri = Uint8Array.from([0, 0, 90, 255, 1, 0, 0, 40, 0, 0, 0, 7])
+  const withMri = fieldBytes({ ...volume, mri }, 'mri')
+  assert.deepEqual(firstOf(withMri), [...coverage])
+  assert.deepEqual(secondOf(withMri), [...mri])
+  // Without a density block, 1 inside the body and 0 outside, as the RGBA texture marks it
+  const { density: _density, ...rest } = volume
+  assert.deepEqual(secondOf(fieldBytes(rest)), [...coverage].map((each) => (isBodyVoxel(each) ? 1 : 0)))
+  assert.deepEqual(secondOf(fieldBytes(rest)), fourthOf(rgbaBytes(rest)))
+  assert.throws(() => fieldBytes(volume, 'mri'), /no MRI block/)
 })
 
 void test('the reader reads a file inside a larger buffer, as Node gives it', () => {

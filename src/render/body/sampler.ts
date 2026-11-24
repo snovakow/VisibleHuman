@@ -1,4 +1,4 @@
-import { Matrix4, RedFormat, RGBAFormat, SRGBColorSpace, Vector3 } from 'three'
+import { Matrix4, RedFormat, RGBAFormat, RGFormat, SRGBColorSpace, Vector3 } from 'three'
 import { colorSpaceToWorking, float, texture3D, uniform, vec4 } from 'three/tsl'
 import type { Node, UniformNode } from 'three/webgpu'
 import { sceneToTexture } from '../rays.ts'
@@ -22,6 +22,9 @@ export interface BodySampler {
   // The coverage at a scene point, from 0 to 1, which crosses the skin's isolevel where the skin lies. Only a sampler
   // made to read the coverage has it
   coverageAt(p: Node<'vec3'>): Node<'float'>
+  // The coverage, in x, and the fourth channel, in y, at a scene point, each from 0 to 1, from the one texture that
+  // holds them both, for a ray that asks both at every step. Only a sampler made to read the fields has them
+  fieldsAt(p: Node<'vec3'>): Node<'vec2'>
   // A voxel's size along the scene's x, y and z, in millimetres
   voxel: UniformNode<'vec3'>
   // The smallest of the three, which the styles size their steps and their reads by
@@ -34,12 +37,15 @@ export interface BodySampler {
 }
 
 const colourTexture: Record<Channel, BodyTexture> = { density: 'colour', mri: 'mri' }
+const fieldsTexture: Record<Channel, BodyTexture> = { density: 'fields', mri: 'mriFields' }
 
-export function createBodySampler(reads: { coverage: boolean }): BodySampler {
+export function createBodySampler(reads: { coverage: boolean; fields?: boolean }): BodySampler {
   const emptyColour = emptyTexture(RGBAFormat)
   const emptyCoverage = emptyTexture(RedFormat)
+  const emptyFields = emptyTexture(RGFormat)
   const colour = texture3D(emptyColour)
   const coverage = texture3D(emptyCoverage)
+  const fields = texture3D(emptyFields)
   // From a point in the scene to the texture's coordinates, by the volume's axes
   const toTexture = uniform(new Matrix4())
   const voxel = uniform(new Vector3(1, 1, 1))
@@ -60,15 +66,18 @@ export function createBodySampler(reads: { coverage: boolean }): BodySampler {
     texelAt: (p) => colour.sample(uvwOf(p)).level(float(0)),
     colourOf: (texel) => colorSpaceToWorking(vec4(texel.rgb, 1), SRGBColorSpace).rgb,
     coverageAt: (p) => coverage.sample(uvwOf(p)).level(float(0)).r,
+    fieldsAt: (p) => fields.sample(uvwOf(p)).level(float(0)).xy,
     voxel,
     leastVoxel,
     bind(body, channel = 'density') {
-      const kinds: BodyTexture[] = body ? [colourTexture[channel], ...(reads.coverage ? (['coverage'] as const) : [])] : []
+      const wanted: BodyTexture[] = [colourTexture[channel], ...(reads.coverage ? (['coverage'] as const) : []), ...(reads.fields ? [fieldsTexture[channel]] : [])]
+      const kinds = body ? wanted : []
       // The new textures are taken before the old are let go, so one that both bindings read is never rebuilt
-      const textures = kinds.map((kind) => body?.textures.acquire(kind))
+      const textures = new Map(kinds.map((kind) => [kind, body?.textures.acquire(kind)]))
       unbind()
-      colour.value = textures[0] ?? emptyColour
-      coverage.value = textures[1] ?? emptyCoverage
+      colour.value = textures.get(colourTexture[channel]) ?? emptyColour
+      coverage.value = textures.get('coverage') ?? emptyCoverage
+      fields.value = textures.get(fieldsTexture[channel]) ?? emptyFields
       if (!body) return
       bound = { body, kinds }
       const { volume, bounds } = body
@@ -81,6 +90,7 @@ export function createBodySampler(reads: { coverage: boolean }): BodySampler {
       unbind()
       emptyColour.dispose()
       emptyCoverage.dispose()
+      emptyFields.dispose()
     },
   }
 }

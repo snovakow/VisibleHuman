@@ -259,6 +259,29 @@ export function rgbaBytes(volume: Volume, fourth: 'density' | 'mri' = 'density')
   return bytes
 }
 
+// The bytes of a two-channel texture, the coverage and the density per voxel in index order, for a ray that asks both
+// at every step and so reads them in one texel. The second byte is the RGBA texture's fourth: the density, or the MRI
+// in its place. They're built whenever the raytrace takes a body up, so the block the second byte comes from is chosen
+// once, not at every voxel, which takes about a third of the time
+export function fieldBytes(volume: Volume, fourth: 'density' | 'mri' = 'density'): Uint8Array {
+  const { density, coverage, mri } = volume
+  if (fourth === 'mri' && !mri) throw new Error(`The ${volume.body}'s volume has no MRI block`)
+  const second = fourth === 'mri' ? mri : density
+  const bytes = new Uint8Array(coverage.length * 2)
+  if (second) {
+    for (let n = 0, at = 0; n < coverage.length; n++, at += 2) {
+      bytes[at] = coverage[n]
+      bytes[at + 1] = second[n]
+    }
+  } else {
+    for (let n = 0, at = 0; n < coverage.length; n++, at += 2) {
+      bytes[at] = coverage[n]
+      bytes[at + 1] = isBodyVoxel(coverage[n]) ? 1 : 0
+    }
+  }
+  return bytes
+}
+
 // A voxel's place along the scene's axes, in whole voxels: x, y and z, each signed as the volume's axes say
 export function sceneCell(volume: Volume, i: number, j: number, k: number): Triple {
   const grid = [i, j, k]

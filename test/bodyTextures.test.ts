@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import type { Data3DTexture } from 'three'
+import { RedFormat, RGBAFormat, RGFormat, type Data3DTexture } from 'three'
 import type { Body } from '../src/render/body/body.ts'
 import { createBodySampler } from '../src/render/body/sampler.ts'
 import { createBodyTextures, type BodyTexture, type BodyTextures } from '../src/render/body/textures.ts'
@@ -42,21 +42,30 @@ function watch(texture: Data3DTexture) {
   return seen
 }
 
-void test('a texture holds the volume\'s bytes, one texel a voxel: its colour with the density, or with the MRI, or its coverage', () => {
+void test('a texture holds the volume\'s bytes, one texel a voxel: its colour with the density or the MRI, its coverage, or the coverage with the density or the MRI', () => {
   const volume = volumeOf(true)
   const textures = createBodyTextures(volume)
   const sizeOf = ({ image }: Data3DTexture) => [image.width, image.height, image.depth]
-  // A texture's first two texels
+  // A texture's first eight bytes
   const startOf = ({ image }: Data3DTexture) => Array.from(image.data?.slice(0, 8) ?? [])
   const colour = textures.acquire('colour')
   assert.deepEqual(sizeOf(colour), [2, 3, 4])
+  assert.equal(colour.format, RGBAFormat)
   assert.deepEqual(startOf(colour), [10, 50, 90, 130, 11, 51, 91, 131])
   assert.deepEqual(startOf(textures.acquire('mri')), [10, 50, 90, 170, 11, 51, 91, 171])
   const coverage = textures.acquire('coverage')
   assert.deepEqual(sizeOf(coverage), [2, 3, 4])
+  assert.equal(coverage.format, RedFormat)
   assert.equal(coverage.image.data, volume.coverage)
+  // Two bytes a texel: the coverage, then what the colour texture holds fourth
+  const fields = textures.acquire('fields')
+  assert.deepEqual(sizeOf(fields), [2, 3, 4])
+  assert.equal(fields.format, RGFormat)
+  assert.deepEqual(startOf(fields), [200, 130, 200, 131, 200, 132, 200, 133])
+  assert.deepEqual(startOf(textures.acquire('mriFields')), [200, 170, 200, 171, 200, 172, 200, 173])
   // A volume without an MRI has no such texture to give
   assert.throws(() => createBodyTextures(volumeOf(false)).acquire('mri'), /no MRI/)
+  assert.throws(() => createBodyTextures(volumeOf(false)).acquire('mriFields'), /no MRI/)
 })
 
 void test('a texture is built once for every asker, and freed when the last lets go', () => {
@@ -134,6 +143,21 @@ void test('a sampler holds only what it reads, and lets go of it when it binds a
   other.textures.release('colour')
   sampler.dispose()
   assert.equal(others.disposed, 1)
+})
+
+void test('a sampler that reads the fields holds them and the colour but not the coverage, and their MRI twins on the MRI', () => {
+  // As the trace's does, which reads the coverage only within the fields
+  const volume = volumeOf(true)
+  const { noting, built, freed } = noted(createBodyTextures(volume))
+  const body: Body = { volume, bounds: bodyBounds(volume), levels: [], textures: noting }
+  const sampler = createBodySampler({ coverage: false, fields: true })
+  sampler.bind(body, 'density')
+  assert.deepEqual(built, ['colour', 'fields'])
+  sampler.bind(body, 'mri')
+  assert.deepEqual(built, ['colour', 'fields', 'mri', 'mriFields'])
+  assert.deepEqual(freed, ['colour', 'fields'])
+  sampler.dispose()
+  assert.deepEqual(freed, ['colour', 'fields', 'mri', 'mriFields'])
 })
 
 void test('a second sampler taking a body over from the first keeps the textures both read', () => {
