@@ -1,10 +1,34 @@
 import { WebGPURenderer } from 'three/webgpu'
-import type { BackendCapabilities } from '../options.ts'
+
+// The renderer and the backend it draws with: three's WebGPURenderer, on WebGPU where the browser offers it and the
+// GPU isn't known to fail it, and otherwise on its own WebGL 2 fallback. Whatever else needs to know which backend
+// is drawing, or what it can draw, asks here
+
+// What an effect needs of the backend that draws: the weighted blend sums into half-float targets, and the surface's
+// order-independent transparency into such a target and a second blended its own way. WebGPU has both; the WebGL 2
+// fallback has each only where the browser offers the extensions for it
+export interface BackendCapabilities {
+  weighted: boolean
+  oit: boolean
+}
+
+// The backend that started, as the page shows it: its name for the panel, whether it's WebGPU rather than the WebGL 2
+// fallback, and which of the effects it can draw
+export interface BackendReport {
+  name: string
+  webgpu: boolean
+  capabilities: BackendCapabilities
+}
 
 // R3F types its renderer as a WebGLRenderer, though the Canvas's factory always makes a WebGPURenderer
 export function asWebGPU(renderer: unknown): WebGPURenderer {
   if (!(renderer instanceof WebGPURenderer)) throw new Error('Expected a WebGPURenderer')
   return renderer
+}
+
+// Whether a renderer is drawing with WebGPU, rather than with the WebGL 2 fallback
+export function isWebGPU(renderer: WebGPURenderer) {
+  return 'isWebGPUBackend' in renderer.backend
 }
 
 // GPUs that offer WebGPU but can't compile the splat sort's shaders, and take Chrome's GPU process down trying.
@@ -21,13 +45,8 @@ export type Backend = 'auto' | 'webgl' | 'webgpu'
 
 // The Canvas's renderer: WebGPU where the browser offers it and the GPU isn't known to fail it, and otherwise three's
 // WebGL 2 fallback, which the webgl backend also asks for. A WebGPU failure after the start calls fallBack, and report
-// is told which backend is drawing, for the panel, whether it's WebGPU, and which of the effects it can draw
-export async function createRenderer(
-  canvas: object,
-  backend: Backend,
-  fallBack: () => void,
-  report: (renderer: string, webgpu: boolean, capabilities: BackendCapabilities) => void,
-) {
+// is told which backend is drawing
+export async function createRenderer(canvas: object, backend: Backend, fallBack: () => void, report: (started: BackendReport) => void) {
   if (!(canvas instanceof HTMLCanvasElement)) throw new Error('Expected an HTMLCanvasElement')
   const forceWebGL = backend === 'webgl'
   const failingGPU = backend === 'auto' ? await knownFailingGPU() : null
@@ -36,12 +55,12 @@ export async function createRenderer(
   }
   const renderer =
     forceWebGL || failingGPU ? await startFallback(canvas) : await new WebGPURenderer({ canvas, antialias: true }).init()
-  const webgpu = 'isWebGPUBackend' in renderer.backend
+  const webgpu = isWebGPU(renderer)
   console.info(`VisibleHuman: rendering with ${webgpu ? 'WebGPU' : 'the WebGL 2 fallback'}`)
   // A Canvas replaced while its renderer was starting is off the page by then, and only the one on the page reports
   if (canvas.isConnected) {
     const name = webgpu ? 'WebGPU' : failingGPU ? 'WebGL 2, as this GPU fails WebGPU' : 'WebGL 2'
-    report(name, webgpu, capabilitiesOf(renderer))
+    report({ name, webgpu, capabilities: capabilitiesOf(renderer) })
   }
   if (webgpu) watchForFailure(renderer, fallBack)
   return renderer

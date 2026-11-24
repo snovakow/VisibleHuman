@@ -15,7 +15,7 @@ That opening is one of four presets, looks made from the panel's own controls to
 - *cutaway*, which the page opens on, draws the raytrace with the front of the body cut away to a little past its middle, the skin's edges lit, a glow about the brightest parts, and the far side darkened.
 - *skeleton* draws the volume with its window's low end raised past the soft tissue, so the bone stands alone in its own colour, shaded and glowing.
 - *x-ray* draws the volume's MIP windowed to the bone, so the skeleton glows white.
-- *glass* draws the raytrace with the skin nearly clear and its edges lit, so the bone shows solid inside it.
+- *glass* draws the raytrace with the skin nearly clear and its edges lit, and the Bone threshold lowered to where the bone is whole, so the skeleton shows solid inside it.
 
 A preset's button sets every control in the Look, Cuts and Scene folders but the Detail, at its own values or at their defaults, and leaves the body, its level and the view as they are, so the controls take it on from there, and pressed again it puts back whatever has been moved since. Adding `?preset=` and a preset's name to the address, as in `?preset=skeleton`, opens the page on that preset.
 
@@ -49,12 +49,12 @@ With the volume:
 
 With the volume or the raytrace:
 
-- **Quality** sets the step the rays are sampled at, as a share of a voxel: *auto* takes a whole voxel on WebGL 2 and half a voxel on WebGPU, and each halving of the step doubles the work of a frame.
+- **Quality** sets the step the rays are sampled at, as a share of a voxel: *auto* takes a whole voxel on WebGL 2 and half a voxel on WebGPU, and each halving of the step doubles the work of a frame. The raytrace takes half the step wherever a surface it traces could lie: near the skin, and wherever there is body while it traces the bone, so that bone thinner than a step isn't stepped over.
 
 With the raytrace:
 
 - **Trace** chooses which surfaces the raytrace follows each ray to: the *skin*, the *bone*, or *both*, whichever comes first. For the head there's also *brain*, the surface where its MRI passes the MRI threshold, which is the brain's once a cut opens the skull.
-- **Layers**, below full Opacity with the skin traced, sets how many surfaces a ray lays over one another before it stops: the skin alone at 1, then the bone or the far side of the skin behind it, and so on. A ray stops at bone whatever the count.
+- **Layers**, below full Opacity with the skin traced, sets how many layers of skin a ray lays over one another before it stops: the skin alone at 1, then the far side of the skin behind it, and so on, with the bone showing between them. Skin that a ray only grazes, or that is too thin to fill its block, is drawn faintly and counts for that much less of a layer, which keeps the body's edges smooth, and the last layer fades what's behind it by what's left of the count. Bone is drawn by how much of it a ray passes through, faint where it's thin and solid where it isn't, which keeps it steady as the view turns, and a ray stops in solid bone whatever the count.
 - **Shadows** casts the body's shadows onto its surfaces, from a light above and to the left of the eye, and shows **Light azimuth** and **Light elevation** to move the light around the eye, in degrees. The whole body casts the shadows, so what a cut takes away still throws its shadow, the bone's, onto the section it leaves. It costs frame rate, so it starts off.
 
 With the surface:
@@ -157,7 +157,7 @@ The scripts build each body from a local copy of the NLM's images, rather than f
 | [TypeScript](https://www.typescriptlang.org) | Strict types across the whole app |
 | [React](https://react.dev) | Components and state for the viewer and its panels |
 | [three.js](https://threejs.org) | Rendering, including its built-in Gaussian splats and the node materials the other styles are written in |
-| [React Three Fiber](https://r3f.docs.pmnd.rs) | The three.js scene, written as React components |
+| [React Three Fiber](https://r3f.docs.pmnd.rs) | The canvas, its camera and its frame loop, as React components around the three.js scene |
 | [Vite](https://vite.dev) | The dev server and the production build |
 | [WebGPU](https://developer.mozilla.org/en-US/docs/Web/API/WebGPU_API) | The GPU API three.js renders with, falling back to WebGL 2 in browsers without it or on GPUs where it fails |
 | [Node.js](https://nodejs.org) | The scripts that fetch the source images and build each body's volume from them |

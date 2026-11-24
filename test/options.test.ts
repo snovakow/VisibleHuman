@@ -13,7 +13,11 @@ import {
   type ShownWhile,
   type ViewOptions,
 } from '../src/options.ts'
-import { isBackShell, isOit, styles, type Style } from '../src/viewer/styles.ts'
+import { lookOf } from '../src/look.ts'
+import { framePlan } from '../src/render/frame/plan.ts'
+import type { Style } from '../src/render/look.ts'
+import { styles } from '../src/render/styles/styles.ts'
+import { isBackShell } from '../src/render/styles/surface/rules.ts'
 import { boneDensity } from '../src/volume/density.ts'
 
 // The options table: the defaults the store opens on, the ranges and choices the panel is built from, and the splats'
@@ -365,8 +369,12 @@ void test('OIT and the back shell show exactly where the scene draws them, so ne
           for (const coronal of [0, 0.4]) {
             const options = at({ style, opacity, skin, caps, coronal, oit: true, backShell: true })
             const state = `${style}, Opacity ${opacity}, Skin ${skin}, Caps ${caps}, Coronal ${coronal}`
-            assert.equal(isOit(options), shows('oit', style, options), `OIT, ${state}`)
-            assert.equal(isBackShell(options), shows('backShell', style, options), `Back shell, ${state}`)
+            // What the scene draws of each: the frame sums the layers, and the surface draws its far side
+            const look = lookOf(options)
+            const summed = framePlan(look).transparency === 'oit'
+            const backShell = look.style === 'surface' && isBackShell(look.surface)
+            assert.equal(summed, shows('oit', style, options), `OIT, ${state}`)
+            assert.equal(backShell, shows('backShell', style, options), `Back shell, ${state}`)
           }
         }
       }

@@ -52,10 +52,12 @@ const xray = {
   view: raised,
 } as const satisfies Preset
 
-// The body as glass: the raytrace's skin nearly clear with its edges lit, so that the bone shows solid within it
+// The body as glass: the raytrace's skin nearly clear with its edges lit, so that the bone shows solid within it. The
+// Bone threshold is lowered to where the 4 mm bone is whole: at the panel's own, the skull's vault, the thigh bone
+// above the knee and the arm bones are too thin to pass it but in shreds
 const glass = {
   id: 'glass',
-  options: { style: 'raytrace', opacity: 0.18, rim: 1, depthCue: 0.4, bloom: 0.5, bloomThreshold: 0.4 },
+  options: { style: 'raytrace', opacity: 0.18, rim: 1, boneThreshold: 90, depthCue: 0.4, bloom: 0.5, bloomThreshold: 0.4 },
   view: raised,
 } as const satisfies Preset
 

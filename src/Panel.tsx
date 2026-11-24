@@ -14,8 +14,8 @@ import {
   type ViewOptions,
 } from './options.ts'
 import { presetOptions, presets, type Preset } from './presets.ts'
+import { isStyle, styles } from './render/styles/styles.ts'
 import { levelKey, useStore, type Status } from './store.ts'
-import { isStyle, styles } from './viewer/styles.ts'
 import { levelOf } from './volume/levels.ts'
 
 const statusText: Record<Status, string> = { loading: 'Loading…', ready: 'Ready', failed: '' }

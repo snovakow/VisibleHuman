@@ -19,7 +19,7 @@ import {
   viewZToPerspectiveDepth,
 } from 'three/tsl'
 import type { Node, NodeMaterial } from 'three/webgpu'
-import { leastDirection } from './rays.ts'
+import { leastDirection } from '../rays.ts'
 
 // The ray quad: one full-screen quad shared by the styles that march or trace the body's 3D texture. Its two triangles
 // cover the viewport whatever the camera does, and each fragment builds the camera ray through its pixel, clips it to

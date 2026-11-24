@@ -1,7 +1,20 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { Matrix4, PerspectiveCamera, Vector3 } from 'three'
-import { bisect, bisectionSteps, cameraRay, sceneToTexture, slab, textureBox, textureCoordinate, type Mapped } from '../src/viewer/rays.ts'
+import {
+  bisect,
+  bisectionSteps,
+  boneCover,
+  boneCovering,
+  cameraRay,
+  layersLeft,
+  leastLayer,
+  sceneToTexture,
+  slab,
+  textureBox,
+  textureCoordinate,
+  type Mapped,
+} from '../src/render/rays.ts'
 import { axesFromBytes, type Triple } from '../src/volume/format.ts'
 import { bodyBounds } from '../src/volume/levels.ts'
 
@@ -144,4 +157,35 @@ void test('the bisection finds a field\'s crossing within a thirty-second of the
   assert.ok(Math.abs(coarse - 10.9) <= 4 / 64)
   // More steps come nearer
   assert.ok(Math.abs(bisect((t) => t - crossingAt, 3, 4, 10) - crossingAt) <= 1 / 1024)
+})
+
+void test('a step through bone covers by its depth, so however the steps divide the bone they cover the same', () => {
+  // Nothing at or under the threshold, and more the farther the density stands over it and the longer the step
+  assert.equal(boneCovering(0, 1), 0)
+  assert.equal(boneCovering(-0.1, 1), 0)
+  assert.ok(boneCovering(0.02, 1) < boneCovering(0.04, 1))
+  assert.ok(boneCovering(0.02, 0.5) < boneCovering(0.02, 1))
+  // Laid one over the other, two half steps, or four quarters, cover what the one whole step does
+  const whole = boneCovering(0.03, 1)
+  const laid = (cover: number, times: number) => 1 - (1 - cover) ** times
+  close(laid(boneCovering(0.03, 0.5), 2), whole)
+  close(laid(boneCovering(0.03, 0.25), 4), whole)
+  // Bone five levels over the threshold shows through a voxel's depth of it; bone a fifth of the scale over is solid
+  // within half a voxel
+  assert.equal(boneCover, 60)
+  assert.ok(boneCovering(5 / 255, 1) > 0.5 && boneCovering(5 / 255, 1) < 0.8)
+  assert.ok(boneCovering(0.2, 0.5) > 0.99)
+})
+
+void test('a hit counts by what is left of the layers: in full while a whole layer is left, then by the share left of the last', () => {
+  assert.equal(layersLeft(2, 0), 1)
+  assert.equal(layersLeft(2, 1), 1)
+  close(layersLeft(2, 1.25), 0.75)
+  close(layersLeft(2, 1.99), 0.01)
+  assert.equal(layersLeft(2, 2), 0)
+  assert.equal(layersLeft(2, 2.6), 0)
+  // It falls steadily as layers are laid, with no step where a layer just falls short of standing in full
+  for (let laid = 0; laid < 3; laid += 0.05) assert.ok(layersLeft(2, laid + 0.05) <= layersLeft(2, laid))
+  // A last layer laid in shares never quite uses the count up, so the tracer ends the ray once this little is left
+  assert.equal(leastLayer, 0.01)
 })

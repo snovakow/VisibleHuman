@@ -3,8 +3,9 @@ import type { Triple } from '../volume/format.ts'
 // The three cuts as the box they leave of the body's bounds and as planes, in the scene's millimetres, centred on the
 // bounds as the splats' centres are. Each cut's plane runs across the bounds from the side it starts on at 0 to the
 // opposite side at 1: Axial cuts down from the head, keeping y at or below its plane; Coronal back from the front,
-// keeping z at or below its plane; Sagittal across from the body's right, keeping x at or above its plane. The splats'
-// cell table cuts its cells by the same rule, which this module must agree with
+// keeping z at or below its plane; Sagittal across from the body's right, keeping x at or above its plane. Every style
+// cuts by these: the ray quad's styles by the box, the surface by the planes and its caps by the limits, and the
+// splats' cell table by the limits too
 
 export interface Cuts {
   axial: number
@@ -12,8 +13,11 @@ export interface Cuts {
   sagittal: number
 }
 
+// Whether any of the three cuts is open
+export const isCut = (cuts: Cuts) => cuts.axial > 0 || cuts.coronal > 0 || cuts.sagittal > 0
+
 // The box the cuts leave, as its lowest and highest corners along x, y and z
-interface CutBox {
+export interface CutBox {
   min: Triple
   max: Triple
 }

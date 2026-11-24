@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { createCellTable, paintCellTable } from '../src/viewer/cellTable.ts'
-import { cutBox, cutLimits, cutPlanes, type CutPlane } from '../src/viewer/cuts.ts'
+import { cutBox, cutLimits, cutPlanes, isCut, type CutPlane } from '../src/render/cuts.ts'
+import { createCellTable, isPainted, paintCellTable } from '../src/render/styles/splats/cellTable.ts'
 import type { Triple } from '../src/volume/format.ts'
 import type { Level } from '../src/volume/levels.ts'
 
@@ -46,9 +46,14 @@ void test('Axial 0.27 cuts where the cell table cuts: cells above the top go, ce
   ]
   const level = levelOf(centers)
   const table = createCellTable(level)
-  paintCellTable(table, level, male, { opacity: 1, ...cuts })
+  assert.ok(!isPainted(table, { opacity: 1, cuts }))
+  paintCellTable(table, level, male, { opacity: 1, cuts })
   const alphas = centers.map((_, n) => table.bytes[n * 4 + 3])
   assert.deepEqual(alphas, [0, 255, 0, 255])
+  // The table knows what it was painted from, by value, so the same cuts again repaint nothing and others do
+  assert.ok(isPainted(table, { opacity: 1, cuts: { ...cuts } }))
+  assert.ok(!isPainted(table, { opacity: 0.5, cuts }))
+  assert.ok(!isPainted(table, { opacity: 1, cuts: { ...cuts, sagittal: 0.1 } }))
   // The box keeps exactly the cells the table keeps
   const inBox = centers.map((p) => p[1] <= box.max[1])
   assert.deepEqual(
@@ -82,7 +87,7 @@ void test('the three planes keep the right half-spaces: below the top, behind th
   ]
   const level = levelOf(centers)
   const table = createCellTable(level)
-  paintCellTable(table, level, male, { opacity: 1, ...cuts })
+  paintCellTable(table, level, male, { opacity: 1, cuts })
   assert.deepEqual(
     centers.map((_, n) => table.bytes[n * 4 + 3] > 0),
     [true, false, true, false, true, false],
@@ -91,6 +96,8 @@ void test('the three planes keep the right half-spaces: below the top, behind th
 
 void test('an inactive cut\'s plane lies beyond the bounds and keeps every point in them, while the box is the bounds', () => {
   const none = { axial: 0, coronal: 0, sagittal: 0 }
+  assert.ok(!isCut(none))
+  for (const open of [{ ...none, axial: 0.01 }, { ...none, coronal: 1 }, { ...none, sagittal: 0.5 }]) assert.ok(isCut(open))
   const [axial, coronal, sagittal] = cutPlanes(male, none)
   // Each plane's level, read back from its constant, is past the face it would start on
   assert.ok(-axial.constant / axial.normal[1] > male[1])

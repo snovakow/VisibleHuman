@@ -1,8 +1,7 @@
-import { Data3DTexture, LinearFilter, Matrix4, NoColorSpace, RGBAFormat, SRGBColorSpace, UnsignedByteType, Vector3 } from 'three'
+import { Vector3 } from 'three'
 import {
   Break,
   clamp,
-  colorSpaceToWorking,
   dot,
   exp,
   float,
@@ -17,13 +16,11 @@ import {
   screenCoordinate,
   select,
   smoothstep,
-  texture3D,
   uniform,
   vec3,
   vec4,
 } from 'three/tsl'
 import type { Node, UniformNode } from 'three/webgpu'
-import type { DensitySource, VolumeMode } from '../options.ts'
 import {
   fatDensity,
   muscleDensity,
@@ -33,12 +30,14 @@ import {
   unsaturatedTo,
   whiteDensity,
   xrayFloor,
-} from '../volume/density.ts'
-import type { Triple } from '../volume/format.ts'
-import { darkMax } from '../volume/segment.ts'
-import { rayQuad } from './rayQuad.ts'
-import { sceneToTexture, type Mapped } from './rays.ts'
-import { cueAlongRay } from './shading.ts'
+} from '../../../volume/density.ts'
+import type { Triple } from '../../../volume/format.ts'
+import { darkMax } from '../../../volume/segment.ts'
+import type { BodySampler } from '../../body/sampler.ts'
+import type { CutBox } from '../../cuts.ts'
+import type { DepthCue } from '../../depthCue.ts'
+import type { DensitySource, VolumeMode } from '../../look.ts'
+import { rayQuad } from '../rayQuad.ts'
 
 // The volume march: each pixel's ray, from the quad, clipped to the box the cuts leave, is walked in steps from the
 // front, and at each step the body's 3D texture is read where the ray is, its colour and its density. What the pixel
@@ -62,17 +61,15 @@ const tint = new Vector3(0.85, 0.92, 1)
 const minTransmittance = 0.01
 // The hash of a pixel's place takes its row as this many pixels, more than a 4K screen is wide
 const screenHashRow = 4096
-// The window's ends are kept at least this far apart, since a step function would be undefined where they met
-const leastWindow = 1e-3
 // Shading: what the light leaves in the shade, and how steep a density slope, per voxel, counts as a full surface.
 // Where the slope is slighter the shade fades toward flat, so the inside of even tissue isn't lit by noise
 const shadeAmbient = 0.35
 const fullSlopePerVoxel = 0.15
 
 // The modes and the density sources as the shader's integers
-const modeIndex: Record<VolumeMode, number> = { over: 0, xray: 1, mip: 2, glow: 3 }
+export const modeIndex: Record<VolumeMode, number> = { over: 0, xray: 1, mip: 2, glow: 3 }
 // The MRI is read as the file's density is, from the texture's fourth channel, which holds the MRI then
-const sourceIndex: Record<DensitySource, number> = { ct: 0, colour: 1, mri: 0 }
+export const sourceIndex: Record<DensitySource, number> = { ct: 0, colour: 1, mri: 0 }
 
 // The density byte a colour reads as, as src/volume/density.ts reads it on the CPU for the file's stand-in where the
 // CT doesn't reach, from the same thresholds: pale and unsaturated is bone, red is muscle, yellow is fat, and a dark
@@ -98,9 +95,6 @@ export interface VolumeMarch {
   // covers as its alpha. The glow is added rather than laid over, so its alpha is its brightest channel, which keeps
   // the colour no brighter than the alpha, as a premultiplied canvas expects
   colorNode: Node<'vec4'>
-  // The box the cuts leave, in the scene's millimetres, which clips every ray
-  cutMin: UniformNode<'vec3'>
-  cutMax: UniformNode<'vec3'>
   mode: UniformNode<'int'>
   densitySource: UniformNode<'int'>
   opacity: UniformNode<'float'>
@@ -110,37 +104,18 @@ export interface VolumeMarch {
   // Draws the steps in grey by the density's share of the window, in place of the photographs' colour, and the x-ray
   // and the maximum in white
   grey: UniformNode<'bool'>
-  // Reads a volume's texture, mapped from the scene by the volume's axes and centred on the body's bounds. The texture
-  // stays its owner's, who releases it; the march only reads it
-  show(texture: Data3DTexture, volume: Mapped, center: Triple): void
+  // The voxels' spacing along the grid's axes, in millimetres, which the step is a share of the smallest of
+  setSpacing(spacing: Triple): void
   // The box the cuts leave, in the scene's millimetres, which clips every ray and bounds the steps one can take
-  setCuts(min: Triple, max: Triple): void
+  setCuts(box: CutBox): void
   // The step, as a share of the smallest voxel spacing
   setStep(voxelShare: number): void
-  // Lets go of what the march owns: the one-voxel texture it reads until a volume is shown
-  dispose(): void
 }
 
-// A texture of one voxel of nothing, read until a volume is shown, so that the material compiles against a 3D texture
-function emptyTexture() {
-  const texture = new Data3DTexture(new Uint8Array(4), 1, 1, 1)
-  texture.format = RGBAFormat
-  texture.type = UnsignedByteType
-  texture.minFilter = LinearFilter
-  texture.magFilter = LinearFilter
-  texture.generateMipmaps = false
-  texture.colorSpace = NoColorSpace
-  texture.needsUpdate = true
-  return texture
-}
-
-export function volumeMarch(): VolumeMarch {
-  const empty = emptyTexture()
-  const body = texture3D(empty)
-  // From a point in the scene to the texture's coordinates, by the volume's axes
-  const toTexture = uniform(new Matrix4())
+// The march of the body a sampler reads, darkened with depth by the cue
+export function volumeMarch(sampler: BodySampler, depthCue: DepthCue): VolumeMarch {
   // A voxel's size along the scene's x, y and z, in millimetres, for the shading's differences
-  const voxel = uniform(new Vector3(1, 1, 1))
+  const { voxel } = sampler
   const cutMin = uniform(new Vector3())
   const cutMax = uniform(new Vector3())
   const mode = uniform(modeIndex.over, 'int')
@@ -158,7 +133,7 @@ export function volumeMarch(): VolumeMarch {
   // What the step and its count are sized from: the spacing shown, the step's share of it and the cut box
   let spacing: Triple = [1, 1, 1]
   let voxelShare = 1
-  let box: { min: Triple; max: Triple } = { min: [0, 0, 0], max: [0, 0, 0] }
+  let box: CutBox = { min: [0, 0, 0], max: [0, 0, 0] }
 
   // The density where the ray is, from 0 to 1, from the texel there: the file's, or the colour's reading, which goes
   // to 0 outside the body as the file's does
@@ -168,15 +143,14 @@ export function volumeMarch(): VolumeMarch {
     const fromColor = densityFromColor(rgb.r, rgb.g, rgb.b).div(255).mul(inside)
     return select(densitySource.equal(sourceIndex.ct), texel.a, fromColor)
   }
-  const densityAtPoint = (p: Node<'vec3'>): Node<'float'> =>
-    densityAt(body.sample(toTexture.mul(vec4(p, 1)).xyz).level(float(0)))
+  const densityAtPoint = (p: Node<'vec3'>): Node<'float'> => densityAt(sampler.texelAt(p))
   // The window's share of a density: clear below the low end, full above the high end
   const windowed = (density: Node<'float'>) => smoothstep(windowLow, windowHigh, density)
   // A step's colour: the voxel's, decoded from the photographs' sRGB, or in grey its density's share of the window,
   // so that the window sets the grey's black and white as a scan viewer's window and level do. The choice is a
   // branch on the switch's uniform, which every pixel takes the same way
   const stepColor = (texel: Node<'vec4'>, density: Node<'float'>): Node<'vec3'> =>
-    select(grey, vec3(windowed(density)), colorSpaceToWorking(vec4(texel.rgb, 1), SRGBColorSpace).rgb)
+    select(grey, vec3(windowed(density)), sampler.colourOf(texel))
   // The x-ray's and the maximum's colour: the film's cold white, or white in grey
   const shownTint = select(grey, vec3(1), tintNode)
 
@@ -192,16 +166,14 @@ export function volumeMarch(): VolumeMarch {
     // The light comes from the camera, so a slope facing the camera is lit
     const toCamera = direction.negate().toVar()
     // The depth cue at a distance along the ray, from how much view depth a millimetre of the ray covers
-    const cueAtDistance = cueAlongRay(viewDir.z.negate())
+    const cueAtDistance = depthCue.alongRay(viewDir.z.negate())
 
     Loop(maxSteps, () => {
       If(t.greaterThan(end).or(transmittance.lessThan(minTransmittance)), () => {
         Break()
       })
-      // The texture has one level, which is named so that the read needs no screen derivatives, which WGSL allows
-      // only where every pixel takes the same path, and a ray that has stopped doesn't
       const p = origin.add(direction.mul(t)).toVar()
-      const texel = body.sample(toTexture.mul(vec4(p, 1)).xyz).level(float(0)).toVar()
+      const texel = sampler.texelAt(p).toVar()
       const density = densityAt(texel).toVar()
       // What the depth cue leaves of the step: of its colour where it has one, of what it takes from an x-ray, and of
       // its density toward the maximum, so that in every mode the far side shows less
@@ -280,8 +252,6 @@ export function volumeMarch(): VolumeMarch {
 
   return {
     colorNode,
-    cutMin,
-    cutMax,
     mode,
     densitySource,
     opacity,
@@ -289,33 +259,19 @@ export function volumeMarch(): VolumeMarch {
     windowHigh,
     shading,
     grey,
-    show(texture, volume, center) {
-      body.value = texture
-      toTexture.value.copy(sceneToTexture(volume, center))
-      spacing = volume.spacing
-      const { x, y, z } = volume.axes
-      voxel.value.set(volume.spacing[x.source], volume.spacing[y.source], volume.spacing[z.source])
+    setSpacing(next) {
+      spacing = next
       fit()
     },
-    setCuts(low, high) {
-      box = { min: low, max: high }
-      cutMin.value.fromArray(low)
-      cutMax.value.fromArray(high)
+    setCuts(next) {
+      box = next
+      cutMin.value.fromArray(next.min)
+      cutMax.value.fromArray(next.max)
       fit()
     },
     setStep(share) {
       voxelShare = share
       fit()
     },
-    dispose() {
-      empty.dispose()
-    },
   }
 }
-
-// The window's ends as the march takes them, the high end kept above the low
-export function windowEnds(low: number, high: number): [number, number] {
-  return [low, Math.max(high, low + leastWindow)]
-}
-
-export { modeIndex, sourceIndex }

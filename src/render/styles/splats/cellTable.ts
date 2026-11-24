@@ -9,16 +9,17 @@ import {
   If,
   int,
   ivec2,
+  positionView,
   round,
   textureLoad,
   varyingProperty,
   vec3,
   vec4,
 } from 'three/tsl'
-import type { ViewOptions } from '../options.ts'
-import type { Triple } from '../volume/format.ts'
-import type { Level } from '../volume/levels.ts'
-import { depthShade } from './shading.ts'
+import type { Triple } from '../../../volume/format.ts'
+import type { Level } from '../../../volume/levels.ts'
+import { cutLimits, type Cuts } from '../../cuts.ts'
+import type { DepthCue } from '../../depthCue.ts'
 
 // The cell table: one RGBA texel per cell of a level, in splat order, which the splats' colour node reads by the cell's
 // index, carried in the splat's own colour bytes. Those bytes are copied into the splat's storage when it's built and
@@ -33,13 +34,27 @@ const fullByte = byteRange - 1
 const tableWidth = 4096
 
 // What the table's alpha is painted from
-export type TablePaint = Pick<ViewOptions, 'opacity' | 'axial' | 'coronal' | 'sagittal'>
+export interface TablePaint {
+  opacity: number
+  cuts: Cuts
+}
 
 export interface CellTable {
   texture: DataTexture
   bytes: Uint8Array
   // What it was last painted from, so a level shown again is repainted only if that has changed
   painted: TablePaint | null
+}
+
+// Whether a table is painted from the same values as those given
+export function isPainted({ painted }: CellTable, { opacity, cuts }: TablePaint) {
+  return (
+    painted !== null &&
+    painted.opacity === opacity &&
+    painted.cuts.axial === cuts.axial &&
+    painted.cuts.coronal === cuts.coronal &&
+    painted.cuts.sagittal === cuts.sagittal
+  )
 }
 
 // A level's table, its texels holding the cells' colours, unpainted. The bytes are the photographs' sRGB, which the
@@ -58,17 +73,13 @@ export function createCellTable({ count, colors }: Level): CellTable {
 
 // Paints every cell's alpha: none on a cut's far side, and elsewhere Opacity's share of the cell's coverage, so a cell
 // the skin runs through is as opaque as it's covered and the surface's lattice of whole cells fades at its steps
-// instead of showing them as contour rings. Each cut's plane runs across the body's bounds, from the side it starts on
-// at 0 to the opposite side at 1. The centres are centred on the bounds, so half holds the bounds' half extents along
-// x, y and z
+// instead of showing them as contour rings. The centres are centred on the bounds, so half holds the bounds' half
+// extents along x, y and z, which the cuts' planes run across
 export function paintCellTable(table: CellTable, { count, centers, coverage }: Level, half: Triple, paint: TablePaint) {
   const { bytes } = table
   const { opacity } = paint
-  // Axial cuts down from the head, at +y; Coronal back from the front, at +z; Sagittal across from the body's right,
-  // at −x
-  const top = half[1] - paint.axial * 2 * half[1]
-  const front = half[2] - paint.coronal * 2 * half[2]
-  const right = paint.sagittal * 2 * half[0] - half[0]
+  // Axial keeps what's below its plane, Coronal what's behind its own, and Sagittal what's to the left of its own
+  const { top, front, right } = cutLimits(half, paint.cuts)
   for (let n = 0; n < count; n++) {
     const x = centers[n * 3]
     const y = centers[n * 3 + 1]
@@ -76,7 +87,7 @@ export function paintCellTable(table: CellTable, { count, centers, coverage }: L
     bytes[n * bytesPerCell + 3] = y > top || z > front || x < right ? 0 : Math.round(opacity * coverage[n])
   }
   table.texture.needsUpdate = true
-  table.painted = paint
+  table.painted = { opacity, cuts: { ...paint.cuts } }
 }
 
 // Writes a cell's index into its splat's colour bytes, with a full alpha, which three's antialiasing compensation
@@ -97,10 +108,12 @@ const cellIndex = int(dot(round(splatColor.rgb.mul(fullByte)), vec3(1, byteRange
 
 // The splats' colour node, which replaces three's own: its Gaussian falloff, out to two standard deviations as three
 // cuts it, in the cell's colour from the table, decoded from sRGB to the linear colour the renderer works in, so that
-// the output's encoding gives back the photographs' bytes, and darkened by the depth cue. A cut cell's fragments are
-// discarded rather than blended in at no alpha
-export function cellColor(table: CellTable) {
+// the output's encoding gives back the photographs' bytes, and darkened by the depth cue. Every pixel of a splat has
+// its centre's view depth, as three rebuilds the fragment's position from a clip position whose depth all four corners
+// share, so the cue is the same across it. A cut cell's fragments are discarded rather than blended in at no alpha
+export function cellColor(table: CellTable, cue: DepthCue) {
   const texels = textureLoad(table.texture)
+  const depthShade = cue.at(positionView.z.negate())
   return Fn(() => {
     const r2 = dot(splatUv, splatUv).toVar()
     If(r2.greaterThan(4), () => {

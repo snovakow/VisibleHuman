@@ -2,9 +2,10 @@ import { Canvas } from '@react-three/fiber'
 import { useCallback, useEffect, useState } from 'react'
 import { Panel } from './Panel.tsx'
 import { launchPreset, presetOf, presetOptions } from './presets.ts'
+import { createRenderer, type Backend, type BackendReport } from './render/backend.ts'
+import { pixelRatioFor } from './render/frame/plan.ts'
+import { isStyle } from './render/styles/styles.ts'
 import { useStore } from './store.ts'
-import { createRenderer, type Backend } from './viewer/renderer.ts'
-import { isQuad, isStyle } from './viewer/styles.ts'
 import { frontView } from './viewer/viewAngle.ts'
 import { Viewer } from './viewer/Viewer.tsx'
 
@@ -52,19 +53,8 @@ function writeBody(body: string, isFirst: boolean) {
 // all of it from the front, until the framing fits it to the window
 const camera = { fov: 50, near: 1, far: 20000, position: [0, 0, 2600] as const }
 
-// The pixel ratios the Canvas draws at: the device's, up to 2, unless a style that shades every pixel of the window
-// runs on the WebGL 2 fallback, where the ratio is held at 1 to keep its frame rate
-const fullDpr: [number, number] = [1, 2]
-const fallbackQuadDpr = 1
-
 // The Visible Human Project's page at the NLM, whose terms ask for the credit
 const creditUrl = 'https://www.nlm.nih.gov/research/visible/visible_human.html'
-
-// Which backend is drawing, as the renderer reported it: its name for the panel, and whether it's WebGPU
-interface Drawing {
-  renderer: string
-  webgpu: boolean
-}
 
 // While the volume loads, the page says so, and a failed load shows why
 function LoadStatus() {
@@ -96,7 +86,8 @@ function App() {
   }, [body, firstBody])
 
   const [backend, setBackend] = useState(requestedBackend)
-  const [drawing, setDrawing] = useState<Drawing | null>(null)
+  // The backend drawing, as the renderer reported it once it started
+  const [started, setStarted] = useState<BackendReport | null>(null)
   const setCapabilities = useStore((s) => s.setCapabilities)
   // The Canvas's key follows the backend, so a switch to the fallback mounts a new Canvas whose factory forces it. The
   // store is told which effects the backend that started can draw, for the panel to offer those alone
@@ -106,25 +97,25 @@ function App() {
         canvas,
         backend,
         () => setBackend('webgl'),
-        (renderer, webgpu, capabilities) => {
-          setDrawing({ renderer, webgpu })
-          setCapabilities(capabilities, webgpu)
+        (report) => {
+          setStarted(report)
+          setCapabilities(report.capabilities, report.webgpu)
         },
       ),
     [backend, setCapabilities],
   )
 
-  // The volume and raytrace styles shade every pixel of the window from one quad, which the fallback draws at a
-  // pixel ratio of 1. The ratio is a Canvas prop, which R3F applies again whenever it configures the Canvas
-  const quadStyle = useStore((s) => isQuad(s.options.style))
-  const dpr = drawing && !drawing.webgpu && quadStyle ? fallbackQuadDpr : fullDpr
+  // The pixel ratio follows the style drawn and the backend drawing it. It's a Canvas prop, which R3F applies again
+  // whenever it configures the Canvas
+  const style = useStore((s) => s.options.style)
+  const dpr = pixelRatioFor(style, started !== null && !started.webgpu)
 
   return (
     <>
       <Canvas key={backend} gl={gl} camera={camera} dpr={dpr} flat>
         <Viewer view={framedFrom} />
       </Canvas>
-      <Panel renderer={drawing?.renderer ?? ''} />
+      <Panel renderer={started?.name ?? ''} />
       <LoadStatus />
       <a className="credit" href={creditUrl} target="_blank" rel="noreferrer">
         Images courtesy of the U.S. National Library of Medicine

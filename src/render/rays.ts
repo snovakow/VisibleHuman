@@ -1,7 +1,7 @@
 import { Matrix4, Vector3, Vector4 } from 'three'
 import type { SceneAxes, Triple, Volume } from '../volume/format.ts'
 
-// The camera rays the quad styles march, and the mapping from the scene to the body's 3D texture, on the CPU: the
+// The camera rays the ray quad's styles march, and the mapping from the scene to the body's 3D texture, on the CPU: the
 // TSL in rayQuad.ts mirrors the ray and the slab test, and the march reads the mapping as the matrix built here, so
 // that what the tests prove here is what the shaders do
 
@@ -93,6 +93,29 @@ export function textureBox(volume: Mapped, center: Triple): { min: Triple; max: 
     max[scene] = Math.max(a, b)
   })
   return { min: [min[0], min[1], min[2]], max: [max[0], max[1], max[2]] }
+}
+
+// How much of what's behind it a step through bone covers: by how far the density stands over the Bone threshold at
+// the step's end, as a share of its scale, and by the step's length in voxels. The cover is an optical depth's, so
+// two steps cover together what one step of their summed depth would, however a ray's steps divide the bone, and bone
+// barely over the threshold covers little; that is what keeps thin bone steady as the view turns, where bone counted
+// at its surface is there or not by where the steps fall. boneCover is the optical depth of a voxel's depth of bone
+// that stands the whole scale over the threshold: bone a fifth of the scale over, as the shaft of a long bone is at a
+// threshold of 110, is solid within half a voxel. The TSL tracer does the same with the density read from the texture
+export const boneCover = 60
+
+export function boneCovering(over: number, voxels: number): number {
+  return 1 - Math.exp(-Math.max(over, 0) * voxels * boneCover)
+}
+
+// What's left of the Layers for a hit to count by, given the layers laid so far, each by how solidly it stood: all of
+// it while a whole layer is left, and the share that's left of the last, so that what lies behind a layer that barely
+// falls short of standing in full fades in with the shortfall, where a count cut off at the whole would show all of it
+// or none. The tracer ends a ray once less than leastLayer is left
+export const leastLayer = 0.01
+
+export function layersLeft(layers: number, laid: number): number {
+  return Math.min(Math.max(layers - laid, 0), 1)
 }
 
 // How many times the tracer halves the span between the last sample outside a surface and the first inside it, which

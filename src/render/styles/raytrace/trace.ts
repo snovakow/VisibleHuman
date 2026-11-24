@@ -1,13 +1,13 @@
-import { Data3DTexture, LinearFilter, Matrix4, NoColorSpace, RedFormat, RGBAFormat, SRGBColorSpace, UnsignedByteType, Vector3 } from 'three'
+import { Vector3 } from 'three'
 import {
   abs,
   bool,
   Break,
   cameraWorldMatrix,
   clamp,
-  colorSpaceToWorking,
   Discard,
   dot,
+  exp,
   float,
   If,
   int,
@@ -20,19 +20,21 @@ import {
   pow,
   property,
   select,
+  smoothstep,
   step,
-  texture3D,
   uniform,
   vec3,
   vec4,
 } from 'three/tsl'
 import type { Node, UniformNode } from 'three/webgpu'
-import type { Trace } from '../options.ts'
-import { boneDensity } from '../volume/density.ts'
-import { bodyCoverage, type Triple } from '../volume/format.ts'
-import { hitDepth, rayQuad } from './rayQuad.ts'
-import { bisectionSteps, sceneToTexture, textureBox, type Mapped } from './rays.ts'
-import { cueAt } from './shading.ts'
+import { boneDensity } from '../../../volume/density.ts'
+import { bodyCoverage, type Triple } from '../../../volume/format.ts'
+import type { BodySampler } from '../../body/sampler.ts'
+import type { CutBox } from '../../cuts.ts'
+import type { DepthCue } from '../../depthCue.ts'
+import type { Trace } from '../../look.ts'
+import { bisectionSteps, boneCover, leastLayer, textureBox, type Mapped } from '../../rays.ts'
+import { hitDepth, rayQuad } from '../rayQuad.ts'
 
 // The raytrace: each pixel's ray, from the quad, clipped to the box the cuts leave, is stepped through the body's
 // textures until it crosses a surface, the skin where the coverage passes the body decision or the bone where the
@@ -40,10 +42,12 @@ import { cueAt } from './shading.ts'
 // by its slope, in the colour of the tissue just inside it, darkened by the depth cue as it lies farther, and written
 // as the pixel's depth, so that what else is drawn composites with it. A ray that starts inside a surface, where a cut
 // has opened the body, meets it at once, on the cut face. Below full Opacity the ray carries on past the skin and lays
-// the surfaces it meets over one another, front to back, until it meets bone, has laid Layers of them, or has little
-// light left; so the skin over the bone over the far skin is ordered pixel by pixel with no sort. Shadows send a second
-// march from each lit point toward the light, through the whole grid, so that what the cuts take away still throws its
-// shadow onto what they leave
+// the surfaces it meets over one another, front to back, until bone has taken the light, it has laid Layers of skin,
+// or little light is left; so the skin over the bone over the far skin is ordered pixel by pixel with no sort. The
+// skin is laid at its surface, faintly where the ray only grazes it or it barely stands in its voxels; the bone is
+// laid through its depth, by how much of it the ray goes through. Both keep the picture steady as the view turns,
+// where a surface that is either met or missed blinks. Shadows send a second march from each lit point toward the
+// light, through the whole grid, so that what the cuts take away still throws its shadow onto what they leave
 
 // The skin lies where the coverage crosses the body decision, where the surface style meshes it too
 const skinIso = bodyCoverage / 255
@@ -71,16 +75,35 @@ const colourReads = 4
 // A hit within this share of a voxel of a face of the cut box lies on that face; one nearer the camera than any face
 // is on the near plane, with the camera inside the body
 const faceShare = 0.1
+// A crossing of the skin counts by how solidly the skin stands there: how far the coverage gets from the body decision
+// on each side of the crossing, the nearer side deciding. A ray that grazes the skin crosses in and straight out again
+// without the field ever rising far, as does one through a wisp of tissue or across a thin gap, and a surface drawn
+// there at full strength shows as a speck that comes and goes with the pixel and the view: dotted outlines, sparkle
+// wherever the Rim lights a sliver, and stair-stepped edges. So a crossing counts in full only where the field stands
+// this far from zero on both sides, and for less as it stands less, down to nothing where the ray only touches the
+// surface, which smooths every silhouette over about half a voxel. The coverage stands half its scale from the surface
+// at most
+const skinStanding = 0.25
+// How far ahead of a crossing the ray looks for the skin's field to stand, in voxels, at so many reads to a voxel,
+// stopping once it stands in full
+const skinLook = 4
+const looksPerVoxel = 4
+// Through empty space the ray takes the step Quality sets, and this share of it wherever a surface it traces could lie
+// within a step: the skin where the coverage is neither none nor whole, and the bone wherever there's any density at
+// all, since bone a voxel thick is stepped over at a whole step as often as it's found
+const bodyStride = 0.5
+// A texture's value below which there's nothing there, half a level of its scale, and above which the coverage is whole
+const nothing = 0.5 / 255
+const whole = 1 - nothing
 // A surface's slope is read from the field smoothed over a voxel: each read the mean of the eight reads half a voxel
 // away along every axis, which approximates the field between the texels averaged over a texel's cube. Read straight,
 // the skin's field, each voxel's share of body, ripples with the lattice wherever a surface crosses it, and the lit
 // skin shows the ripple as contour bands over the whole body
 const smoothingOffsets = [-0.5, 0.5]
 
-// The traces as the shader's integers
-// The brain is traced as the bone is, alone: its surface is the same field's, the texture's fourth channel, which
-// holds the MRI then and is judged against the MRI threshold
-const traceIndex: Record<Trace, number> = { skin: 0, bone: 1, both: 2, brain: 1 }
+// The traces as the shader's integers. The brain is traced as the bone is, alone: its surface is the same field's,
+// the texture's fourth channel, which holds the MRI then and is judged against the MRI threshold
+export const traceIndex: Record<Trace, number> = { skin: 0, bone: 1, both: 2, brain: 1 }
 
 export interface Raytrace {
   // The quad's colour: what the ray through each pixel met, premultiplied, with how much it covers as its alpha. The
@@ -89,9 +112,6 @@ export interface Raytrace {
   // The depth of the first surface the ray meets, from the trace itself, which runs here: a node material sets its
   // depth up before its colour, so the trace lives in the depth and the colour node reads what it left
   depthNode: Node<'float'>
-  // The box the cuts leave, in the scene's millimetres, which clips every ray
-  cutMin: UniformNode<'vec3'>
-  cutMax: UniformNode<'vec3'>
   trace: UniformNode<'int'>
   layers: UniformNode<'int'>
   shadows: UniformNode<'bool'>
@@ -99,41 +119,21 @@ export interface Raytrace {
   // The density from which a voxel is bone, from 0 to 1 of the scale
   boneThreshold: UniformNode<'float'>
   rim: UniformNode<'float'>
-  // Reads a volume's colour and coverage textures, mapped from the scene by the volume's axes and centred on the
-  // body's bounds. The textures stay their owner's, who releases them; the trace only reads them
-  show(colour: Data3DTexture, coverage: Data3DTexture, volume: Mapped, center: Triple): void
+  // The grid the sampler reads, centred on the body's bounds: its spacing sizes the steps, and its box in the scene
+  // is what the shadow march runs through
+  setGrid(volume: Mapped, center: Triple): void
   // The box the cuts leave, in the scene's millimetres, which clips every ray and bounds the steps one can take
-  setCuts(min: Triple, max: Triple): void
+  setCuts(box: CutBox): void
   // The step, as a share of the smallest voxel spacing
   setStep(voxelShare: number): void
   // Where the light is, in degrees from the camera's view: across, from the left to the right, and up
   setLight(azimuthDeg: number, elevationDeg: number): void
-  // Lets go of what the trace owns: the one-voxel textures it reads until a volume is shown
-  dispose(): void
 }
 
-// A texture of one voxel of nothing, read until a volume is shown, so that the material compiles against a 3D texture
-function emptyTexture(format: typeof RGBAFormat | typeof RedFormat, channels: number) {
-  const texture = new Data3DTexture(new Uint8Array(channels), 1, 1, 1)
-  texture.format = format
-  texture.type = UnsignedByteType
-  texture.minFilter = LinearFilter
-  texture.magFilter = LinearFilter
-  texture.generateMipmaps = false
-  texture.colorSpace = NoColorSpace
-  texture.needsUpdate = true
-  return texture
-}
-
-export function raytrace(): Raytrace {
-  const emptyColour = emptyTexture(RGBAFormat, 4)
-  const emptyCoverage = emptyTexture(RedFormat, 1)
-  const body = texture3D(emptyColour)
-  const skin = texture3D(emptyCoverage)
-  // From a point in the scene to the texture's coordinates, by the volume's axes
-  const toTexture = uniform(new Matrix4())
+// The trace of the body a sampler reads, which must read the coverage too, darkened with depth by the cue
+export function raytrace(sampler: BodySampler, cue: DepthCue): Raytrace {
   // A voxel's size along the scene's x, y and z, in millimetres, for the slope's differences
-  const voxel = uniform(new Vector3(1, 1, 1))
+  const { voxel } = sampler
   const cutMin = uniform(new Vector3())
   const cutMax = uniform(new Vector3())
   // The whole grid's box in the scene, which the shadow march runs through
@@ -148,8 +148,10 @@ export function raytrace(): Raytrace {
   // Toward the light, in view space
   const lightView = uniform(new Vector3(0, 0, 1))
   const stepLength = uniform(1)
-  // The most steps a ray through the cut box can take: its diagonal in steps, one more for the step that ends on the
-  // far face and one for the first
+  // The step wherever a traced surface could lie within one
+  const fineStep = uniform(1)
+  // The most steps a ray through the cut box can take: its diagonal in the finer steps, one more for the step that
+  // ends on the far face and one for the first
   const maxSteps = uniform(1, 'int')
   const shadowStep = uniform(1)
   const maxShadowSteps = uniform(1, 'int')
@@ -161,18 +163,15 @@ export function raytrace(): Raytrace {
   // What the steps are sized from: the spacing shown, the step's share of it, the cut box and the grid's box
   let spacing: Triple = [1, 1, 1]
   let voxelShare = 1
-  let box: { min: Triple; max: Triple } = { min: [0, 0, 0], max: [0, 0, 0] }
-  let grid: { min: Triple; max: Triple } = { min: [0, 0, 0], max: [0, 0, 0] }
+  let box: CutBox = { min: [0, 0, 0], max: [0, 0, 0] }
+  let grid: CutBox = { min: [0, 0, 0], max: [0, 0, 0] }
 
   // The colour the trace leaves for the colour node
   const colour = property('vec4', 'tracedColour')
 
-  const uvwOf = (p: Node<'vec3'>): Node<'vec3'> => toTexture.mul(vec4(p, 1)).xyz
-  // The two fields, each at or above zero inside its surface. The textures have one level, which is named so that the
-  // reads need no screen derivatives, which WGSL allows only where every pixel takes the same path, and a ray that
-  // has stopped doesn't
-  const skinField = (p: Node<'vec3'>): Node<'float'> => skin.sample(uvwOf(p)).level(float(0)).r.sub(skinIso)
-  const boneField = (p: Node<'vec3'>): Node<'float'> => body.sample(uvwOf(p)).level(float(0)).a.sub(boneThreshold)
+  // The two fields, each at or above zero inside its surface
+  const skinField = (p: Node<'vec3'>): Node<'float'> => sampler.coverageAt(p).sub(skinIso)
+  const boneField = (p: Node<'vec3'>): Node<'float'> => sampler.texelAt(p).a.sub(boneThreshold)
   // The field of the surface a hit is on, where which surface is the pixel's own
   const fieldOf = (bone: Node<'bool'>, p: Node<'vec3'>): Node<'float'> => {
     const value = float(0).toVar()
@@ -195,6 +194,8 @@ export function raytrace(): Raytrace {
     const gathered = vec3(0).toVar()
     const transmittance = float(1).toVar()
     const hits = int(0).toVar()
+    // How many layers of skin the hits so far come to, each counted by how solidly it stands
+    const laid = float(0).toVar()
     const firstHit = float(0).toVar()
     const done = bool(false).toVar()
 
@@ -291,10 +292,18 @@ export function raytrace(): Raytrace {
       return lit
     }
 
-    // A hit at a distance along the ray, on the bone or the skin, on a cut face or a traced surface: shaded and laid
-    // over what's gathered, bone whole and skin at Opacity, and the ray ended at bone, at full cover, at the last
-    // layer or once little light is left
-    const hit = (tHit: Node<'float'>, bone: Node<'bool'>, cutFace: Node<'bool'>) => {
+    // What the bone the ray is in shows: its colour as lit where the ray entered it
+    const boneShade = vec3(0).toVar()
+
+    // What's left of the Layers for a hit to count by, below full Opacity, as rays.ts has it on the CPU: all of it
+    // while a whole layer is left, and the share that's left of the last
+    const layersLeft = () => select(opacity.lessThan(1), clamp(float(layers).sub(laid), 0, 1), float(1))
+
+    // A hit at a distance along the ray, on the bone or the skin, on a cut face or a traced surface: shaded, and then
+    // the skin and any cut face laid over what's gathered, the skin at Opacity by how solidly it stands there and a
+    // face cut through bone whole, and the ray ended at full cover, at the last layer or once little light is left.
+    // Traced bone is only shaded here, for the steps inside it to lay
+    const hit = (tHit: Node<'float'>, bone: Node<'bool'>, cutFace: Node<'bool'>, standing: Node<'float'>) => {
       const p = at(tHit).toVar()
       const outward = vec3(0).toVar()
       If(cutFace, () => {
@@ -308,8 +317,7 @@ export function raytrace(): Raytrace {
       const base = vec3(0).toVar()
       for (let read = 0; read < colourReads; read++) {
         const depth = voxelDepth.mul((read + 0.5) / colourReads)
-        const texel = body.sample(uvwOf(p.sub(outward.mul(depth)))).level(float(0))
-        base.addAssign(colorSpaceToWorking(vec4(texel.rgb, 1), SRGBColorSpace).rgb)
+        base.addAssign(sampler.colourOf(sampler.texelAt(p.sub(outward.mul(depth)))))
       }
       base.divAssign(colourReads)
       const facing = max(dot(normal, toCamera), 0).toVar()
@@ -319,58 +327,95 @@ export function raytrace(): Raytrace {
         // The tissue a face is cut through can't shadow it, so a cut face, like bone, is shadowed by bone alone
         direct.mulAssign(litAt(p.add(normal.mul(stepLength)), cutFace.or(bone)))
       })
-      // A traced surface mirrors the headlight into the camera where it faces it; a cut face is matte, so that the
-      // section shows the photograph's own colours
+      // A traced surface mirrors the headlight into the camera where it faces it, and takes the Rim's light where it
+      // turns away from it. A cut face takes neither: it's matte, so that the section shows the photograph's own
+      // colours, and flat, so that seen from the side the Rim would light the whole of it, as it does no edge
       const glint = select(cutFace, float(0), pow(facing, shininess).mul(highlight))
-      const edge = pow(facing.oneMinus(), rimPower).mul(rim).toVar()
+      const edge = select(cutFace, float(0), pow(facing.oneMinus(), rimPower).mul(rim)).toVar()
       // The depth cue darkens the whole of what the hit shows, its highlight and its rim with it, as fog would
-      const shaded = base.mul(sky.add(direct)).add(glint).add(edge).mul(cueAt(tHit.mul(viewDir.z.negate())))
-      const alpha = select(bone, float(1), clamp(max(opacity, edge), 0, 1)).toVar()
-      gathered.addAssign(shaded.mul(alpha.mul(transmittance)))
-      transmittance.mulAssign(alpha.oneMinus())
+      const shaded = base.mul(sky.add(direct)).add(glint).add(edge).mul(cue.at(tHit.mul(viewDir.z.negate()))).toVar()
       If(hits.equal(0), () => {
         firstHit.assign(tHit)
       })
       hits.addAssign(1)
-      done.assign(bone.or(alpha.greaterThanEqual(1)).or(transmittance.lessThan(minTransmittance)).or(hits.greaterThanEqual(layers)))
+      If(bone.and(cutFace.not()), () => {
+        boneShade.assign(shaded)
+      }).Else(() => {
+        const strength = standing.mul(layersLeft()).toVar()
+        const alpha = select(bone, float(1), clamp(max(opacity, edge), 0, 1)).mul(strength).toVar()
+        gathered.addAssign(shaded.mul(alpha.mul(transmittance)))
+        transmittance.mulAssign(alpha.oneMinus())
+        // The layers are the skin's, counted below full Opacity, where each lets the next show through; at full
+        // Opacity a ray goes on only past what doesn't stand in full, until it meets something that does
+        laid.addAssign(select(bone, float(0), strength))
+        const lastLayer = opacity.lessThan(1).and(float(layers).sub(laid).lessThan(leastLayer))
+        done.assign(alpha.greaterThanEqual(1).or(transmittance.lessThan(minTransmittance)).or(lastLayer))
+      })
     }
 
     // Which surfaces the point at a distance is inside, of those traced
     const skinInside = float(0).toVar()
     const boneInside = float(0).toVar()
-    const sampleAt = (p: Node<'vec3'>, skinTo: Node<'float'>, boneTo: Node<'float'>) => {
+    // Each field's value at the last sample, and how far the skin's has stood from zero, either way, on the ray's side
+    // of the skin since the ray last crossed it. A ray starts with it standing in full, as nothing lies outside the cut
+    // box
+    const skinValue = float(0).toVar()
+    const boneValue = float(0).toVar()
+    const skinStood = float(skinStanding).toVar()
+    const sampleAt = (p: Node<'vec3'>, skinTo: Node<'float'>, boneTo: Node<'float'>, skinValueTo: Node<'float'>, boneValueTo: Node<'float'>) => {
       If(tracesSkin, () => {
-        skinTo.assign(insideOf(skinField(p)))
+        skinValueTo.assign(skinField(p))
+        skinTo.assign(insideOf(skinValueTo))
       })
       If(tracesBone, () => {
-        boneTo.assign(insideOf(boneField(p)))
+        boneValueTo.assign(boneField(p))
+        boneTo.assign(insideOf(boneValueTo))
       })
     }
 
+    // How solidly the skin stands at a crossing, from 0 to 1: how far its field has stood on the side the ray comes
+    // from and how far it comes to stand ahead, read along the ray, the lesser deciding; rising is 1 where the field
+    // rises along the ray, into the body, and −1 where it falls, out of it
+    const standingAt = (tCross: Node<'float'>, rising: Node<'float'>): Node<'float'> => {
+      const ahead = float(0).toVar()
+      Loop(skinLook * looksPerVoxel, ({ i }) => {
+        const reach = voxelDepth.mul(float(i).add(1).div(looksPerVoxel))
+        ahead.assign(max(ahead, skinField(at(tCross.add(reach))).mul(rising)))
+        If(ahead.greaterThanEqual(skinStanding), () => {
+          Break()
+        })
+      })
+      return smoothstep(0, skinStanding, min(skinStood, ahead))
+    }
+
     // Where the ray enters the cut box inside a surface, the box's face is the hit: a cut face, bone before skin
-    sampleAt(at(tEnter), skinInside, boneInside)
+    sampleAt(at(tEnter), skinInside, boneInside, skinValue, boneValue)
     const entryBone = boneInside.equal(1).toVar()
     If(entryBone.or(skinInside.equal(1)), () => {
-      hit(tEnter, entryBone, bool(true))
+      hit(tEnter, entryBone, bool(true), float(1))
     })
 
     // Then step by step, each step ending at the exit at the latest, a crossing of either surface since the last
     // sample is narrowed down and hit, the nearer first where both are crossed. The skin is crossed either way, into
-    // the body or out of it; the bone only into it, since a ray stops there
+    // the body or out of it; the bone only into it, where it's lit for the steps inside it to lay
     const t = tEnter.toVar()
     Loop(maxSteps, () => {
       If(done.or(t.greaterThanEqual(tExit)), () => {
         Break()
       })
-      const tNext = min(t.add(stepLength), tExit).toVar()
+      // The finer step wherever a surface traced could lie within one, by the fields as last sampled
+      const nearSkin = tracesSkin.and(skinValue.add(skinIso).greaterThan(nothing)).and(skinValue.add(skinIso).lessThan(whole))
+      const nearBone = tracesBone.and(boneValue.add(boneThreshold).greaterThan(nothing))
+      const stride = select(nearSkin.or(nearBone), fineStep, stepLength).toVar()
+      const tNext = min(t.add(stride), tExit).toVar()
       const skinNext = skinInside.toVar()
       const boneNext = boneInside.toVar()
-      sampleAt(at(tNext), skinNext, boneNext)
+      sampleAt(at(tNext), skinNext, boneNext, skinValue, boneValue)
       const crossedSkin = tracesSkin.and(skinNext.notEqual(skinInside)).toVar()
       const crossedBone = tracesBone.and(boneInside.equal(0)).and(boneNext.equal(1)).toVar()
       If(crossedSkin.or(crossedBone), () => {
         // A surface not crossed is placed beyond the step, so the other is the nearer
-        const beyond = tNext.add(stepLength).toVar()
+        const beyond = tNext.add(stride).toVar()
         const tSkin = beyond.toVar()
         const tBone = beyond.toVar()
         If(crossedSkin, () => {
@@ -380,16 +425,39 @@ export function raytrace(): Raytrace {
           tBone.assign(crossingOf(boneField, t, tNext, boneInside))
         })
         // Both are hit in turn while the ray goes on, since the bone can lie within a step of the skin and the next
-        // step starts past them both. The skin, once hit, is placed beyond the step too; a bone hit ends the ray
+        // step starts past them both. Each, once hit, is placed beyond the step too, so that it's hit once
         Loop(2, () => {
           If(done.or(min(tSkin, tBone).greaterThanEqual(beyond)), () => {
             Break()
           })
           const bone = tBone.lessThanEqual(tSkin).toVar()
-          hit(select(bone, tBone, tSkin), bone, bool(false))
-          tSkin.assign(beyond)
+          // The skin's field rises along the ray where it enters the body and falls where it leaves
+          const standing = float(1).toVar()
+          If(bone.not(), () => {
+            standing.assign(standingAt(tSkin, skinInside.mul(-2).add(1)))
+          })
+          hit(select(bone, tBone, tSkin), bone, bool(false), standing)
+          If(bone, () => {
+            tBone.assign(beyond)
+          }).Else(() => {
+            tSkin.assign(beyond)
+          })
         })
       })
+      // Inside the bone, the step just taken is laid in the colour the bone was lit in where the ray entered it, by how
+      // far the density stands over the threshold at the step's end and by the step's length in voxels, as rays.ts has
+      // it on the CPU. Most of the 4 mm bone is a voxel thick or less and barely over the threshold, and counted once,
+      // at its surface, such bone is there or not by where a ray's steps happen to fall, so it blinks as the view
+      // turns; laid by how much of it the ray goes through, it shows the same from one view to the next
+      If(tracesBone.and(boneNext.equal(1)).and(done.not()), () => {
+        const depth = boneValue.mul(tNext.sub(t)).div(voxelDepth).mul(boneCover)
+        const cover = exp(depth.negate()).oneMinus().mul(layersLeft()).toVar()
+        gathered.addAssign(boneShade.mul(cover.mul(transmittance)))
+        transmittance.mulAssign(cover.oneMinus())
+        done.assign(transmittance.lessThan(minTransmittance))
+      })
+      // What the skin's field has stood on the side the ray is now on: past a crossing, only this sample's worth
+      skinStood.assign(select(crossedSkin, abs(skinValue), max(skinStood, abs(skinValue))))
       t.assign(tNext)
       skinInside.assign(skinNext)
       boneInside.assign(boneNext)
@@ -406,8 +474,9 @@ export function raytrace(): Raytrace {
   const fit = () => {
     const least = Math.min(...spacing)
     stepLength.value = least * voxelShare
+    fineStep.value = stepLength.value * bodyStride
     const diagonal = Math.hypot(...box.max.map((high, axis) => high - box.min[axis]))
-    maxSteps.value = Math.ceil(diagonal / stepLength.value) + 2
+    maxSteps.value = Math.ceil(diagonal / fineStep.value) + 2
     shadowStep.value = least * shadowStepVoxels
     const gridDiagonal = Math.hypot(...grid.max.map((high, axis) => high - grid.min[axis]))
     maxShadowSteps.value = Math.ceil(gridDiagonal / shadowStep.value) + 1
@@ -418,30 +487,23 @@ export function raytrace(): Raytrace {
   return {
     colorNode: colour,
     depthNode,
-    cutMin,
-    cutMax,
     trace,
     layers,
     shadows,
     opacity,
     boneThreshold,
     rim,
-    show(colourTexture, coverageTexture, volume, center) {
-      body.value = colourTexture
-      skin.value = coverageTexture
-      toTexture.value.copy(sceneToTexture(volume, center))
+    setGrid(volume, center) {
       spacing = volume.spacing
-      const { x, y, z } = volume.axes
-      voxel.value.set(volume.spacing[x.source], volume.spacing[y.source], volume.spacing[z.source])
       grid = textureBox(volume, center)
       gridMin.value.fromArray(grid.min)
       gridMax.value.fromArray(grid.max)
       fit()
     },
-    setCuts(low, high) {
-      box = { min: low, max: high }
-      cutMin.value.fromArray(low)
-      cutMax.value.fromArray(high)
+    setCuts(next) {
+      box = next
+      cutMin.value.fromArray(next.min)
+      cutMax.value.fromArray(next.max)
       fit()
     },
     setStep(share) {
@@ -455,11 +517,5 @@ export function raytrace(): Raytrace {
       const elevation = (elevationDeg * Math.PI) / 180
       lightView.value.set(Math.cos(elevation) * Math.sin(azimuth), Math.sin(elevation), Math.cos(elevation) * Math.cos(azimuth))
     },
-    dispose() {
-      emptyColour.dispose()
-      emptyCoverage.dispose()
-    },
   }
 }
-
-export { traceIndex }

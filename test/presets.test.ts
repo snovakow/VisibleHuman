@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { defaultOptions, isOption, isShown, optionKeys, viewOptions, type ViewOptions } from '../src/options.ts'
 import { launchPreset, presetOf, presetOptions, presets } from '../src/presets.ts'
-import { styles } from '../src/viewer/styles.ts'
+import { styles } from '../src/render/styles/styles.ts'
 import { frameFrom, frontView, swayAngle, swayDegrees, swaySeconds, type ViewAngle } from '../src/viewer/viewAngle.ts'
 import type { Triple } from '../src/volume/format.ts'
 

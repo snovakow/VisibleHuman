@@ -1,6 +1,7 @@
 import { create, type StoreApi } from 'zustand'
 import { shallow } from 'zustand/shallow'
-import { defaultOptions, drawableOptions, type BackendCapabilities, type Capabilities, type ViewOptions } from './options.ts'
+import { defaultOptions, drawableOptions, type Capabilities, type ViewOptions } from './options.ts'
+import type { BackendCapabilities } from './render/backend.ts'
 import { defaultLevel, type BodiesFile, type BodyEntry } from './volume/bodies.ts'
 import type { Volume } from './volume/format.ts'
 import { levelOf, stageBody, type Bounds, type Detail, type DetailEntry, type Levels, type StagedBody } from './volume/levels.ts'

@@ -1,54 +1,17 @@
-import type { Style } from './viewer/styles.ts'
+import type { BackendCapabilities } from './render/backend.ts'
+import type { Blend, DensitySource, Inner, Quality, Style, SurfaceColour, Trace, VolumeMode } from './render/look.ts'
 import type { Detail } from './volume/levels.ts'
 
-// The view options, what the panel sets and the scene draws, in one table that the store's defaults and the panel's
+// The view options, what the panel sets and the page keeps, in one table that the store's defaults and the panel's
 // controls are both built from. Each entry gives the panel folder it sits in, its label, its default, its range and
 // step or its choices by their labels or that it's a switch, which styles show it, and, where another control hides
-// it, the test on that control's value. The entries are in the panel's order.
-// This module imports nothing at run time: the styles read their options' type from here, so a table that read the
-// styles at run time would close a cycle
+// it, the test on that control's value. The entries are in the panel's order. The scene draws none of this as it
+// stands: look.ts turns the options into the look the scene is given, whose types the choices here are of.
+// This module imports nothing at run time, so the tests read the table without loading the scene
 
-// How the splats lay over one another: in front of what's behind, or added to it so dense parts glow, or summed by how
-// near and how opaque each is, so that the order they're drawn in never matters
-export type Blend = 'normal' | 'glow' | 'weighted'
-
-// How the volume's march shows what it passes through: laid over what's behind, step by step, from the front; as an
-// x-ray, the light that gets through the body's density; as the most density met along the ray; or as light the body
-// gives off, added to what's behind
-export type VolumeMode = 'over' | 'xray' | 'mip' | 'glow'
-
-// Where the march reads a voxel's density: the file's density channel, the CT's where the scan covers the voxel and
-// a reading of its colour where it doesn't; that reading of the colour everywhere, which shows what the CT adds; or,
-// for a body with one, its MRI, which tells the soft tissues apart where the CT tells bone from the rest
-export type DensitySource = 'ct' | 'colour' | 'mri'
-
-// The march's step as a share of a voxel: a step chosen for the backend, a whole voxel on the WebGL 2 fallback and
-// half a voxel on WebGPU, or one named, each halving doubling the cost of a frame
-export type Quality = 'auto' | 'voxel' | 'half' | 'quarter'
-
-// Which surfaces the raytrace follows each ray to: the skin, the bone, or both, whichever a ray meets first; or, for
-// a body with an MRI, the surface where the MRI passes its threshold, which with the body cut open is the brain's
-export type Trace = 'skin' | 'bone' | 'both' | 'brain'
-
-// What the surface's inner mesh is of: the bone, from the density at the Bone threshold, or, for a body with an MRI,
-// the surface where the MRI passes its threshold
-type Inner = 'bone' | 'brain'
-
-// Where the surface's colour comes from: the body's texture just inside the surface, at the loaded grid's resolution
-// whatever the Detail, or the colour of the blocks either side of each vertex on its mesh's grid, the Detail's for the
-// skin and the shell and the loaded grid's for the bone, mixed as the vertex lies between them. On the skin that's
-// much the splats' own colour at that Detail: a block's colour takes in the band dilated around the body as well as
-// its body voxels, and a splat's its body voxels alone
-type SurfaceColour = 'texture' | 'cells'
-
-// What an effect needs of the backend that draws: the weighted blend sums into half-float targets, and the surface's
-// order-independent transparency into such a target and a second blended its own way. WebGPU has both; the WebGL 2
-// fallback has each only where the browser offers the extensions for it
-type BackendCapability = 'weighted' | 'oit'
-export type BackendCapabilities = Record<BackendCapability, boolean>
 // What a control may need before the panel offers it: something of the backend, or an MRI in the body shown, which
 // only the head's file holds
-export type Capability = BackendCapability | 'mri'
+export type Capability = keyof BackendCapabilities | 'mri'
 export type Capabilities = Record<Capability, boolean>
 
 // The panel's folders that hold options. Presets holds a button for each preset, Body the body and level choosers,
@@ -141,8 +104,8 @@ const notXray: Dependence = { option: 'mode', isNot: 'xray' }
 const translucent: Dependence = { option: 'opacity', below: 1 }
 // While the shadows are cast, which is all the light's direction is for
 const shadowed: Dependence = { option: 'shadows', is: true }
-// While the raytrace traces the skin, alone or with the bone: the only surface it draws see-through, as a ray stops at
-// the first bone it meets, and at the brain, which is traced as the bone is
+// While the raytrace traces the skin, alone or with the bone: the only surface the Opacity sets, as the bone, and the
+// brain, which is traced as the bone is, are drawn by their own depth
 const skinTraced: Dependence = { option: 'trace', oneOf: ['skin', 'both'] }
 // While any of the three cuts is open
 const cutOpen: Dependences = {
@@ -278,8 +241,8 @@ export const viewOptions = {
     choiceNeeds: { brain: 'mri' },
     shownFor: raytrace,
   }),
-  // How many surfaces a ray lays over one another below full Opacity before it stops; it stops at bone regardless, so
-  // the count matters only while the skin is traced
+  // How many layers of skin a ray lays over one another below full Opacity before it stops; the bone between them
+  // counts for none, and a ray stops in solid bone regardless, so the count matters only while the skin is traced
   layers: slider({
     folder: 'Look',
     label: 'Layers',
