@@ -14,9 +14,9 @@ export interface Preset {
   view: ViewAngle
 }
 
-// From the front and a little above, the middle of the sway, which swings the view as far round each way, so that
-// the body shows its depth, which held straight on from the front it hides
-const raised: ViewAngle = { azimuth: 0, elevation: 8 }
+// A little round from the front toward the body's left, and a little above it, so that the body shows its depth,
+// which held straight on from the front it hides. The sway sets off from here into its swing about the front
+const raised: ViewAngle = { azimuth: 30, elevation: 8 }
 
 // The body cut open from the front to a little past its middle, by the raytrace, so that the cut face shows the
 // organs, the spine and the brain in the photographs' own colours, with the skin's edge lit, a glow about the
@@ -27,18 +27,48 @@ const cutaway = {
   view: raised,
 } as const satisfies Preset
 
-// The skeleton in its own colour: the volume with the window's low end raised past the soft tissue, which leaves the
-// bone, shaded by its slope and glowing softly against the dark
+// The skeleton in its own colour: the volume with its window drawn in to the bone, the low end raised past the soft
+// tissue and the high end lowered to where the bone stands solid, shaded by its slope and glowing softly against the
+// dark. A 4 mm block that holds bone holds flesh beside it, so its density falls well short of the scale's top: nine
+// tenths of the male's bone lies under half the scale, and under a window that runs on to the top the bodies' bone is
+// thin and dim. The low end is as low as leaves the muscle of the arms and the shoulders out
 const skeleton = {
   id: 'skeleton',
-  options: { style: 'volume', shading: true, windowLow: 0.25, depthCue: 0.5, bloom: 0.5, bloomRadius: 0.5 },
+  options: { style: 'volume', shading: true, windowLow: 0.28, windowHigh: 0.6, depthCue: 0.4, bloom: 0.5, bloomRadius: 0.5 },
   view: raised,
 } as const satisfies Preset
 
-// The skeleton as an X-ray glowing white: the most density along each ray, windowed to the bone, with its brightest
-// parts blooming. Its name is spelt as the panel spells the volume's x-ray
+// The body as a radiograph: the volume's x-ray, which shows how much of each ray the body stops, so that the bone
+// stands white in the grey of the flesh, with the lungs and the gut's gas dark. The far side counts for a little less,
+// which tells the near side from the far as the view sways, where an x-ray alone doesn't say which way a body turns.
+// It takes no glow, which lifts the grey of the flesh toward the bone's white. The x-ray reads the density as it is,
+// so it holds on every body with nothing to set for each
 const xray = {
   id: 'x-ray',
+  options: { style: 'volume', mode: 'xray', depthCue: 0.3 },
+  view: raised,
+} as const satisfies Preset
+
+// The body as glass: the raytrace's skin all but clear with its edges lit, so that the bone shows solid within it. The
+// skin is laid in its own colour, and at more than a little Opacity two layers of it tint the whole body olive and
+// hide the ribs
+const glass = {
+  id: 'glass',
+  options: { style: 'raytrace', opacity: 0.08, rim: 1, depthCue: 0.4, bloom: 0.5, bloomThreshold: 0.4 },
+  view: raised,
+} as const satisfies Preset
+
+export const presets: readonly Preset[] = [cutaway, skeleton, xray, glass]
+
+// The preset a bare address opens on, the first impression of the page
+export const launchPreset: Preset = cutaway
+
+// The x-ray as it was before it took the volume's own: the most density along each ray, windowed to the bone, with its
+// brightest parts blooming, so that the skeleton glows white. The head's bone is the densest in the files, a seventh of
+// it over six tenths of the scale where a two-hundredth of the male's 4 mm bone is, so a window bright enough for the
+// bodies burns the head out white, and this one, held back for the head, leaves the bodies dim
+const xrayMip = {
+  id: 'x-ray-mip',
   options: {
     style: 'volume',
     mode: 'mip',
@@ -52,21 +82,12 @@ const xray = {
   view: raised,
 } as const satisfies Preset
 
-// The body as glass: the raytrace's skin nearly clear with its edges lit, so that the bone shows solid within it
-const glass = {
-  id: 'glass',
-  options: { style: 'raytrace', opacity: 0.18, rim: 1, depthCue: 0.4, bloom: 0.5, bloomThreshold: 0.4 },
-  view: raised,
-} as const satisfies Preset
+// Looks kept beside the presets to compare with them, which have no button: ?preset= in the address opens on one
+export const alternates: readonly Preset[] = [xrayMip]
 
-export const presets: readonly Preset[] = [cutaway, skeleton, xray, glass]
-
-// The preset a bare address opens on, the first impression of the page
-export const launchPreset: Preset = cutaway
-
-// The preset an id names, as ?preset= gives it, or none
+// The preset an id names, as ?preset= gives it, or the alternate, or none
 export function presetOf(id: string | null): Preset | undefined {
-  return presets.find((preset) => preset.id === id)
+  return [...presets, ...alternates].find((preset) => preset.id === id)
 }
 
 // Every option a preset sets: its own, and the rest at their defaults, so that nothing moved before it is left over

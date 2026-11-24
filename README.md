@@ -8,18 +8,18 @@ VisibleHuman renders the [Visible Human Project](https://www.nlm.nih.gov/researc
 
 ## Using it
 
-The page opens on the whole male body cut open from the front, so that its organs, its spine and its brain show in the photographs' own colours, seen from a little above, with the view swaying slowly round to either side and back. Drag to turn it, scroll or pinch to zoom, and right-drag or drag with two fingers to move it; the first of these stops the sway.
+The page opens on the whole male body cut open from the front, so that its organs, its spine and its brain show in the photographs' own colours, seen from a little to its left and a little above, with the view swaying slowly from side to side across its front. Drag to turn it, scroll or pinch to zoom, and right-drag or drag with two fingers to move it; the first of these stops the sway.
 
 That opening is one of four presets, looks made from the panel's own controls to show the body off, each with its button under **Presets**, at the top of the panel:
 
 - *cutaway*, which the page opens on, draws the raytrace with the front of the body cut away to a little past its middle, the skin's edges lit, a glow about the brightest parts, and the far side darkened.
-- *skeleton* draws the volume with its window's low end raised past the soft tissue, so the bone stands alone in its own colour, shaded and glowing.
-- *x-ray* draws the volume's MIP windowed to the bone, so the skeleton glows white.
-- *glass* draws the raytrace with the skin nearly clear and its edges lit, so the skeleton shows solid inside it.
+- *skeleton* draws the volume with its window drawn in to the bone, so the bone stands alone in its own colour, shaded and glowing.
+- *x-ray* draws the volume's x-ray, the body as a radiograph: the bone white in the grey of the flesh, and the lungs dark.
+- *glass* draws the raytrace with the skin all but clear and its edges lit, so the skeleton shows solid inside it.
 
 A preset's button sets every control in the Look, Cuts and Scene folders but the Detail, at its own values or at their defaults, and leaves the body, its level and the view as they are, so the controls take it on from there, and pressed again it puts back whatever has been moved since. Adding `?preset=` and a preset's name to the address, as in `?preset=skeleton`, opens the page on that preset.
 
-Under the buttons, **Sway** swings the view slowly to and fro about the body, never so far that a cut from the front turns away. It's on as the page opens on a preset, unless the system asks for less motion, the first drag, scroll or pinch turns it off, and the switch turns it back on.
+Under the buttons, **Sway** swings the view slowly to and fro across the body's front, as far to either side and never so far that a cut from the front turns away, easing into that swing from wherever the view stands. It's on as the page opens on a preset, unless the system asks for less motion, the first drag, scroll or pinch turns it off, and the switch turns it back on.
 
 The panel at the top right groups its controls in folders, and shows in each only the controls that act on what's being drawn.
 

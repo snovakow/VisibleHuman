@@ -45,19 +45,29 @@ export function frameFrom(half: Triple, view: ViewAngle, tanHalfFov: number, asp
 }
 
 // The sway: the view swung slowly to and fro about the vertical through the orbit target, which shows the body is
-// solid without ever turning it away. It swings as far each way as keeps a cut opened from the front, as the cutaway
-// opens it, facing the camera: from the front view the presets open on, well round toward either side, where a whole
-// turn would show the uncut back for half of every revolution
+// solid without ever turning it away. It swings about the body's front, as far round toward either side, which keeps a
+// cut opened from the front, as the cutaway opens it, facing the camera, where a whole turn would show the uncut back
+// for half of every revolution. It sets off from rest wherever the view stands, the presets' opening view a little
+// round toward the body's left or wherever the visitor left it, and eases into that same swing
 export const swayDegrees = 50
 // One swing there and back, slow enough to read the body as it goes
 export const swaySeconds = 24
-// The swing is eased in over this long, so that the view starts from rest wherever it stood
+// The swing is eased in over this long from a view within its reach, and longer from one beyond it
 const easeSeconds = 3
 
-// The sway's angle about the vertical, in radians, a time in seconds after it started: positive turns the camera toward
-// the body's left, as a view angle's azimuth does
-export function swayAngle(elapsed: number): number {
-  const ramp = Math.min(Math.max(elapsed / easeSeconds, 0), 1)
+// The sway's azimuth, in radians, a time in seconds after it set off from the azimuth given, in radians too: about the
+// vertical, round from the body's front toward its left, as a view angle's azimuth is. A view within the swing's reach
+// joins the swing where it passes there on its way toward the front, and one at the front sets off toward the body's
+// left. One beyond it comes round the short way to the swing's nearer end, easing in the longer the farther round it
+// stood, so that it comes back no faster than a few times the swing's own pace
+export function swayAngle(elapsed: number, start: number): number {
+  const reach = (swayDegrees * Math.PI) / 180
+  // The start, the short way round from the front
+  const from = Math.atan2(Math.sin(start), Math.cos(start))
+  const join = Math.min(Math.max(from, -reach), reach)
+  const phase = join > 0 ? Math.PI - Math.asin(join / reach) : Math.asin(join / reach)
+  const swing = reach * Math.sin((2 * Math.PI * elapsed) / swaySeconds + phase)
+  const ramp = Math.min(Math.max(elapsed / (easeSeconds * (1 + Math.abs(from - join) / reach)), 0), 1)
   const ease = ramp * ramp * (3 - 2 * ramp)
-  return ((swayDegrees * Math.PI) / 180) * Math.sin((2 * Math.PI * elapsed) / swaySeconds) * ease
+  return from + (swing - from) * ease
 }
