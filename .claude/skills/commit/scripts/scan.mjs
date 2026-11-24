@@ -23,9 +23,10 @@ const VERSION_FILE = 'package.json';
 // Every file a version commit may touch, the version file included. One that touches anything
 // else is not a version commit.
 const VERSION_FILES = ['package.json', 'package-lock.json'];
-// The changelog, or null for none. 'auto' finds CHANGELOG.md at the root or under docs/. With
-// one, a version commit also touches it, and its newest section at that commit is headed with
-// the number.
+// The changelog every version commit carries a section in, or null for none. 'auto' takes
+// CHANGELOG.md at the root or under docs/, and where there is none yet names the one at the root,
+// which the next version commit starts. A version commit touches it too, and its newest section
+// at that commit is headed with the number; one made before the file existed is judged without it.
 const CHANGELOG = 'auto';
 // Count only version commits by this git user.name; null counts any author.
 const VERSION_AUTHOR = 'snovakow';
@@ -137,7 +138,13 @@ const versionIn = (text) => {
   return /version\s*['"]?\s*[:=]\s*['"]?v?(\d+\.\d+\.\d+)/i.exec(text)?.[1] ?? null;
 };
 const versionAt = (rev) => (VERSION_FILE && rev ? versionIn(tryGit('show', `${rev}:${VERSION_FILE}`)) : null);
-const bump = (version) => version.replace(/\d+$/, (n) => String(Number(n) + 1));
+// The three numbers a release can take after `version`, one per release level, or null where the
+// version is not three plain numbers.
+const levelsAfter = (version) => {
+  if (!/^\d+\.\d+\.\d+$/.test(version ?? '')) return null;
+  const [major, minor, patch] = version.split('.').map(Number);
+  return { fix: `${major}.${minor}.${patch + 1}`, feature: `${major}.${minor + 1}.0`, major: `${major + 1}.0.0` };
+};
 const underLeaveAlone = (path) => LEAVE_ALONE.some((entry) => {
   const prefix = entry.replace(/\/+$/, '');
   return path === prefix || path.startsWith(`${prefix}/`);
@@ -161,9 +168,16 @@ if (sinceArg !== null && (!since || tryGit('merge-base', '--is-ancestor', since,
   process.exit(2);
 }
 const EMPTY_TREE = tryGit('hash-object', '-t', 'tree', '/dev/null') ?? '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
-const changelog = CHANGELOG === 'auto'
-  ? ['CHANGELOG.md', 'docs/CHANGELOG.md', 'CHANGELOG', 'docs/CHANGELOG'].find((path) => existsSync(path)) ?? null
-  : CHANGELOG;
+// The changelog goes with version commits, so a project that keeps none, or whose version file
+// is missing, has no changelog either. 'auto' takes the file in the working tree, else the one
+// HEAD holds, else the root one to start.
+const CHANGELOG_PATHS = ['CHANGELOG.md', 'docs/CHANGELOG.md', 'CHANGELOG', 'docs/CHANGELOG'];
+const existsAt = (rev, path) => tryGit('cat-file', '-e', `${rev}:${path}`) !== null;
+const changelog = !VERSION_FILE || !existsSync(VERSION_FILE) || !CHANGELOG ? null
+  : CHANGELOG !== 'auto' ? CHANGELOG
+  : CHANGELOG_PATHS.find((path) => existsSync(path))
+    ?? CHANGELOG_PATHS.find((path) => existsAt('HEAD', path))
+    ?? CHANGELOG_PATHS[0];
 // The version in the newest `## ` heading that carries one; an Unreleased heading is passed over.
 const changelogVersion = (text) => {
   for (const [, heading] of (text ?? '').matchAll(/^##\s+(.+)$/gm)) {
@@ -206,7 +220,8 @@ const candidates = hasHead && VERSION_FILE
     })
   : [];
 // Why a commit is not a well-formed version commit, or null when it is. Every test reads the
-// commit itself: its whole message, the files it touches, and the version file as it stands there.
+// commit itself: its whole message, the files it touches, and the version file and the changelog
+// as they stand there. The changelog tests apply from the commit that first holds the file.
 const versionDefect = ({ sha, author, message }) => {
   const match = VERSION_MESSAGE.exec(message);
   if (!match) return 'its message is not exactly the version message';
@@ -215,8 +230,10 @@ const versionDefect = ({ sha, author, message }) => {
   if (!files.includes(VERSION_FILE)) return `it does not touch ${VERSION_FILE}`;
   const outside = files.filter((file) => !versionFiles.has(file));
   if (outside.length) return `it touches ${outside.slice(0, 3).join(', ')}${outside.length > 3 ? ' and more' : ''}`;
-  if (changelog && !files.includes(changelog)) return `it does not touch ${changelog}`;
-  if (changelog && changelogVersion(tryGit('show', `${sha}:${changelog}`)) !== match[1]) return `${changelog} at that commit is not headed with ${match[1]}`;
+  const holdsChangelog = Boolean(changelog) && existsAt(sha, changelog);
+  if (changelog && files.includes(changelog) && !holdsChangelog) return `it removes ${changelog}`;
+  if (holdsChangelog && !files.includes(changelog)) return `it does not touch ${changelog}`;
+  if (holdsChangelog && changelogVersion(tryGit('show', `${sha}:${changelog}`)) !== match[1]) return `${changelog} at that commit is not headed with ${match[1]}`;
   if (versionAt(sha) !== match[1]) return `${VERSION_FILE} at that commit does not read ${match[1]}`;
   return null;
 };
@@ -228,14 +245,23 @@ const diffBase = baseline ?? EMPTY_TREE;
 
 const headVersion = hasHead ? versionAt('HEAD') : null;
 const worktreeVersion = VERSION_FILE ? versionIn(readText(VERSION_FILE)) : null;
-const nextVersion = officialVersion ? bump(officialVersion) : worktreeVersion ? bump(worktreeVersion) : null;
-const changelogNow = changelog ? changelogVersion(readText(changelog)) : null;
+const nextVersions = levelsAfter(officialVersion ?? worktreeVersion);
+const nextText = nextVersions
+  ? `${nextVersions.fix} for bug fixes and improvements, ${nextVersions.feature} for a feature, ${nextVersions.major} for a major release`
+  : null;
+const changelogThere = Boolean(changelog) && existsSync(changelog);
+const changelogNow = changelogThere ? changelogVersion(readText(changelog)) : null;
 
 // --- Range: commits after the baseline, plus the working tree ------------------------------------
 
 const rangeShas = hasHead
   ? lines(git('rev-list', '--reverse', '--topo-order', ...(baseline ? [`${baseline}..HEAD`] : ['HEAD'])))
   : [];
+// Range commits that change the changelog. None of them is the baseline, so each holds a change
+// that belongs in a version commit.
+const changelogShas = new Set(hasHead && changelog
+  ? lines(git('rev-list', '--full-history', ...(baseline ? [`${baseline}..HEAD`] : ['HEAD']), '--', changelog))
+  : []);
 const commits = rangeShas.map((sha) => {
   const [parents, author, date, ...rest] = git('log', '-1', '--format=%P%x1f%an%x1f%ad%x1f%B', '--date=short', sha).split('\x1f');
   const message = rest.join('\x1f').trim();
@@ -259,6 +285,7 @@ const commits = rangeShas.map((sha) => {
   } else if (VERSION_LOOKALIKE.test(subject)) {
     problems.push('subject reads like a version commit; it is not one');
   }
+  if (changelogShas.has(sha)) problems.push(`changes ${changelog}, which belongs in the version commit`);
   return { sha, merge: parents.split(' ').length > 1, author, date, message, pushed: !unpushed.has(sha), problems };
 });
 
@@ -266,6 +293,20 @@ const status = lines(git('status', '--short', '--untracked-files=all'));
 const untracked = lines(git('ls-files', '--others', '--exclude-standard'));
 const leftAloneLines = status.filter((line) => underLeaveAlone(statusPath(line)));
 const stagedLeftAlone = leftAloneLines.filter((line) => line[0] !== ' ' && line[0] !== '?').map(statusPath);
+
+// Changelog changes that sit outside a version commit: in the working tree, or in a range commit,
+// alone there or beside other files. A merge is read against its first parent, as its added lines
+// are, so what it brings in from the other side counts among its files.
+const changelogStatus = changelog ? status.find((line) => statusPath(line) === changelog) ?? null : null;
+const changelogStray = [
+  ...(changelogStatus
+    ? [`the working tree (${changelogStatus.startsWith('??') ? 'untracked' : [changelogStatus[0] !== ' ' ? 'staged' : null, changelogStatus[1] !== ' ' ? 'unstaged' : null].filter(Boolean).join(' and ')})`]
+    : []),
+  ...commits.filter((commit) => changelogShas.has(commit.sha)).map((commit) => {
+    const others = lines(git('show', '--format=', '--name-only', '--diff-merges=first-parent', commit.sha)).filter((file) => file !== changelog).length;
+    return `${short(commit.sha)} (${commit.pushed ? 'pushed' : 'unpushed'}, ${others ? `with ${count(others, 'other file')}` : 'nothing else in it'})`;
+  }),
+];
 
 // --- Added lines: where secrets, links and names would be -----------------------------------------
 
@@ -399,8 +440,10 @@ const large = [...addedPaths].map((path) => [path, fileSize(path)])
 
 // --- Docs: the prose the skill maintains ---------------------------------------------------------
 
+// The changelog is left out: its sections are written once, and a closed one is never brought up
+// to date.
 const docFiles = [...new Set(DOCS.length ? lines(tryGit('ls-files', '--cached', '--others', '--exclude-standard', '--', ...DOCS) ?? '') : [])]
-  .filter((file) => PROSE_FILE.test(file) && existsSync(file));
+  .filter((file) => PROSE_FILE.test(file) && existsSync(file) && file !== changelog);
 // A backticked span that reads as a repo path and names nothing on disk.
 const SPAN = /`([^`\n]+)`/g;
 const PATHLIKE = /^\.?[\w@+-][\w.@+-]*(?:\/[\w.@+-]+)+\/?$|^\.?[\w@+-][\w.@+-]*\/$/;
@@ -446,8 +489,13 @@ const versioning = !VERSION_FILE
   : !existsSync(VERSION_FILE)
     ? `off: ${VERSION_FILE} does not exist; set VERSION_FILE here and the version shape in SKILL.md`
     : official
-      ? `on: last version commit ${officialVersion}, HEAD ${headVersion ?? '(none)'}, working tree ${worktreeVersion ?? '(none)'}, next ${nextVersion}`
-      : `no version commit yet: ${VERSION_FILE} reads ${worktreeVersion ?? '(no version found)'}; pass a version as the argument to start one${nextVersion ? `, ${nextVersion} would be next` : ''}`;
+      ? `on: last version commit ${officialVersion}, HEAD ${headVersion ?? '(none)'}, working tree ${worktreeVersion ?? '(none)'}; next ${nextText ?? 'is the argument\'s, since the last is not three plain numbers'}`
+      : `no version commit yet: ${VERSION_FILE} reads ${worktreeVersion ?? '(no version found)'}; pass a version as the argument to start one${nextText ? `; from ${worktreeVersion} the levels give ${nextText}` : ''}`;
+const changelogLine = !changelog
+  ? `none: ${VERSION_FILE && existsSync(VERSION_FILE) && !CHANGELOG ? 'off in the settings' : 'it goes with version commits, and this project keeps none'}`
+  : changelogThere
+    ? `${changelog}, newest section ${changelogNow ?? '(none)'}`
+    : `${changelog}, not there yet: the run's version commit starts it with that release's section, and none for the releases before it`;
 
 const attention = [
   ...operations.map((operation) => `${operation} in progress`),
@@ -457,8 +505,8 @@ const attention = [
   ...(VERSION_AUTHOR && userName !== VERSION_AUTHOR ? [`git user.name is ${userName ?? 'unset'}, not ${VERSION_AUTHOR}; a version commit would not count`] : []),
   ...(official && (headVersion !== officialVersion || worktreeVersion !== officialVersion)
     ? [`version changed outside /commit: HEAD ${headVersion}, working tree ${worktreeVersion}, last version commit ${officialVersion}`] : []),
-  ...(official && changelog && changelogNow !== officialVersion
-    ? [`${changelog} has a section above the last version commit's: newest ${changelogNow ?? '(none)'}, last version commit ${officialVersion}`] : []),
+  ...(official && changelogNow && changelogNow !== officialVersion
+    ? [`${changelog} is headed with ${changelogNow}, not the last version commit's ${officialVersion}: a section written outside a version commit`] : []),
   ...(secretHits.length ? [`${carries(secretHits.length)} credentials or session data; see Secrets and session data`] : []),
   ...(mentionHits.length ? [`${carries(mentionHits.length)} a name that must not appear; see Names that must not appear`] : []),
   ...junk.map((path) => `looks like it should not be tracked: ${path}`),
@@ -495,7 +543,8 @@ say(`Baseline: ${since
     : `(root: nothing is pushed${VERSION_FILE ? ' and there is no version commit' : ''})`}`);
 say(`Rewrite base: ${rewriteBase ? short(rewriteBase) : '(root)'}; only commits after it may be rewritten`);
 say(`Versioning: ${versioning}`);
-say(`Changelog: ${changelog ? `${changelog}, newest section ${changelogNow ?? '(none)'}` : 'none'}`);
+say(`Changelog: ${changelogLine}`);
+if (changelog) say(`Changelog changes outside a version commit: ${changelogStray.length ? changelogStray.join('; ') : 'none'}`);
 say(`Checks available: ${checks.length ? checks.join(', ') : 'none found in package.json'}`);
 
 section(`Range commits (${commits.length}, oldest first)`);

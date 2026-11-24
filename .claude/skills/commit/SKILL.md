@@ -1,6 +1,6 @@
 ---
 name: commit
-description: Review everything since the last reviewed point, fix what can still be fixed, commit the working tree as itemised commits with real messages, keep the README and docs true, and end with a version commit where the project keeps them. Nothing is pushed. Run by hand only.
+description: Review everything since the last reviewed point, fix what can still be fixed, commit the working tree as itemised commits with real messages, keep the README and docs true, and end with a version commit that carries the release's changelog section, where the project keeps them. Nothing is pushed. Run by hand only.
 argument-hint: "[x.y.z] [notes on what changed]"
 disable-model-invocation: true
 model: opus
@@ -26,16 +26,16 @@ allowed-tools:
   - Bash(npm version * --no-git-tag-version)
   - Bash(node ${CLAUDE_SKILL_DIR}/scripts/scan.mjs *)
 metadata:
-  baseline: 2026-11-08
+  baseline: 2026-11-21
 ---
 
 # Commit a reviewed batch
 
 Arguments: $ARGUMENTS
 
-The arguments are an optional version, written like `1.2.3`, and the user's notes on what changed. Use the notes in the messages.
+The arguments are an optional version, written like `1.2.3`, and the user's notes on what changed. A version given is written as it stands, in place of the one the run would settle on. Use the notes in the messages and the changelog section.
 
-The user commits ad hoc while working and runs this skill when a batch is ready to go. Review everything since the baseline, fix what can still be fixed, commit all of it as a short series of well-described commits, and finish with a version commit where the project keeps them. The user reviews and pushes; this skill never pushes.
+The user commits ad hoc while working and runs this skill when a batch is ready to go. Review everything since the baseline, fix what can still be fixed, commit all of it as a short series of well-described commits, and finish with a version commit where the project keeps them, which carries the release's section of the changelog. The user reviews and pushes; this skill never pushes.
 
 Treat the repository as public. Whatever is committed, in code, comments, docs or messages, can be read by anyone, and the history keeps it after any later clean-up.
 
@@ -45,8 +45,8 @@ The one block to adapt for a project. The steps below read it, and `scripts/scan
 
 - **Protected branches:** `main`, `master`. Work does not land on these. On one, stop and ask. Work lands on `development`, and the user merges it into `main`.
 - **Version commits:** `auto`: on when the scan reports a last version commit, or the arguments name a version; otherwise off, and the report says how to start. The project had no version before, so it started at `0.0.0`, as the Vite template sets it, and `/commit 0.0.1` made the first version commit; from then on every run ends with one.
-- **Version shape:** the version lives in `package.json`. `npm version <x.y.z> --no-git-tag-version` sets it and updates `package-lock.json`. The commit touches only those two files, and the changelog where there is one, and its whole message is `Version X.Y.Z`. Only a version commit by snovakow counts.
-- **Changelog:** `auto`. When a `CHANGELOG.md` exists at the root or under `docs/`, the version commit also carries a new section for its number; the scan names the file. There is none yet.
+- **Version shape:** the version lives in `package.json`. `npm version <x.y.z> --no-git-tag-version` sets it and updates `package-lock.json`. The commit touches only those two files and the changelog, and its whole message is `Version X.Y.Z`. Only a version commit by snovakow counts.
+- **Changelog:** `auto`. Every version commit carries the release's section in `CHANGELOG.md`, at the root or under `docs/`; the scan names the file. The project kept none through `0.2.6`, so the first version commit after it starts one at the root with that release's section alone, and the releases before it get none.
 - **Checks:** the `lint`, `typecheck`, `check`, `test` and `build` scripts that `package.json` defines, whichever exist, run for what changed. The scan lists them. Then `npm outdated`, which reports rather than fails (Rules of this repository).
 - **Leave alone:** none.
 - **Maintained docs:** `README.md`, written for the public, and `docs/data.md`, the overview of the NLM's data (Rules of this repository). A plan under `docs/`, when there is one, is the user's (Rules of this repository).
@@ -88,9 +88,51 @@ VisibleHuman is a React Three Fiber app in TypeScript, built with Vite, that dra
 ## How the pieces fit
 
 - **Baseline.** The review covers everything after it: the range commits, the working tree, staged or not, and untracked files. With version commits, the baseline is the newest well-formed one, since a run ends at its report and everything below has been reviewed. That checkpoint lives in the history: it travels with every clone, a forgotten push costs nothing, and a commit made by hand after a release is still reviewed at the next one, though never rewritten once pushed. Without, it is the newest pushed commit, or the root when nothing is pushed, or the commit the user names when step 1 asks about what sits above the pushed tip: pushing is what closes a run, and until a run's commits are pushed the next run asks about them, which is also what brings a commit made outside a run under review.
-- **Well-formed version commit.** All of these hold, each read from the commit itself: its whole message is exactly the version message, with no body and no trailer; it touches only the version files, and the version file among them; the version file at that commit reads the number in the message; and, with a changelog, it touches that too and the changelog's newest section at that commit is headed with the number. Anything else is an ordinary commit however much it looks like one: a subject that mentions a version, a bump made by hand, the right message with a trailer under it. The scan marks these lookalikes, and they are reviewed like any range commit.
+- **Well-formed version commit.** All of these hold, each read from the commit itself: its whole message is exactly the version message, with no body and no trailer; it touches only the version files, and the version file among them; the version file at that commit reads the number in the message; and, where the changelog exists at that commit, it touches that too and the changelog's newest section there is headed with the number. A version commit made before the changelog began is judged without it. Anything else is an ordinary commit however much it looks like one: a subject that mentions a version, a bump made by hand, the right message with a trailer under it. The scan marks these lookalikes, and they are reviewed like any range commit.
 - **Rewritable.** A commit may be rewritten only if it is after the baseline and not reachable from any remote branch. The scan prints the rewrite base. Pushed commits in the range are still reviewed, and their problems reported.
+- **Changelog.** The release notes: one section for each version commit, newest first, telling the people who use the project what that version offers. It is not a record of the work, which the commit history already is. *What a changelog section says*, below, is how a section is written. A section is committed in its version commit and nowhere else: a changelog change found anywhere else in the release, in the working tree or in a commit, is moved there in step 7, and an edit to an older section is the user's correction, kept as it stands. A release made before the changelog began gets no section; the file starts with the run that creates it and goes on from there.
+- **Release level.** A section shows what kind of release it is, and that gives the number. A feature among its bullets: the middle number goes up and the last returns to 0, `x.#.0`. No feature: the last number goes up, `x.x.#`. A major release, one that changes the project as a whole or marks a milestone, such as `1.0.0` when it is ready for the general public: the first number goes up and the others return to 0, `#.0.0`. A major is the user's to call: where the release reads as one, ask before writing the number, and let the section's first bullet say what the milestone is. A version in the arguments stands in place of the level, and the section is written the same way whatever the number.
 - **Order.** Plan the batch before staging anything. Fixes to existing commits first, then the new commits, then the prose commits for the maintained docs if needed, then the version commit, last.
+
+## What a changelog section says
+
+A section is for someone using the project who wants to know what a version offers. That reader may be new to it, has not seen an earlier version, and will not read the code. The commit messages hold the detail for anyone who wants it, so the section does not repeat them. What goes in, and how it is worded, both follow from that reader.
+
+### What goes in
+
+What that reader would notice and care about gets a bullet of its own, under the version's heading, with no headings beneath it:
+
+- a feature: something new to do or see
+- a bug fix, where a user could clearly have seen the fault
+
+Everything else is summed up or left out:
+
+- Smaller changes a user might still notice, where something already there works or looks a little better or a fault few would have met is gone, are never listed one by one. In a section with no feature they are summed up in one bullet that names their kind in general terms and nothing more: `Bug fixes`, `User interface improvements` for how it looks, `App improvements` for how it behaves, in the singular for a single change and joined where two kinds apply. In a section with a feature they are left out.
+- What no user would notice, such as data, tooling, docs or the way the project is released, is left out. A release that holds nothing else gets the one bullet `Backend improvements`, so that every version has its section.
+
+### How it is worded
+
+- A bullet describes the project as this version leaves it, not the change that got it there. The reader never saw the earlier version, so whatever only means something beside it tells them nothing: how a thing used to behave, what it lacked, what it replaced, a condition that mattered only under an old restriction. What decides is what a phrase refers to, never which words it uses: the same words are in place where they describe how the feature itself behaves. So a feature freed from a restriction is presented as it stands, and a fix as what works or what was added, not as the fault that is gone.
+- It names the thing first, as the project shows it, and then says what it is or does in a few words, the way a feature list would. It does not walk through how the feature works. A clipped phrase is enough, with articles and helping verbs left out as a headline leaves them out, and no full stop at the end.
+- It describes the project, not the reader: what is on screen is the project's own, and the reader is neither addressed nor made its owner, except where the project's own name for a thing does so.
+- Every word carries meaning. One that only adds force is dropped, and nothing technical goes in: no file names, identifiers or commit hashes.
+- It is public prose, held to everything here on what may be named.
+
+### The file
+
+A changelog started by a run has this shape and holds that run's section alone. The heading carries the version and the day of the version commit:
+
+```markdown
+# Changelog
+
+Version Release Notes
+
+## X.Y.Z - YYYY-MM-DD
+
+- One bullet for each note
+```
+
+A file that already has sections keeps the way they are headed and dated, and what a new section says follows these rules all the same.
 
 ## 1. Survey
 
@@ -106,14 +148,14 @@ Its **Attention** section lists what needs the user. Stop and ask about each bef
 - the branch behind its upstream. Say what arrived, `git log --format='%h %s' HEAD..@{u}`, and any file it changes that also holds uncommitted edits, since the re-apply below merges there. Where HEAD would fast-forward onto it, which the scan says, ask whether to fast-forward now or to stop so the user brings the branch up to date and runs again. To fast-forward, note `git stash list`, then run `git merge --ff-only --autostash @{u}`: it moves the branch to the pushed tip with the uncommitted edits stashed and re-applied, and refuses anything else, leaving the tree as it was. Afterwards `git stash list` must show no `autostash` entry that was not there before, since an earlier conflict's entry stays until the user drops it; a new one means the re-apply conflicted, the edits are safe in it and the tree holds the conflict, which is the user's to resolve, so stop and say so. Then run the scan again, since the baseline has moved. Where HEAD carries unpushed commits of its own as well, they would have to be rebased over what arrived, and that is the user's to do: stop, and say to run `/commit` again in a fresh thread once the branch is up to date.
 - a protected branch
 - the version changed outside this skill: HEAD or the working tree no longer holds the last version commit's number. Ask whether to undo the change or to pass the intended version as the argument.
-- a changelog section above the last version commit's number, written by hand or by a run that never finished. Ask whether to rewrite it as this run's section or to keep its text as the start of one.
+- a changelog section headed with a number that is not the last version commit's, written by hand or by a run that never finished. Its text is kept as notes for this run's section, and the heading goes. Unless the arguments give the version, ask whether that number is the one meant.
 - credentials or session data in added lines (step 3)
 - a file that looks like it should not be tracked, or a large one
 - commits above the newest pushed commit where no version commit stands. They may be work a thread committed that nobody reviewed, or a run's own commits not yet pushed, and nothing in the repository says which. Ask before reading any of them, listing them oldest first by hash and subject, with these choices: review them all; commit the working tree only, treating all of them as reviewed; or stop, so the user can push first and run again. Say in the question that to keep some and review the rest, the user chooses Other and types the hash of the last commit to keep: that commit and everything below it stay as they are, and the review starts with the commit after it. A hash that names exactly one listed commit becomes this run's baseline, as the newest of them does for the working tree only: run the scan again with `--since <hash>`, and read nothing at or below it. Anything else, ask again rather than guess.
 
 If nothing is new since the baseline, with no range commits, a clean tree and nothing untracked, say so and stop.
 
-Settle whether this run ends with a version commit, from the Version commits setting and the scan's Versioning line. Then open the first message with the baseline, by hash and subject, and the version the run will write, if any, so that a baseline found lower than expected, or a number the user did not expect, is seen before anything acts on it.
+Settle whether this run ends with a version commit, from the Version commits setting and the scan's Versioning line. Then open the first message with the baseline, by hash and subject, and the version, if the run writes one: the number the arguments give, or the three the scan lists, one for each release level, with a word that the review settles which. A baseline found lower than expected, or a number the user did not expect, is then seen before anything acts on it.
 
 ## 2. Review the range
 
@@ -156,6 +198,7 @@ For each commit, ask whether its change makes a maintained doc untrue or incompl
 - Keep the doc's voice. Describe the idea rather than the code: a page that restates identifiers, values or counts from the source goes wrong silently on the next rename, and nothing checks it. Keep why a rule exists, what breaks without it, and what was measured, with the date.
 - Never invent results. A claim only the user can confirm goes in the report.
 - The scan's **Docs** section lists the maintained files, backticked paths that no longer exist, and files added, deleted or renamed since the baseline, which are the usual reasons a doc is out of date.
+- The changelog is not one of the maintained docs. Its newest section is written in step 7, once for the release, and a section already closed by its version commit is left as it stands.
 
 ## 6. Plan the commits
 
@@ -165,6 +208,8 @@ Decide the whole batch before staging anything. Take the scan's **Working tree**
 - Order so every commit stands on its own: a helper before its caller, code before the docs describing it, so no commit mid-batch leaves the build broken.
 - If the batch is one concern, say so and make one commit. Do not split a coherent change to look tidy.
 - Files under Leave alone belong to no group. Unstage any that are staged and name them in the report.
+- The changelog belongs to no group either: it is committed in the version commit alone. Unstage it if it is staged.
+- Where the run ends with a version commit, draft its changelog section now, as *What a changelog section says* describes, from everything the release holds, the range commits and the planned groups together. Read the release level off the draft, and give the draft and the number with the plan, before anything is staged. Where the draft reads as a major release and the arguments give no version, this is where to ask.
 - Reword-only and fix-only work on existing commits is not a group; it belongs to step 7.2.
 
 ## 7. Apply
@@ -174,15 +219,16 @@ Decide the whole batch before staging anything. Take the scan's **Working tree**
    - **The tip:** stage the fixed files, then `git commit --amend -F <message file>`. For a message-only change, `git commit --amend --only -F <message file>`, which leaves the index alone.
    - **An older commit, content fix:** edit, stage only the fix, and `git commit --fixup=<sha>`.
    - **An older commit, message fix:** write `amend! <the target's exact subject>`, a blank line and the whole new message to a file, then `git commit --allow-empty --only -F <file>`. That body becomes the message entire, so nothing goes after it.
+   - **A changelog change in a rewritable commit** comes out of it, to go in the version commit; the scan lists these. Keep what it changed: a section it added is notes for this run's section, and an edit to an older section goes back in unchanged when the version commit is made. Then undo that commit's change to the file, setting it back to what the commit's parent holds or removing it where the parent has none, stage that alone, and `git commit --fixup=<sha>`, so the fold takes the change out. A commit with nothing else in it gets no fixup, since a fold cannot empty a commit: ask, naming it by hash and subject, and on yes drop it before the fold with `git rebase --autostash --onto <its parent> <its hash>`. In a pushed commit the change stays where it is, the version commit rewrites the section in place, and the report says so.
    - **Then fold them in.** Note the tip's hash, then `GIT_EDITOR=true git rebase --autosquash --autostash <rewrite base>`. Afterwards check that no subject in `git log --format=%s <rewrite base>..HEAD` still begins `fixup!` or `amend!`, and that `git diff <that tip> HEAD` is empty: the fold changed no tree. An older git ignores `--autosquash` outside an interactive rebase and reports success anyway; if the fixups are still there, run `GIT_SEQUENCE_EDITOR=true GIT_EDITOR=true git rebase -i --autosquash --autostash <rewrite base>`, which honours it and needs no editor.
    - If the rebase stops on a conflict, `git rebase --abort` and ask. A merge commit anywhere but the tip: report it and ask rather than flatten it.
    - If a fix touches a file that also has uncommitted edits, `git stash push --include-untracked` first and `git stash pop` after.
 3. Make the fixes to working-tree work that step 2 found, with any doc edit that belongs with them.
-4. Commit the groups in the planned order: stage explicit paths, check the staged stat against the subject, and commit with `git commit -F <message file>`. Commit untracked files that belong to the project and ask about the rest.
+4. Commit the groups in the planned order: stage explicit paths, check the staged stat against the subject, and commit with `git commit -F <message file>`. Commit untracked files that belong to the project and ask about the rest. The changelog is staged with none of them.
 5. Make the prose commits, if step 5 calls for them.
 6. Make the version commit, when this run ends with one:
-   - **Number:** the last version commit's with its last number incremented (`0.0.9` becomes `0.0.10`). With no version commit yet, the version file's current number incremented. A version in the arguments is used exactly; if it is not higher than the current one, compared number by number, ask. Any other words in the arguments are notes for the messages.
-   - **Changelog**, where there is one: add a section headed with the number at the top, in the file's existing format, describing the whole release in a reader's terms: what changed and what it means for them, not a list of commits. Date it the way the file dates its sections. It goes in the version commit, never on its own.
+   - **Number:** a version in the arguments is used exactly; if it is not higher than the current one, compared number by number, ask. Otherwise the release level gives it from the last version commit's number: `0.4.9` becomes `0.4.10` where no feature is listed, `0.5.0` for a feature, and `1.0.0` for a major release the user has confirmed. With no version commit yet, the level raises the version file's current number. Any other words in the arguments are notes for the messages and the section.
+   - **Changelog section**, unless the Changelog setting is `off`: check the draft from step 6 against what was committed, and write it at the top of the file, above the newest section. A file that does not exist yet is created as *What a changelog section says* shows, with this section alone: nothing is written for the releases before it. Notes kept from step 1 or taken out of a commit are held to the same rules: what the release bears out and a user would care to know gets its bullet, and the rest goes. It goes in the version commit, never on its own.
    - **Set it** with the project's command, and commit only the version files and the changelog, with the version message and nothing else: no body, no trailer, author as configured. It is the last commit.
    - **Then test it** as the next run will, against the well-formed tests above. If it fails, mend it until the last commit passes, and say what was wrong.
 
@@ -194,7 +240,7 @@ Then report, briefly:
 
 - first, what the review flagged: problems in pushed commits that could not be fixed, anything committed over a failed check on the user's say-so, a credential kept and why, a fast-forward made in step 1 and what it brought in
 - each commit in order: short hash, subject and files; a rewritten commit as old to new hash with what changed
-- the version change and changelog section, if any, and any doc claim only the user can confirm
+- the version change and the changelog section as written, with how each change in the release was read, as a feature, a fix a user could see, a small change or backend work, so that a misreading shows; and any doc claim only the user can confirm
 - files left uncommitted, each with the reason
 - the checks that ran, with their results
 - the undo point: nothing was pushed, and `git reset --soft <starting hash>` returns the branch to where it stood with every change the run made left staged. Without version commits, say too that pushing is what closes the run: until then, the next run asks about these commits before reviewing them again.
@@ -203,7 +249,7 @@ Then report, briefly:
 
 The run ends with the report. Anything the user asks for next, in this thread or another, is development work, not part of the run, and how it is kept depends on how the run ended:
 
-- **With a version commit.** Make and commit that work as usual, with the thread's attribution trailer, and stop there. These are ordinary commits, not the skill's: they carry no version bump, so the next run finds them above its baseline and reviews them. Do not bump the version or make a version commit, even when the follow-up comes straight after one.
+- **With a version commit.** Make and commit that work as usual, with the thread's attribution trailer, and stop there. These are ordinary commits, not the skill's: they carry no version bump, so the next run finds them above its baseline and reviews them. Do not bump the version, add to the changelog or make a version commit, even when the follow-up comes straight after one: the next run writes that work into its own section.
 - **Without one.** Make the change and commit none of it: leave it in the working tree, where the next run reviews it with the rest. Nothing in the history marks where a run without a version commit ended, so a commit made now could not be told from the run's own, and the next run could not know it was never reviewed.
 
 The next batch gets its own `/commit`, which the user starts in a fresh thread so the review begins from a clean context. If follow-up work leaves a batch ready to go, say so instead.
