@@ -104,8 +104,8 @@ const notXray: Dependence = { option: 'mode', isNot: 'xray' }
 const translucent: Dependence = { option: 'opacity', below: 1 }
 // While the shadows are cast, which is all the light's direction is for
 const shadowed: Dependence = { option: 'shadows', is: true }
-// While the raytrace traces the skin, alone or with the bone: the only surface the Opacity sets, as the bone, and the
-// brain, which is traced as the bone is, are drawn by their own depth
+// While the raytrace traces the skin, alone or with the bone: the only surface the Opacity sets and the Rim lights, as
+// the bone, and the brain, which is traced as the bone is, are drawn by their own depth and take no rim
 const skinTraced: Dependence = { option: 'trace', oneOf: ['skin', 'both'] }
 // While any of the three cuts is open
 const cutOpen: Dependences = {
@@ -241,8 +241,8 @@ export const viewOptions = {
     choiceNeeds: { brain: 'mri' },
     shownFor: raytrace,
   }),
-  // How many layers of skin a ray lays over one another below full Opacity before it stops; the bone between them
-  // counts for none, and a ray stops in solid bone regardless, so the count matters only while the skin is traced
+  // How many layers of skin a ray lays over one another below full Opacity; the bone counts for none and shows through
+  // them all, a ray going on for it once the skin's layers are laid, so the count matters only while the skin is traced
   layers: slider({
     folder: 'Look',
     label: 'Layers',
@@ -311,13 +311,14 @@ export const viewOptions = {
   // everywhere, which shows the tissue at that depth through a see-through skin or with the skin off. At 0 there is
   // no shell
   depth: slider({ folder: 'Look', label: 'Depth (mm)', default: 0, min: 0, max: 100, step: 1, shownFor: surface }),
-  // The density, on the file's scale, from which a voxel counts as bone. The default is the scale's, which the
-  // density channel was built to; the range runs from dense soft tissue to the densest bone. It shows while the bone
-  // is drawn, which takes in where it sets the solid part of a see-through cap and what shadows a cut face
+  // The density, on the file's scale, from which a voxel counts as bone. The default is density.ts's boneDensity, which
+  // the styles start at and which gives the reasons for it, and a test holds the two together; the range runs from
+  // dense soft tissue to the densest bone. It shows while the bone is drawn, which takes in where it sets the solid
+  // part of a see-through cap and what shadows a cut face
   boneThreshold: slider({
     folder: 'Look',
     label: 'Bone threshold',
-    default: 110,
+    default: 85,
     min: 70,
     max: 200,
     step: 1,
@@ -338,7 +339,9 @@ export const viewOptions = {
     shownWhile: brainDrawn,
     needs: 'mri',
   }),
-  // How much a surface's edges light up where it turns away from the eye, which draws it as a glass shell
+  // How much a surface's edges light up where it turns away from the eye, which draws it as a glass shell. The surface
+  // lights every mesh's edges, and the raytrace the skin's alone, since lit edges on the thin bone of the 4 mm level
+  // come and go as the view turns, so it shows there while the skin is traced
   rim: slider({
     folder: 'Look',
     label: 'Rim',
@@ -347,7 +350,7 @@ export const viewOptions = {
     max: 1,
     step: hundredths,
     shownFor: surfaces,
-    shownWhile: { byStyle: { surface: meshed } },
+    shownWhile: { byStyle: { raytrace: skinTraced, surface: meshed } },
   }),
   // How opaque the body is. The raytrace lays only its skin see-through, and the surface its skin and the tissue's part
   // of a cap's section, so it shows there while the skin is traced, or while the skin is meshed or a cap shows

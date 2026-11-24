@@ -6,8 +6,12 @@
 
 import { darkMax } from './segment.ts'
 
-// The density that counts as bone, for the bone surface and the raytrace: between muscle and cortical bone
-export const boneDensity = 110
+// The density that counts as bone, for the bone surface and the raytrace, where the panel's Bone threshold starts. It
+// sits a little under bone's own, since at the 4 mm level most of the bone is thinner than a voxel, whose density it
+// shares with the soft tissue beside it: at 85 the ribs and the spine are whole in both bodies, at 110 only the densest
+// bone passes, which leaves the ribs, the spine, the skull's vault and the arm bones in pieces, and at 80 soft tissue
+// comes in beside the bone
+export const boneDensity = 85
 // Below this density the x-ray mode sees nothing, so soft tissue's faint haze doesn't hide the bone
 export const xrayFloor = 40
 

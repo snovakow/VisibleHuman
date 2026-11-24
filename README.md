@@ -15,7 +15,7 @@ That opening is one of four presets, looks made from the panel's own controls to
 - *cutaway*, which the page opens on, draws the raytrace with the front of the body cut away to a little past its middle, the skin's edges lit, a glow about the brightest parts, and the far side darkened.
 - *skeleton* draws the volume with its window's low end raised past the soft tissue, so the bone stands alone in its own colour, shaded and glowing.
 - *x-ray* draws the volume's MIP windowed to the bone, so the skeleton glows white.
-- *glass* draws the raytrace with the skin nearly clear and its edges lit, and the Bone threshold lowered to where the bone is whole, so the skeleton shows solid inside it.
+- *glass* draws the raytrace with the skin nearly clear and its edges lit, so the skeleton shows solid inside it.
 
 A preset's button sets every control in the Look, Cuts and Scene folders but the Detail, at its own values or at their defaults, and leaves the body, its level and the view as they are, so the controls take it on from there, and pressed again it puts back whatever has been moved since. Adding `?preset=` and a preset's name to the address, as in `?preset=skeleton`, opens the page on that preset.
 
@@ -54,7 +54,7 @@ With the volume or the raytrace:
 With the raytrace:
 
 - **Trace** chooses which surfaces the raytrace follows each ray to: the *skin*, the *bone*, or *both*, whichever comes first. For the head there's also *brain*, the surface where its MRI passes the MRI threshold, which is the brain's once a cut opens the skull.
-- **Layers**, below full Opacity with the skin traced, sets how many layers of skin a ray lays over one another before it stops: the skin alone at 1, then the far side of the skin behind it, and so on, with the bone showing between them. Skin that a ray only grazes, or that is too thin to fill its block, is drawn faintly and counts for that much less of a layer, which keeps the body's edges smooth, and the last layer fades what's behind it by what's left of the count. Bone is drawn by how much of it a ray passes through, faint where it's thin and solid where it isn't, which keeps it steady as the view turns, and a ray stops in solid bone whatever the count.
+- **Layers**, below full Opacity with the skin traced, sets how many layers of skin a ray lays over one another: the skin's near side at 1, then the far side of the skin behind it, and so on. Skin that a ray only grazes, or that is too thin to fill its block, is drawn faintly and counts for that much less of a layer, which keeps the body's edges smooth, and the last layer is drawn by what's left of the count. The bone counts for no layer and shows through them all, so with both traced Layers 1 draws the skin at the front and the bone behind it, and each layer more adds skin alone. Bone is drawn by how much of it a ray passes through, faint where it's thin and solid where it isn't, which keeps it steady as the view turns.
 - **Shadows** casts the body's shadows onto its surfaces, from a light above and to the left of the eye, and shows **Light azimuth** and **Light elevation** to move the light around the eye, in degrees. The whole body casts the shadows, so what a cut takes away still throws its shadow, the bone's, onto the section it leaves. It costs frame rate, so it starts off.
 
 With the surface:
@@ -67,9 +67,9 @@ With the surface:
 
 With the raytrace or the surface:
 
-- **Bone threshold** sets the density from which tissue counts as bone, on the scale the file stores it in, where the default is bone's. Lowering it toward 90 shows the ribs whole at the 4 mm level, where a block holds as much soft tissue as bone; raising it keeps only the densest bone. The surface builds its bone mesh again at each new value. It shows wherever it changes the picture: while the raytrace traces the bone, or traces the skin alone with Shadows on and a cut open, since the bone shadows a cut face; and in the surface with Inner on the bone, while the Bone switch is on or, below full Opacity, while a cap shows, whose solid part it sets.
+- **Bone threshold** sets the density from which tissue counts as bone, on the scale the file stores it in. It starts at 85, a little under bone's own, since at the 4 mm level a block holds as much soft tissue as bone, and there it shows the ribs and the spine whole. Raising it toward 110 keeps only the densest bone, which that level leaves in shreds, and lowering it toward 80 brings soft tissue in beside the bone. The surface builds its bone mesh again at each new value. It shows wherever it changes the picture: while the raytrace traces the bone, or traces the skin alone with Shadows on and a cut open, since the bone shadows a cut face; and in the surface with Inner on the bone, while the Bone switch is on or, below full Opacity, while a cap shows, whose solid part it sets.
 - **MRI threshold**, for the head, sets the MRI value, on the file's scale of 1 to 255, at which the raytrace's brain and the surface's inner brain are drawn. It starts at 45, between the skull, which the MRI shows dark, and the brain inside it, and the surface builds the brain again at each new value. It shows while the raytrace traces the brain, and in the surface with Inner on the brain while the Bone switch is on or, below full Opacity, while a cap shows.
-- **Rim** lights a surface's edges where they turn away from the eye, which draws the skin as a glass shell at a low Opacity.
+- **Rim** lights a surface's edges where they turn away from the eye, which draws the skin as a glass shell at a low Opacity. In the raytrace it lights the skin alone, and so shows only while the skin is traced: lit edges on the 4 mm level's thin bone flicker as the view turns.
 
 The MRI's controls and choices are offered only for the head. A body without an MRI is drawn with Density, Trace and Inner at their defaults where they're set to read the MRI, and they come back as they were set when the head is chosen again.
 

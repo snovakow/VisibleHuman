@@ -42,12 +42,14 @@ import { hitDepth, rayQuad } from '../rayQuad.ts'
 // by its slope, in the colour of the tissue just inside it, darkened by the depth cue as it lies farther, and written
 // as the pixel's depth, so that what else is drawn composites with it. A ray that starts inside a surface, where a cut
 // has opened the body, meets it at once, on the cut face. Below full Opacity the ray carries on past the skin and lays
-// the surfaces it meets over one another, front to back, until bone has taken the light, it has laid Layers of skin,
-// or little light is left; so the skin over the bone over the far skin is ordered pixel by pixel with no sort. The
-// skin is laid at its surface, faintly where the ray only grazes it or it barely stands in its voxels; the bone is
-// laid through its depth, by how much of it the ray goes through. Both keep the picture steady as the view turns,
-// where a surface that is either met or missed blinks. Shadows send a second march from each lit point toward the
-// light, through the whole grid, so that what the cuts take away still throws its shadow onto what they leave
+// the surfaces it meets over one another, front to back, until little light is left, as solid bone leaves none; so the
+// skin over the bone over the far skin is ordered pixel by pixel with no sort. It lays Layers of skin at most, and past
+// the last goes on for the bone alone, which no count of layers hides. The skin is laid at its surface, faintly where
+// the ray only grazes it or it barely stands in its voxels; the bone is laid through its depth, by how much of it the
+// ray goes through. Both keep the picture steady as the view turns, where a surface that is either met or missed
+// blinks, and for the same reason the Rim lights the skin alone. Shadows send a second march from each lit point
+// toward the light, through the whole grid, so that what the cuts take away still throws its shadow onto what they
+// leave
 
 // The skin lies where the coverage crosses the body decision, where the surface style meshes it too
 const skinIso = bodyCoverage / 255
@@ -130,7 +132,7 @@ export interface Raytrace {
   setLight(azimuthDeg: number, elevationDeg: number): void
 }
 
-// The trace of the body a sampler reads, which must read the coverage too, darkened with depth by the cue
+// The trace of the body a sampler reads, which must read the fields, darkened with depth by the cue
 export function raytrace(sampler: BodySampler, cue: DepthCue): Raytrace {
   // A voxel's size along the scene's x, y and z, in millimetres, for the slope's differences
   const { voxel } = sampler
@@ -169,18 +171,13 @@ export function raytrace(sampler: BodySampler, cue: DepthCue): Raytrace {
   // The colour the trace leaves for the colour node
   const colour = property('vec4', 'tracedColour')
 
-  // The two fields, each at or above zero inside its surface
-  const skinField = (p: Node<'vec3'>): Node<'float'> => sampler.coverageAt(p).sub(skinIso)
-  const boneField = (p: Node<'vec3'>): Node<'float'> => sampler.texelAt(p).a.sub(boneThreshold)
+  // The two fields, each at or above zero inside its surface, from the one texel that holds them both
+  const skinField = (p: Node<'vec3'>): Node<'float'> => sampler.fieldsAt(p).x.sub(skinIso)
+  const boneField = (p: Node<'vec3'>): Node<'float'> => sampler.fieldsAt(p).y.sub(boneThreshold)
   // The field of the surface a hit is on, where which surface is the pixel's own
   const fieldOf = (bone: Node<'bool'>, p: Node<'vec3'>): Node<'float'> => {
-    const value = float(0).toVar()
-    If(bone, () => {
-      value.assign(boneField(p))
-    }).Else(() => {
-      value.assign(skinField(p))
-    })
-    return value
+    const both = sampler.fieldsAt(p).toVar()
+    return select(bone, both.y.sub(boneThreshold), both.x.sub(skinIso))
   }
   // 1 where a field's value is at or above zero, inside its surface
   const insideOf = (value: Node<'float'>): Node<'float'> => step(0, value)
@@ -198,6 +195,9 @@ export function raytrace(sampler: BodySampler, cue: DepthCue): Raytrace {
     const laid = float(0).toVar()
     const firstHit = float(0).toVar()
     const done = bool(false).toVar()
+    // Whether the Layers are used up, below full Opacity: the ray lays no more skin, and carries on only for the bone,
+    // which no count of layers hides
+    const spent = bool(false).toVar()
 
     // Where a field crosses zero between a distance before the crossing and one after it, by halving the span: each
     // halving keeps the half whose ends lie on opposite sides, judged against the near end's side. rays.ts has the
@@ -295,14 +295,14 @@ export function raytrace(sampler: BodySampler, cue: DepthCue): Raytrace {
     // What the bone the ray is in shows: its colour as lit where the ray entered it
     const boneShade = vec3(0).toVar()
 
-    // What's left of the Layers for a hit to count by, below full Opacity, as rays.ts has it on the CPU: all of it
-    // while a whole layer is left, and the share that's left of the last
+    // What's left of the Layers for a hit on the skin or a cut face to count by, below full Opacity, as rays.ts has it
+    // on the CPU: all of it while a whole layer is left, and the share that's left of the last
     const layersLeft = () => select(opacity.lessThan(1), clamp(float(layers).sub(laid), 0, 1), float(1))
 
     // A hit at a distance along the ray, on the bone or the skin, on a cut face or a traced surface: shaded, and then
     // the skin and any cut face laid over what's gathered, the skin at Opacity by how solidly it stands there and a
-    // face cut through bone whole, and the ray ended at full cover, at the last layer or once little light is left.
-    // Traced bone is only shaded here, for the steps inside it to lay
+    // face cut through bone whole, and the ray ended at full cover or once little light is left, or at the last layer
+    // where the bone isn't traced. Traced bone is only shaded here, for the steps inside it to lay
     const hit = (tHit: Node<'float'>, bone: Node<'bool'>, cutFace: Node<'bool'>, standing: Node<'float'>) => {
       const p = at(tHit).toVar()
       const outward = vec3(0).toVar()
@@ -327,11 +327,14 @@ export function raytrace(sampler: BodySampler, cue: DepthCue): Raytrace {
         // The tissue a face is cut through can't shadow it, so a cut face, like bone, is shadowed by bone alone
         direct.mulAssign(litAt(p.add(normal.mul(stepLength)), cutFace.or(bone)))
       })
-      // A traced surface mirrors the headlight into the camera where it faces it, and takes the Rim's light where it
-      // turns away from it. A cut face takes neither: it's matte, so that the section shows the photograph's own
-      // colours, and flat, so that seen from the side the Rim would light the whole of it, as it does no edge
+      // A traced surface mirrors the headlight into the camera where it faces it, and the skin takes the Rim's light
+      // where it turns away from it. The bone takes none: a ray meets the 4 mm level's thin bone at a graze all along
+      // its outline, where the Rim's light, strongest there, comes and goes with just where the ray's steps fall, so
+      // the outline sparkles as the view turns. A cut face takes neither: it's matte, so that the section shows the
+      // photograph's own colours, and flat, so that seen from the side the Rim would light the whole of it, as it does
+      // no edge
       const glint = select(cutFace, float(0), pow(facing, shininess).mul(highlight))
-      const edge = select(cutFace, float(0), pow(facing.oneMinus(), rimPower).mul(rim)).toVar()
+      const edge = select(cutFace.or(bone), float(0), pow(facing.oneMinus(), rimPower).mul(rim)).toVar()
       // The depth cue darkens the whole of what the hit shows, its highlight and its rim with it, as fog would
       const shaded = base.mul(sky.add(direct)).add(glint).add(edge).mul(cue.at(tHit.mul(viewDir.z.negate()))).toVar()
       If(hits.equal(0), () => {
@@ -348,8 +351,8 @@ export function raytrace(sampler: BodySampler, cue: DepthCue): Raytrace {
         // The layers are the skin's, counted below full Opacity, where each lets the next show through; at full
         // Opacity a ray goes on only past what doesn't stand in full, until it meets something that does
         laid.addAssign(select(bone, float(0), strength))
-        const lastLayer = opacity.lessThan(1).and(float(layers).sub(laid).lessThan(leastLayer))
-        done.assign(alpha.greaterThanEqual(1).or(transmittance.lessThan(minTransmittance)).or(lastLayer))
+        spent.assign(opacity.lessThan(1).and(float(layers).sub(laid).lessThan(leastLayer)))
+        done.assign(alpha.greaterThanEqual(1).or(transmittance.lessThan(minTransmittance)).or(spent.and(tracesBone.not())))
       })
     }
 
@@ -363,12 +366,14 @@ export function raytrace(sampler: BodySampler, cue: DepthCue): Raytrace {
     const boneValue = float(0).toVar()
     const skinStood = float(skinStanding).toVar()
     const sampleAt = (p: Node<'vec3'>, skinTo: Node<'float'>, boneTo: Node<'float'>, skinValueTo: Node<'float'>, boneValueTo: Node<'float'>) => {
+      // One read gives both fields, which is what a step costs
+      const both = sampler.fieldsAt(p).toVar()
       If(tracesSkin, () => {
-        skinValueTo.assign(skinField(p))
+        skinValueTo.assign(both.x.sub(skinIso))
         skinTo.assign(insideOf(skinValueTo))
       })
       If(tracesBone, () => {
-        boneValueTo.assign(boneField(p))
+        boneValueTo.assign(both.y.sub(boneThreshold))
         boneTo.assign(insideOf(boneValueTo))
       })
     }
@@ -397,7 +402,8 @@ export function raytrace(sampler: BodySampler, cue: DepthCue): Raytrace {
 
     // Then step by step, each step ending at the exit at the latest, a crossing of either surface since the last
     // sample is narrowed down and hit, the nearer first where both are crossed. The skin is crossed either way, into
-    // the body or out of it; the bone only into it, where it's lit for the steps inside it to lay
+    // the body or out of it, until its Layers are laid; the bone only into it, where it's lit for the steps inside it
+    // to lay
     const t = tEnter.toVar()
     Loop(maxSteps, () => {
       If(done.or(t.greaterThanEqual(tExit)), () => {
@@ -411,7 +417,7 @@ export function raytrace(sampler: BodySampler, cue: DepthCue): Raytrace {
       const skinNext = skinInside.toVar()
       const boneNext = boneInside.toVar()
       sampleAt(at(tNext), skinNext, boneNext, skinValue, boneValue)
-      const crossedSkin = tracesSkin.and(skinNext.notEqual(skinInside)).toVar()
+      const crossedSkin = tracesSkin.and(spent.not()).and(skinNext.notEqual(skinInside)).toVar()
       const crossedBone = tracesBone.and(boneInside.equal(0)).and(boneNext.equal(1)).toVar()
       If(crossedSkin.or(crossedBone), () => {
         // A surface not crossed is placed beyond the step, so the other is the nearer
@@ -451,7 +457,7 @@ export function raytrace(sampler: BodySampler, cue: DepthCue): Raytrace {
       // turns; laid by how much of it the ray goes through, it shows the same from one view to the next
       If(tracesBone.and(boneNext.equal(1)).and(done.not()), () => {
         const depth = boneValue.mul(tNext.sub(t)).div(voxelDepth).mul(boneCover)
-        const cover = exp(depth.negate()).oneMinus().mul(layersLeft()).toVar()
+        const cover = exp(depth.negate()).oneMinus().toVar()
         gathered.addAssign(boneShade.mul(cover.mul(transmittance)))
         transmittance.mulAssign(cover.oneMinus())
         done.assign(transmittance.lessThan(minTransmittance))

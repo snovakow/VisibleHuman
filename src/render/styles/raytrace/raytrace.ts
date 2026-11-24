@@ -16,7 +16,8 @@ import { raytrace, traceIndex } from './trace.ts'
 const quadRenderOrder = 1000
 
 export function createRaytrace({ webgpu, cue, events }: StyleContext): StyleDrawing {
-  const sampler = createBodySampler({ coverage: true })
+  // The trace reads the two fields at every step, together, and the colour only where a ray meets a surface
+  const sampler = createBodySampler({ coverage: false, fields: true })
   const tracer = raytrace(sampler, cue)
   // The trace writes the depth of the first surface it meets and tests against what's drawn before it, so the
   // surfaces and anything else in the scene hide one another where each is nearer; it's hidden until a body gives it

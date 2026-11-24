@@ -406,7 +406,7 @@ What the build does with the quirks above:
 - **Frosted slices are skipped too.** Within 8 mm of a block's face, a slice whose body is more than a tenth bluer than the slices further in is read as missing. A layer that keeps fewer than half its slices is filled from the layers either side, its colour blended between them.
 - **The steps between blocks are left as photographed.** The script measures each one against the grey card and reports it, and `--match` will even them out on request.
 - **The CT is placed on the photographs by a fit,** saved in [`data/`](../data): one run of slices at a time for the bodies, each a shift, a small turn and a flip at the scale the header gives; the head's whole CT at once, by a turn and a shift in three dimensions.
-- **Density is on one scale for all three:** Hounsfield units plus 1000, over 16, so air is 0, soft tissue about 63 and bone from about 110 up.
+- **Density is on one scale for all three:** Hounsfield units plus 1000, over 16, so air is 0, soft tissue about 63 and bone from about 90 up.
 
 ## What the data could support
 

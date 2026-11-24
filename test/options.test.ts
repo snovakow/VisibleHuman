@@ -342,14 +342,16 @@ void test('each of the surface\'s controls shows while there\'s a mesh or a cap 
   }
   assert.equal(shows('detail', 'splats', at({ skin: false })), true)
   assert.deepEqual([shows('caps', 'surface', defaultOptions), shows('caps', 'surface', at({ coronal: 0.2 }))], [false, true])
-  // Colour and Rim act on whatever is meshed, and Rim on every traced surface
+  // Colour and Rim act on whatever is meshed, while the raytrace lights the skin's edges alone
   for (const option of ['colour', 'rim'] as const) {
     assert.equal(shows(option, 'surface', at({ skin: false, bone: false })), false, option)
     for (const changes of [{ skin: false }, { bone: false }, { skin: false, bone: false, depth: 5 }]) {
       assert.equal(shows(option, 'surface', at(changes)), true, `${option} ${JSON.stringify(changes)}`)
     }
   }
-  for (const trace of ['skin', 'bone', 'both', 'brain'] as const) assert.equal(shows('rim', 'raytrace', at({ trace })), true, trace)
+  for (const [trace, shown] of [['skin', true], ['both', true], ['bone', false], ['brain', false]] as const) {
+    assert.equal(shows('rim', 'raytrace', at({ trace })), shown, trace)
+  }
   // Inner names the inner mesh, and the solid part of a see-through cap's section with that mesh off
   for (const [bone, opacity, axial, shown] of [
     [true, 1, 0, true],

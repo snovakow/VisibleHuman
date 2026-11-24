@@ -71,7 +71,7 @@ export interface VolumeLook {
 
 export interface RaytraceLook {
   trace: Trace
-  // How many layers of skin a ray lays over one another below full Opacity before it stops
+  // How many layers of skin a ray lays over one another below full Opacity; the bone shows through them all
   layers: number
   shadows: boolean
   // Where the light the shadows fall from is, in degrees from the camera's view: across and up
@@ -80,7 +80,7 @@ export interface RaytraceLook {
   // The density, and the MRI's value, on the file's scale of 0 to 255, from which a voxel is bone, or brain
   boneThreshold: number
   mriThreshold: number
-  // How much a surface's edges light up where it turns away from the eye
+  // How much the skin's edges light up where it turns away from the eye; the bone and the brain take none
   rim: number
   // How opaque the skin is; the bone and the brain are drawn by their own depth, whatever it is
   opacity: number
