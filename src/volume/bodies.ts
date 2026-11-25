@@ -38,6 +38,12 @@ export interface LevelEntry {
   blockGains?: BlockGainEntry[]
 }
 
+// A body's rig file, which the rig script writes for a body with limbs: relative to the page, and its bytes as gzipped
+export interface RigEntry {
+  file: string
+  bytes: number
+}
+
 export interface BodyEntry {
   // Such as "male", the id the volume file's header carries
   id: string
@@ -45,6 +51,7 @@ export interface BodyEntry {
   // The credit the NLM's terms ask for, naming the body
   credit: string
   levels: LevelEntry[]
+  rig?: RigEntry
 }
 
 export interface BodiesFile {
@@ -107,6 +114,13 @@ function readLevel(value: unknown, where: string): LevelEntry {
   return level
 }
 
+function readRigEntry(value: unknown, where: string): RigEntry {
+  if (!isRecord(value)) throw new Error(`${where} isn't an object`)
+  const { bytes } = value
+  if (typeof bytes !== 'number' || !Number.isInteger(bytes) || bytes < 0) throw new Error(`${where}'s bytes isn't a byte count`)
+  return { file: text(value, 'file', where), bytes }
+}
+
 // Reads the parsed JSON, throwing a clear error where it isn't the list the page expects. Every body has exactly one
 // default level, which the page opens on
 export function readBodies(json: unknown): BodiesFile {
@@ -122,7 +136,9 @@ export function readBodies(json: unknown): BodiesFile {
     const defaults = levels.filter((level) => level.default).length
     if (defaults !== 1) throw new Error(`${where} has ${defaults} default levels, where it needs one`)
     if (new Set(levels.map((level) => level.id)).size !== levels.length) throw new Error(`${where} lists a level twice`)
-    return { id, label: text(value, 'label', where), credit: text(value, 'credit', where), levels }
+    const entry: BodyEntry = { id, label: text(value, 'label', where), credit: text(value, 'credit', where), levels }
+    if (value.rig !== undefined) entry.rig = readRigEntry(value.rig, `${where}'s rig`)
+    return entry
   })
   if (new Set(bodies.map((body) => body.id)).size !== bodies.length) throw new Error('The list names a body twice')
   return { bodies }
@@ -145,8 +161,15 @@ export function withLevel(file: BodiesFile | null, body: BodyEntry, built: Level
     return listed?.levels.find((candidate) => candidate.id === level.id) ?? level
   })
   const entry: BodyEntry = { id: body.id, label: body.label, credit: body.credit, levels }
+  if (listed?.rig) entry.rig = listed.rig
   const at = bodies.findIndex((candidate) => candidate.id === body.id)
   if (at < 0) bodies.push(entry)
   else bodies[at] = entry
   return { bodies }
+}
+
+// The list with a body's rig file recorded as newly built, the rest as it was
+export function withRig(file: BodiesFile, bodyId: string, rig: RigEntry): BodiesFile {
+  if (!file.bodies.some((body) => body.id === bodyId)) throw new Error(`The list has no ${bodyId} to give a rig`)
+  return { bodies: file.bodies.map((body) => (body.id === bodyId ? { ...body, rig } : body)) }
 }

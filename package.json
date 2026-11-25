@@ -13,6 +13,7 @@
     "test": "node --test",
     "volume": "node scripts/build-volume.ts",
     "register": "node scripts/register.ts",
+    "rig": "node scripts/build-rig.ts",
     "fetch": "node scripts/fetch-data.ts"
   },
   "dependencies": {

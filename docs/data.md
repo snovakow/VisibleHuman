@@ -399,6 +399,8 @@ The page can't hold any of this, so [`npm run volume`](../README.md#the-volume-f
 
 The times are on a 2014 Intel Mac. Finer levels can be built and aren't committed: 2 mm for the male and the female, each about eight times the blocks, and 1 mm and 0.6 mm for the head.
 
+The male also has a rig, the skeleton he's posed by. Its joints were placed by hand on his CT's bone, and [`npm run rig`](../README.md#the-rig) finds where his limbs part from his trunk on his 2 mm level, whose blocks show the gel caught between his arms and his chest, which the 4 mm level only hints at. It writes a 2.3 MB file, committed with the volume files, in about six and a half minutes.
+
 What the build does with the quirks above:
 
 - **The body is told from its surroundings by colour.** For the two bodies, a pixel is body unless it's blue like the gel, dark like the frame, or grey like the card and tags; then the largest connected piece is kept. For the head, a pixel is tissue if it isn't dark and its colour channels differ by enough, as a share of the brightest, to rule out ice; tissue too pale for that rule, where the head encloses it, is filled back in.

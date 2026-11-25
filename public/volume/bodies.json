@@ -135,7 +135,11 @@
             }
           ]
         }
-      ]
+      ],
+      "rig": {
+        "file": "volume/male.rig.bin",
+        "bytes": 2341236
+      }
     },
     {
       "id": "female",
