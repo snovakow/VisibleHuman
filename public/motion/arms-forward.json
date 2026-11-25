@@ -1,0 +1,8 @@
+{
+  "joints": {
+    "leftArm": [-90, 0, 0],
+    "rightArm": [-90, 0, 0],
+    "leftForearm": [-10, 0, 0],
+    "rightForearm": [-10, 0, 0]
+  }
+}

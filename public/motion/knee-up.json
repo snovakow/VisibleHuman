@@ -1,0 +1,11 @@
+{
+  "joints": {
+    "leftThigh": [-70, 0, 0],
+    "leftShin": [90, 0, 0],
+    "leftFoot": [10, 0, 0],
+    "leftArm": [-20, 0, 10],
+    "rightArm": [20, 0, -10],
+    "leftForearm": [-40, 0, 0],
+    "rightForearm": [-40, 0, 0]
+  }
+}

@@ -15,7 +15,7 @@ import {
 } from './options.ts'
 import { presetOptions, presets, type Preset } from './presets.ts'
 import { isStyle, styles } from './render/styles/styles.ts'
-import { levelKey, useStore, type Status } from './store.ts'
+import { levelKey, noMotion, scanMotion, styleMoves, useStore, type Status } from './store.ts'
 import { levelOf } from './volume/levels.ts'
 
 const statusText: Record<Status, string> = { loading: 'Loading…', ready: 'Ready', failed: '' }
@@ -164,6 +164,11 @@ export function Panel({ renderer }: { renderer: string }) {
   const grid = useStore((s) => s.volume?.size)
   const triangles = useStore((s) => s.triangles)
   const swaying = useStore((s) => s.swaying)
+  const motion = useStore((s) => s.motion)
+  const showJoints = useStore((s) => s.showJoints)
+  const motions = useStore((s) => s.motions)
+  // A body with limbs has a rig, and can move; the head can't
+  const rigged = body?.rig !== undefined
   // The splats shown, while the splats are the style drawn: the shown Detail's level is always built
   const shown = levels && style === 'splats' ? levelOf(levels, detail)?.count : undefined
   // The surface's triangles, each mesh's by name, while the surface is the style drawn
@@ -196,6 +201,15 @@ export function Panel({ renderer }: { renderer: string }) {
     () => (details ? Object.fromEntries(details.toReversed().map((each) => [each.label, each.block])) : null),
     [details],
   )
+  // The motions: none, as the body has always been drawn, the pose it was scanned in, and the library's, once its index
+  // is in
+  const motionOptions = useMemo(
+    () => ({ none: noMotion, 'as scanned': scanMotion, ...Object.fromEntries((motions ?? []).map((each) => [each.label, each.id])) }),
+    [motions],
+  )
+  useEffect(() => {
+    useStore.getState().loadMotions()
+  }, [])
 
   const [, set] = useControls(() => {
     const { load, setOptions, options } = useStore.getState()
@@ -290,6 +304,31 @@ export function Panel({ renderer }: { renderer: string }) {
           },
         },
       }),
+      // The motion the body is drawn in, while it has limbs to move and the style draws them moving, and whether its
+      // joints are drawn over it
+      Motion: folder({
+        motion: {
+          label: 'Motion',
+          options: motionOptions,
+          value: useStore.getState().motion,
+          transient: false,
+          render: (get) => rigged && styleMoves(get(stylePath)),
+          onChange: (picked: unknown, _path: string, context: ChangeContext) => {
+            if (context.initial || !context.fromPanel || typeof picked !== 'string') return
+            useStore.getState().setMotion(picked)
+          },
+        },
+        joints: {
+          label: 'Joints',
+          value: useStore.getState().showJoints,
+          transient: false,
+          render: (get) => rigged && styleMoves(get(stylePath)) && get('Motion.motion') !== noMotion,
+          onChange: (picked: unknown, _path: string, context: ChangeContext) => {
+            if (context.initial || !context.fromPanel || typeof picked !== 'boolean') return
+            useStore.getState().setShowJoints(picked)
+          },
+        },
+      }),
       Body: folder({
         body: {
           label: 'Body',
@@ -337,7 +376,7 @@ export function Panel({ renderer }: { renderer: string }) {
         status: { label: 'Status', value: '', editable: false },
       }),
     }
-  }, [bodyOptions, levelOptions, detailOptions, capabilities])
+  }, [bodyOptions, levelOptions, detailOptions, motionOptions, rigged, capabilities])
 
   // The store's choices go back to the controls, after leva has taken each rebuilt list, since a rebuilt control keeps
   // the value it held: a load picks its body, its level and its Detail, a level found not built goes back to the
@@ -372,6 +411,10 @@ export function Panel({ renderer }: { renderer: string }) {
   useEffect(() => {
     set({ sway: swaying })
   }, [set, swaying])
+  // The motion as the store has it, after leva has taken each rebuilt list
+  useEffect(() => {
+    set({ motion, joints: showJoints })
+  }, [set, motion, showJoints])
   useEffect(() => {
     set({
       renderer: renderer || 'Starting…',

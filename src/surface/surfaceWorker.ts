@@ -1,5 +1,8 @@
+import type { Placement } from '../rig/pose.ts'
+import type { RigGridCells, SourceGrid } from '../rig/sampling.ts'
 import type { SceneAxes, Triple } from '../volume/format.ts'
 import type { IsosurfaceMesh } from './marchingCubes.ts'
+import type { MeshSkinning, SkinningMode } from './rigSkin.ts'
 
 // The grid a surface is meshed on, and its colours there where the mesh is to carry them per vertex
 interface GridRequest {
@@ -12,12 +15,23 @@ interface GridRequest {
   colors?: Uint8Array
 }
 
+// For a posed body: the rig the worker holds, by its key, the mesh's grid in the source frame, where the body is placed
+// in the scene, and how the mesh is skinned. The skin is meshed parted along the walls and skinned to the flesh about
+// each vertex; the bone is skinned rigidly to its parts
+export interface RigRequest {
+  key: string
+  grid: SourceGrid
+  placement: Placement
+  mode: SkinningMode
+}
+
 // A surface meshed from a field at an isolevel: the skin from the coverage, and the mesh inside it, asked for as the
 // bone, from the density or, where it's the brain's, from a body's MRI
 interface FieldRequest extends GridRequest {
   kind: 'skin' | 'bone'
   field: Uint8Array
   isolevel: number
+  rig?: RigRequest
 }
 
 // The closed shell a depth under the skin, meshed from each body voxel's distance to the outside, which the worker
@@ -48,10 +62,18 @@ interface SurfaceResult {
   // How long the worker took to mesh it
   milliseconds: number
   distance?: DistanceTiming
+  // Its vertices' skinning, where it was asked for posed
+  skinning?: MeshSkinning
 }
 
 // The worker's reply: the mesh, or why it failed
 export type SurfaceReply = SurfaceResult | { error: string }
+
+// What the worker is sent: a request, or the rig a posed request reads, held until another replaces it
+export interface RigInstall {
+  install: { key: string; file: RigGridCells } | null
+}
+export type SurfaceMessage = SurfaceRequest | RigInstall
 
 interface Job {
   request: SurfaceRequest
@@ -141,8 +163,19 @@ function cutOff() {
   }, Math.max(0, remaining))
 }
 
+// The rig the worker holds for posed requests, which a worker made anew is given before any request
+let installed: RigInstall['install'] = null
+
+// Gives the worker the rig its posed requests read, by a key they name it by, or takes it away. The rig's cells are
+// copied to it once, not with every request, since a skin is meshed again at every Detail
+export function installRig(key: string | null, file: RigGridCells | null) {
+  installed = key !== null && file ? { key, file } : null
+  worker?.postMessage({ install: installed } satisfies RigInstall)
+}
+
 function createWorker() {
   const created = new Worker(new URL('./surface.worker.ts', import.meta.url), { type: 'module' })
+  if (installed) created.postMessage({ install: installed } satisfies RigInstall)
   created.onmessage = (event: MessageEvent<SurfaceReply>) => {
     // A reply already on its way when its worker was cut off belongs to no one
     if (created !== worker) return

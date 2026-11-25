@@ -17,11 +17,16 @@ That opening is one of four presets, looks made from the panel's own controls to
 - *x-ray* draws the volume's x-ray, the body as a radiograph: the bone white in the grey of the flesh, and the lungs dark.
 - *glass* draws the raytrace with the skin all but clear and its edges lit, so the skeleton shows solid inside it.
 
-A preset's button sets every control in the Look, Cuts and Scene folders but the Detail, at its own values or at their defaults, and leaves the body, its level and the view as they are, so the controls take it on from there, and pressed again it puts back whatever has been moved since. Adding `?preset=` and a preset's name to the address, as in `?preset=skeleton`, opens the page on that preset.
+A preset's button sets every control in the Look, Cuts and Scene folders but the Detail, at its own values or at their defaults, and leaves the body, its level, its motion and the view as they are, so the controls take it on from there, and pressed again it puts back whatever has been moved since. Adding `?preset=` and a preset's name to the address, as in `?preset=skeleton`, opens the page on that preset.
 
 Under the buttons, **Sway** swings the view slowly to and fro across the body's front, as far to either side and never so far that a cut from the front turns away, easing into that swing from wherever the view stands. It's on as the page opens on a preset, unless the system asks for less motion, the first drag, scroll or pinch turns it off, and the switch turns it back on.
 
 The panel at the top right groups its controls in folders, and shows in each only the controls that act on what's being drawn.
+
+### Motion
+
+- **Motion**, for the male in the surface style, draws him in a pose: *as scanned*, the pose he was frozen in, or one from the page's library, *standing*, *T-pose*, *arms out*, *arms forward*, *knee up* or *sitting*; *none* draws him unposed, as the other styles do. His skin and bone move on the skeleton described under [The rig](#the-rig), the bone rigidly with its own joint and the flesh with the bones about it, and the skin parts where his arms, hands and thighs lay against him in the scan. The cuts stay where they are rather than move with him, and with a motion on, the caps and the shell aren't drawn. The folder shows for the male alone, in the surface style alone, since only he has a skeleton and only the surface poses one.
+- **Joints**, with a motion on, draws the skeleton over the body, each bone a line and each joint a dot.
 
 ### Body
 
@@ -102,7 +107,7 @@ The head came separately, from a man of 72, fixed in formalin with its vessels f
 
 ## Status
 
-Version 0.2 draws all three bodies in all four styles, under WebGPU or WebGL 2. Each body's density comes from its own CT, the male's scanned frozen and the female's and the head's before freezing, and the head has its MRI as well, which picks out the brain. Ideas for later include the MRI scans taken of both bodies, axial through the head and neck and coronal through the rest; the scans shown at their own resolution; and full-resolution photographs on the cut faces. [docs/data.md](docs/data.md) goes through what the NLM's data holds and what more could be made of it.
+Version 0.3 draws all three bodies in all four styles, under WebGPU or WebGL 2, and poses the male in the surface style. Each body's density comes from its own CT, the male's scanned frozen and the female's and the head's before freezing, and the head has its MRI as well, which picks out the brain. Ideas for later include the MRI scans taken of both bodies, axial through the head and neck and coronal through the rest; the scans shown at their own resolution; and full-resolution photographs on the cut faces. [docs/data.md](docs/data.md) goes through what the NLM's data holds and what more could be made of it.
 
 ## Running it locally
 

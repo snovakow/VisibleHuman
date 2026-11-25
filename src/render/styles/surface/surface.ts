@@ -1,16 +1,19 @@
-import { BackSide, BufferAttribute, BufferGeometry, Group, HemisphereLight, Mesh, Plane, PointLight, SRGBColorSpace, Uint8BufferAttribute } from 'three'
+import { BackSide, BufferAttribute, BufferGeometry, Group, HemisphereLight, Mesh, Plane, PointLight, SRGBColorSpace, Uint8BufferAttribute, type Material } from 'three'
 import { colorSpaceToWorking, context, max, uniform, vec3, vec4, vertexColor } from 'three/tsl'
 import { ClippingGroup, MeshBasicNodeMaterial, MeshStandardNodeMaterial } from 'three/webgpu'
-import { requestSurface, type SurfaceRequest } from '../../../surface/surfaceWorker.ts'
-import { bodyCoverage, type Volume } from '../../../volume/format.ts'
+import { installRig, requestSurface, type RigRequest, type SurfaceRequest } from '../../../surface/surfaceWorker.ts'
+import type { MeshSkinning, SkinningMode } from '../../../surface/rigSkin.ts'
+import { bodyCoverage, type Triple, type Volume } from '../../../volume/format.ts'
 import { labelOf } from '../../../volume/levels.ts'
 import type { Body } from '../../body/body.ts'
 import { createBodySampler, type Channel } from '../../body/sampler.ts'
 import { cutPlanes } from '../../cuts.ts'
 import type { SurfaceLook } from '../../look.ts'
 import { whenFirstDrawn, type StyleContext, type StyleDrawing } from '../style.ts'
+import type { Posed } from '../../posed.ts'
 import { createCaps } from './caps.ts'
 import { blockGridOf, gridOf } from './grids.ts'
+import { createSkinMatrices, restNormal, restPosition, setSkinning, skinnedMesh, wallShown } from './posed.ts'
 import { isBackShell, isOit } from './rules.ts'
 import { positionInside, rimAt } from './shading.ts'
 
@@ -106,6 +109,36 @@ export function createSurface({ events }: StyleContext): StyleDrawing {
     material.contextNode = samePosition
   }
 
+  // The same, for a posed body: each colour read where the scan holds the point rather than where the pose has moved it,
+  // and the skin's passes, a wall's faces drawn only once the pose has parted it. Made the first time the body is posed
+  const posedColourings = {
+    texture: sampler.colourOf(sampler.texelAt(restPosition.sub(restNormal.normalize().mul(sampler.leastVoxel.mul(0.5))))),
+    cells: colourings.cells,
+  }
+  let posedMaterials: typeof materials | null = null
+  const skinMatrices = createSkinMatrices()
+  const posedMaterialsOf = () => {
+    if (posedMaterials) return posedMaterials
+    const shown = wallShown(skinMatrices)
+    const made = {
+      skin: lit(skinRoughness),
+      skinDepth: new MeshBasicNodeMaterial({ colorWrite: false, transparent: true }),
+      back: lit(skinRoughness, BackSide),
+      backDepth: new MeshBasicNodeMaterial({ colorWrite: false, transparent: true, side: BackSide }),
+      bone: lit(boneRoughness),
+      shell: lit(skinRoughness),
+    }
+    for (const material of [made.skin, made.back, made.bone, made.shell]) material.colorNode = posedColourings.texture
+    for (const material of [made.skin, made.back]) material.opacityNode = max(opacity, edge)
+    for (const material of [made.skin, made.skinDepth, made.back, made.backDepth]) {
+      material.contextNode = samePosition
+      material.maskNode = shown
+    }
+    posedMaterials = made
+    return made
+  }
+  const materialsOf = (posed: Posed | null) => (posed ? posedMaterialsOf() : materials)
+
   // The meshes sit in one clipping group, whose three planes the cuts move in place, so the materials keep their
   // three planes and never recompile; the caps sit outside it
   const planes: [Plane, Plane, Plane] = [new Plane(), new Plane(), new Plane()]
@@ -123,6 +156,8 @@ export function createSurface({ events }: StyleContext): StyleDrawing {
   let surface: SurfaceLook | null = null
   let bound: { volume: Volume; channel: Channel } | null = null
   let gone = false
+  // The posed body whose rig the worker was last given
+  let lastPosed: Posed | null = null
 
   // Whether a surface is still wanted when its mesh arrives: its switch on, or, for the shell, a Depth
   const wanted = (kind: Drawable) => surface !== null && (kind === 'shell' ? surface.depth > 0 : surface[kind])
@@ -138,21 +173,29 @@ export function createSurface({ events }: StyleContext): StyleDrawing {
   // Asks the worker for a surface and, when it arrives for the volume still shown, draws it in place of the last one,
   // which stays until then. The returned call cancels it: a mesh already under way still arrives within its grace,
   // and shows, unless by then the volume has changed, the surface's switch has gone off or the style has gone
-  const mesh = (request: SurfaceRequest & { kind: Drawable }, volume: Volume, about: string, build: (geometry: BufferGeometry) => Mesh[]) => {
+  const mesh = (
+    request: SurfaceRequest & { kind: Drawable },
+    volume: Volume,
+    about: string,
+    build: (geometry: BufferGeometry, skinning: MeshSkinning | undefined) => Mesh[],
+  ) => {
     const { kind } = request
     // A new volume's old surface goes at once, since it belongs to another grid
     if (drawn[kind] && drawn[kind].volume !== volume) discard(kind)
+    const posedAsked = body?.posed ?? null
     const pending = requestSurface(request)
     pending.result.then(
-      ({ mesh: built, milliseconds, distance }) => {
-        if (gone || body?.volume !== volume || !wanted(kind)) return
+      ({ mesh: built, milliseconds, distance, skinning }) => {
+        // A mesh asked for posed, or not, belongs to that body alone
+        if (gone || body?.volume !== volume || !wanted(kind) || (body?.posed ?? null) !== posedAsked) return
         const geometry = new BufferGeometry()
         geometry.setAttribute('position', new BufferAttribute(built.positions, 3))
         geometry.setAttribute('normal', new BufferAttribute(built.normals, 3))
         if (built.colors) geometry.setAttribute('color', new Uint8BufferAttribute(built.colors, 3, true))
         geometry.setIndex(new BufferAttribute(built.indices, 1))
         geometry.computeBoundingSphere()
-        const meshes = build(geometry)
+        if (skinning) setSkinning(geometry, skinning)
+        const meshes = build(geometry, skinning)
         discard(kind)
         for (const each of meshes) whenFirstDrawn(each, () => events.drawn(volume))
         group.add(...meshes)
@@ -208,17 +251,36 @@ export function createSurface({ events }: StyleContext): StyleDrawing {
         bound = shown ? { volume: shown.volume, channel } : null
       }
 
+      // A posed body's meshes are skinned to its rig, which the worker is given once for the body, and are meshed again
+      // when it's posed or let go
+      const posed = shown?.posed ?? null
+      if (posed !== lastPosed) {
+        installRig(posed?.key ?? null, posed?.file ?? null)
+        lastPosed = posed
+      }
+      const rigOf = (grid: { size: Triple; spacing: Triple; origin: Triple }, mode: SkinningMode): { rig?: RigRequest } =>
+        posed ? { rig: { key: posed.key, grid: { size: grid.size, spacing: grid.spacing, origin: grid.origin }, placement: posed.placement, mode } } : {}
+      const used = materialsOf(posed)
+      const meshOf = (geometry: BufferGeometry, material: Material, skinning: MeshSkinning | undefined) =>
+        posed && skinning ? skinnedMesh(geometry, material, posed) : new Mesh(geometry, material)
+
       // The skin, meshed again when the volume or the Detail changes and dropped while its switch is off
       if (shown && skin) {
         const { volume, bounds } = shown
-        keep('skin', [volume, detail], () => {
+        keep('skin', [volume, detail, posed], () => {
           const grid = blockGridOf(volume, detail)
-          const request = { kind: 'skin', field: grid.coverage, isolevel: bodyCoverage, ...gridOf(volume, grid, bounds) } satisfies SurfaceRequest
-          return mesh(request, volume, `at ${labelOf(volume, grid.block)}, isolevel ${bodyCoverage}`, (geometry) => {
-            const front = new Mesh(geometry, materials.skin)
-            const frontDepth = new Mesh(geometry, materials.skinDepth)
-            const back = new Mesh(geometry, materials.back)
-            const backDepth = new Mesh(geometry, materials.backDepth)
+          const request = {
+            kind: 'skin',
+            field: grid.coverage,
+            isolevel: bodyCoverage,
+            ...gridOf(volume, grid, bounds),
+            ...rigOf(grid, 'blended'),
+          } satisfies SurfaceRequest
+          return mesh(request, volume, `at ${labelOf(volume, grid.block)}, isolevel ${bodyCoverage}`, (geometry, skinning) => {
+            const front = meshOf(geometry, used.skin, skinning)
+            const frontDepth = meshOf(geometry, used.skinDepth, skinning)
+            const back = meshOf(geometry, used.back, skinning)
+            const backDepth = meshOf(geometry, used.backDepth, skinning)
             frontDepth.renderOrder = frontDepthOrder
             back.renderOrder = backOrder
             backDepth.renderOrder = backDepthOrder
@@ -234,19 +296,20 @@ export function createSurface({ events }: StyleContext): StyleDrawing {
       const field = inner === 'brain' ? shown?.volume.mri : shown?.volume.density
       if (shown && bone && field) {
         const { volume, bounds } = shown
-        keep('bone', [volume, inner, isolevel], () => {
+        keep('bone', [volume, inner, isolevel, posed], () => {
           // On the loaded grid, coloured by its voxels where the colour is the cells'
           const grid = blockGridOf(volume, 1)
-          const request = { kind: 'bone', field, isolevel, ...gridOf(volume, grid, bounds) } satisfies SurfaceRequest
+          const request = { kind: 'bone', field, isolevel, ...gridOf(volume, grid, bounds), ...rigOf(grid, 'rigid') } satisfies SurfaceRequest
           const about = `${inner === 'brain' ? 'from the MRI ' : ''}at isolevel ${isolevel}`
-          return mesh(request, volume, about, (geometry) => [new Mesh(geometry, materials.bone)])
+          return mesh(request, volume, about, (geometry, skinning) => [meshOf(geometry, used.bone, skinning)])
         })
       } else drop('bone')
 
       // The shell under the skin, on the skin's grid, present while there's a Depth: meshed again when the volume,
       // the Detail or the Depth changes, the worker keeping the grid's distance field from one Depth to the next. The
       // Depth is in millimetres and the field in the grid's voxels, taken as cubes of their mean spacing
-      if (shown && depth > 0) {
+      // A posed body's shell waits for its own meshing, which follows; until then it isn't drawn posed
+      if (shown && depth > 0 && !posed) {
         const { volume, bounds } = shown
         keep('shell', [volume, detail, depth], () => {
           const grid = blockGridOf(volume, detail)
@@ -267,8 +330,8 @@ export function createSurface({ events }: StyleContext): StyleDrawing {
 
       // The Colour swaps each lit material's colour node, which compiles it again; nothing is meshed again, since
       // every mesh carries its vertices' colours whichever is shown
-      const colouring = colourings[colour]
-      for (const material of [materials.skin, materials.back, materials.bone, materials.shell]) {
+      const colouring = (posed ? posedColourings : colourings)[colour]
+      for (const material of [used.skin, used.back, used.bone, used.shell]) {
         if (material.colorNode === colouring) continue
         material.colorNode = colouring
         material.needsUpdate = true
@@ -290,32 +353,35 @@ export function createSurface({ events }: StyleContext): StyleDrawing {
       opacity.value = look.surface.opacity
       rim.value = look.surface.rim
       const transparent = look.surface.opacity < 1
-      for (const material of [materials.skin, materials.back]) {
+      for (const material of [used.skin, used.back]) {
         if (material.transparent === transparent) continue
         material.transparent = transparent
         material.needsUpdate = true
       }
       const oit = isOit(look.surface, look.cuts)
       const backShell = isBackShell(look.surface)
-      materials.skinDepth.visible = transparent && !oit
-      materials.back.visible = backShell
-      materials.backDepth.visible = backShell && !oit
+      used.skinDepth.visible = transparent && !oit
+      used.back.visible = backShell
+      used.backDepth.visible = backShell && !oit
 
       // A cap's solid part starts at the threshold of the Inner surface
+      // A posed body's caps wait for their own skinning, which follows; until then they aren't drawn posed
       caps.update(shown?.bounds ?? null, look.cuts, {
-        shown: look.surface.caps,
+        shown: look.surface.caps && !posed,
         opacity: look.surface.opacity,
         solidFrom: (innerIsBrain ? mriThreshold : boneThreshold) / 255,
       })
     },
     beforeFrame(camera) {
       headlight.position.copy(camera.position)
+      if (lastPosed) skinMatrices.copyFrom(lastPosed)
     },
     dispose() {
       gone = true
       // The page's counts go with the meshes, so another style, or another body met there, shows none of them
       for (const kind of drawables) drop(kind)
       for (const material of Object.values(materials)) material.dispose()
+      if (posedMaterials) for (const material of Object.values(posedMaterials)) material.dispose()
       caps.dispose()
       sampler.dispose()
     },

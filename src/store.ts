@@ -7,6 +7,11 @@ import type { Volume } from './volume/format.ts'
 import { levelOf, stageBody, type Bounds, type Detail, type DetailEntry, type Levels, type StagedBody } from './volume/levels.ts'
 import type { SurfaceKind } from './surface/surfaceWorker.ts'
 import { isAbort, loadBodies, loadVolume, NotBuiltError } from './volume/loadVolume.ts'
+import type { AnglePose } from './motion/angles.ts'
+import { loadLibrary, loadPose, type MotionEntry } from './motion/library.ts'
+import { loadRig } from './rig/loadRig.ts'
+import type { RigFile } from './rig/rigFile.ts'
+import type { Style } from './render/look.ts'
 
 export type Status = 'loading' | 'ready' | 'failed'
 
@@ -60,7 +65,29 @@ interface State {
   // preset leaves it as it is
   swaying: boolean
   setSwaying: (swaying: boolean) => void
+  // The motion the body is drawn in: none, as the body has always been drawn, the pose it was scanned in, or one of the
+  // library's, by its id. A body with limbs loads its rig the first time it's asked to move, and the library its pose;
+  // until both are in, the body is drawn as before. A preset leaves it as it is
+  motion: string
+  setMotion: (motion: string) => void
+  // The library's motions, once its index has loaded, and the pose of the motion picked, once its file has
+  motions: readonly MotionEntry[] | null
+  motionPose: AnglePose | null
+  // The rig of the body shown, once it's loaded, for a body that has one
+  rig: RigFile | null
+  // Whether the posed body's joints are drawn over it
+  showJoints: boolean
+  setShowJoints: (visible: boolean) => void
+  // Loads the library's index, for the panel's list, once
+  loadMotions: () => void
 }
+
+// No motion: the body drawn as it always has been, and as it was scanned, the pose the rig is bound in
+export const noMotion = 'none'
+export const scanMotion = 'scan'
+// The styles that draw a body posed, more as each learns to; the others draw it as it was scanned, whatever the motion
+const movingStyles: readonly Style[] = ['surface']
+export const styleMoves = (style: unknown): boolean => movingStyles.some((each) => each === style)
 
 const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error))
 
@@ -155,6 +182,43 @@ function buildRest(set: StoreApi<State>['setState'], get: StoreApi<State>['getSt
   setTimeout(slice, 0)
 }
 
+// The library's index, fetched once for the page, and a load of a rig or a pose in progress, which the next one aborts
+let libraryFetch: Promise<readonly MotionEntry[]> | null = null
+let motionLoad: AbortController | null = null
+
+// Brings in what the motion picked needs: the body's rig, if it has one and it isn't in, and the library's pose, for a
+// motion of the library's. A newer pick, or another body, takes over, and an older load's results are dropped
+async function loadMotion(set: StoreApi<State>['setState'], get: StoreApi<State>['getState']) {
+  motionLoad?.abort()
+  const controller = new AbortController()
+  motionLoad = controller
+  const { motion, body, bodies, rig } = get()
+  const entry = bodies?.find((candidate) => candidate.id === body)
+  const isCurrent = () => motionLoad === controller && get().motion === motion && get().body === body
+  try {
+    if (motion === noMotion) return
+    if (entry?.rig && !rig) {
+      const loaded = await loadRig(entry.rig, controller.signal)
+      if (!isCurrent()) return
+      set({ rig: loaded })
+    }
+    if (motion === scanMotion) return
+    const motions = await (libraryFetch ??= loadLibrary())
+    if (motionLoad !== controller) return
+    set({ motions })
+    const picked = motions.find((candidate) => candidate.id === motion)
+    if (!picked) throw new Error(`The motion library has no ${motion}`)
+    const pose = await loadPose(picked, controller.signal)
+    if (!isCurrent()) return
+    set({ motionPose: pose })
+  } catch (error) {
+    if (isAbort(error)) return
+    console.warn(`VisibleHuman: ${messageOf(error)}`)
+  } finally {
+    if (motionLoad === controller) motionLoad = null
+  }
+}
+
 export const useStore = create<State>()((set, get, api) => ({
   bodies: null,
   body: null,
@@ -223,6 +287,28 @@ export const useStore = create<State>()((set, get, api) => ({
     }),
   swaying: false,
   setSwaying: (swaying) => set((state) => (state.swaying === swaying ? state : { swaying })),
+  motion: noMotion,
+  motions: null,
+  motionPose: null,
+  rig: null,
+  showJoints: false,
+  setShowJoints: (visible) => set((state) => (state.showJoints === visible ? state : { showJoints: visible })),
+  loadMotions: () => {
+    if (get().motions) return
+    ;(libraryFetch ??= loadLibrary()).then(
+      (motions) => set({ motions }),
+      (error: unknown) => {
+        libraryFetch = null
+        console.warn(`VisibleHuman: the motion library couldn't be read. ${messageOf(error)}`)
+      },
+    )
+  },
+  setMotion: (motion) => {
+    if (get().motion === motion) return
+    set({ motion, motionPose: null })
+    if (motion === noMotion) return
+    void loadMotion(set, get)
+  },
   load: async (bodyId, levelId, signal) => {
     current?.abort()
     const controller = new AbortController()
@@ -271,7 +357,7 @@ export const useStore = create<State>()((set, get, api) => ({
         level: level.id,
         status: 'loading',
         error: null,
-        ...(sameBody ? {} : { volume: null, bounds: null, levels: null, details: null, waiting: null }),
+        ...(sameBody ? {} : { volume: null, bounds: null, levels: null, details: null, waiting: null, rig: null }),
       })
       if (!sameBody) staging = null
 
@@ -330,6 +416,8 @@ export const useStore = create<State>()((set, get, api) => ({
         picked: taken,
         options: drawableOptions(taken, capabilities),
       })
+      // A body asked to move loads its own rig
+      if (get().motion !== noMotion && !get().rig) void loadMotion(set, get)
 
       if (firstFrame !== 'logged') {
         firstFrame = {

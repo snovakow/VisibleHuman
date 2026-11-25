@@ -1,9 +1,32 @@
 import { useFrame, useThree } from '@react-three/fiber'
 import { useEffect, useRef } from 'react'
 import { lookOf } from '../look.ts'
+import { rotationsOfAngles } from '../motion/angles.ts'
 import { asWebGPU } from '../render/backend.ts'
-import { createStage, type Stage } from '../render/stage.ts'
-import { useStore } from '../store.ts'
+import { createStage, type Motion, type Stage } from '../render/stage.ts'
+import { scanRotations } from '../rig/pose.ts'
+import { noMotion, scanMotion, styleMoves, useStore } from '../store.ts'
+
+type StoreState = ReturnType<typeof useStore.getState>
+
+// The motion the stage draws the body in, as the store has it: none until the body's rig is in, and, for a motion of
+// the library's, its pose. While a pose picked is still on its way the body holds the one it was drawn in, so that
+// going from one pose to the next never lets it go between, which would mesh it unposed and then posed again. The same
+// object comes back while nothing it's made from changes, so a store change that doesn't touch it turns no bones
+let lastMotion: { from: readonly unknown[]; motion: Motion | null } | null = null
+function motionOf({ motion, rig, motionPose, volume, showJoints }: StoreState): Motion | null {
+  const from = [motion, rig, motionPose, volume?.axes, showJoints]
+  if (lastMotion && lastMotion.from.every((value, n) => value === from[n])) return lastMotion.motion
+  let made: Motion | null = null
+  if (motion !== noMotion && rig && volume) {
+    const held = lastMotion?.from[1] === rig ? lastMotion.motion : null
+    if (motion === scanMotion) made = { rotations: scanRotations(rig.rig, volume.axes), joints: showJoints }
+    else if (motionPose) made = { rotations: rotationsOfAngles(motionPose), joints: showJoints }
+    else if (held) made = held.joints === showJoints ? held : { ...held, joints: showJoints }
+  }
+  lastMotion = { from, motion: made }
+  return made
+}
 
 // Above R3F's own render, which a frame callback at a higher priority takes over for as long as it's mounted
 const renderPriority = 1
@@ -23,9 +46,11 @@ export function StageHost() {
   useEffect(() => {
     const { drawn, setTriangles } = useStore.getState()
     const made = createStage(asWebGPU(gl), scene, camera, { drawn, meshed: setTriangles })
-    const feed = ({ volume, bounds, levels, options }: ReturnType<typeof useStore.getState>) => {
-      made.setBody(volume && bounds && levels ? { volume, bounds, levels } : null)
+    const feed = (state: StoreState) => {
+      const { volume, bounds, levels, options, rig } = state
+      made.setBody(volume && bounds && levels ? { volume, bounds, levels, rig } : null)
       made.setLook(lookOf(options))
+      made.setMotion(styleMoves(options.style) ? motionOf(state) : null)
     }
     feed(useStore.getState())
     const unsubscribe = useStore.subscribe(feed)
