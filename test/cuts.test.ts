@@ -94,7 +94,7 @@ void test('the three planes keep the right half-spaces: below the top, behind th
   )
 })
 
-void test('an inactive cut\'s plane lies beyond the bounds and keeps every point in them, while the box is the bounds', () => {
+void test('an inactive cut\'s plane lies beyond where any pose reaches and keeps every point, while the box is the bounds', () => {
   const none = { axial: 0, coronal: 0, sagittal: 0 }
   assert.ok(!isCut(none))
   for (const open of [{ ...none, axial: 0.01 }, { ...none, coronal: 1 }, { ...none, sagittal: 0.5 }]) assert.ok(isCut(open))
@@ -109,6 +109,16 @@ void test('an inactive cut\'s plane lies beyond the bounds and keeps every point
     [-285.12, 944, 164.34],
   ] satisfies Triple[]) {
     assert.ok(keeps(axial, corner) && keeps(coronal, corner) && keeps(sagittal, corner))
+  }
+  // And every point a pose can carry the body to: within the body's length, 1,888 mm, of the bounds, along any axis, as
+  // arms held forward reach far past the bounds' front, which is only 164 mm from their centre
+  const length = 2 * 944
+  for (const reached of [
+    [0, 944 + length, 0],
+    [0, 0, 164.34 + length],
+    [-285.12 - length, 0, 0],
+  ] satisfies Triple[]) {
+    assert.ok(keeps(axial, reached) && keeps(coronal, reached) && keeps(sagittal, reached), `${reached.join(', ')} is cut`)
   }
   const box = cutBox(male, none)
   assert.deepEqual(box.min, [-285.12, -944, -164.34])

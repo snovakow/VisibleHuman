@@ -28,9 +28,12 @@ export interface CutPlane {
   constant: number
 }
 
-// A plane whose cut is at 0 is parked this many half extents past the face it would start on, so that it cuts nothing
-// while the planes stay three, since a changed count of planes recompiles the material that clips by them
-const parkedHalfExtents = 2
+// A plane whose cut is at 0 is parked this many of the bounds' largest half extents past the face it would start on, so
+// that it cuts nothing while the planes stay three, since a changed count of planes recompiles the material that clips
+// by them. Four is two of the body's lengths: a posed body's points stay within one length of its hips, which keep
+// their place in the scan, so no pose carries a hand or a foot past it, as two of each axis's own half extents let
+// arms held forward, a knee raised or a seated body's feet do
+const parkedHalfExtents = 4
 
 // Where each cut's plane lies: the height Axial keeps below, the depth Coronal keeps behind, and the x Sagittal keeps
 // to the left of. The bounds' half extents along x, y and z give the sides the cuts run between
@@ -51,10 +54,11 @@ export function cutBox(half: Triple, cuts: Cuts): CutBox {
 // bounds while its cut is 0
 export function cutPlanes(half: Triple, cuts: Cuts): [CutPlane, CutPlane, CutPlane] {
   const { top, front, right } = cutLimits(half, cuts)
-  const parked = (cut: number, extent: number) => (cut === 0 ? parkedHalfExtents * extent : 0)
+  const far = parkedHalfExtents * Math.max(...half)
+  const parked = (cut: number) => (cut === 0 ? far : 0)
   return [
-    { normal: [0, -1, 0], constant: top + parked(cuts.axial, half[1]) },
-    { normal: [0, 0, -1], constant: front + parked(cuts.coronal, half[2]) },
-    { normal: [1, 0, 0], constant: -(right - parked(cuts.sagittal, half[0])) },
+    { normal: [0, -1, 0], constant: top + parked(cuts.axial) },
+    { normal: [0, 0, -1], constant: front + parked(cuts.coronal) },
+    { normal: [1, 0, 0], constant: -(right - parked(cuts.sagittal)) },
   ]
 }
