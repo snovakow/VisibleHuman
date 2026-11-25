@@ -11,7 +11,7 @@ import type { SceneAxes, Triple } from '../volume/format.ts'
 // wound the other way round, so they still face outward. Given colours on the same grid, each vertex takes the colour
 // where it lies along its edge. Pure, so a worker runs it and the tests prove it
 
-interface IsosurfaceInput {
+export interface IsosurfaceInput {
   // One value per voxel in index order i + nx·(j + ny·k): a byte, such as the file's coverage or density block, or a
   // float, such as a distance from the skin
   field: Uint8Array | Float32Array
@@ -45,7 +45,7 @@ const noVertex = -1
 
 // How the scene reads the grid: for each scene axis, its grid axis and sign, and whether the mapping as a whole
 // turns the grid's handedness over, which is where the winding must turn too
-function mappingOf(axes: SceneAxes) {
+export function mappingOf(axes: SceneAxes) {
   const order = [axes.x, axes.y, axes.z]
   // A signed permutation's determinant: the sign of the permutation times the product of the signs
   let parity = 1
@@ -191,7 +191,7 @@ export function meshIsosurface({ field, size, spacing, origin, isolevel, axes, c
 }
 
 // Collects the mesh in typed arrays that double as they fill, since a fine surface can have millions of vertices
-class MeshBuilder {
+export class MeshBuilder {
   private positions = new Float32Array(3 << 12)
   private normals = new Float32Array(3 << 12)
   private indices = new Uint32Array(3 << 13)
