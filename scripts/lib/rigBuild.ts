@@ -63,8 +63,9 @@ export function buildRig(rig: Rig, fine: Volume, grid: Volume, log: (line: strin
 
   const first = nearestChains(fine, segments, balls)
   lap('The finer grid takes its chains by the segments')
-  const { chains: fineChains, changed } = refineChains(fine, first, segments)
-  lap(`The band about each parting finds them again, moving ${changed.toLocaleString('en')} voxels`)
+  const { chains: fineChains, changed, rejoined } = refineChains(fine, first, segments)
+  const moved = `${changed.toLocaleString('en')} voxels, and ${rejoined.toLocaleString('en')} voxels cut off from their chain join another`
+  lap(`The band about each parting finds them again, moving ${moved}`)
 
   // The default grid's chains, for its body cells: carried, then given to any body cell none came to by the nearest
   // body cell with one. The air's cells have none while the walls are measured, so that a cell in a gap between two

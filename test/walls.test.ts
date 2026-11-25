@@ -135,6 +135,122 @@ void test("within the limb's joined reach the two meet with no wall, and the ban
   assert.deepEqual(chains.chain, first.chain)
 })
 
+// Each chain's pieces of face-connected voxels, by the chain, with the voxels each holds
+function piecesOf(size: Triple, chain: Uint8Array): Map<number, number[][]> {
+  const seen = new Uint8Array(chain.length)
+  const pieces = new Map<number, number[][]>()
+  for (let start = 0; start < chain.length; start++) {
+    if (chain[start] === noChain || seen[start] === 1) continue
+    const own = chain[start]
+    const piece: number[] = []
+    const stack = [start]
+    seen[start] = 1
+    while (stack.length > 0) {
+      const at = stack.pop() ?? 0
+      piece.push(at)
+      const i = at % size[0]
+      const j = Math.floor(at / size[0]) % size[1]
+      const k = Math.floor(at / (size[0] * size[1]))
+      for (const [di, dj, dk] of [
+        [1, 0, 0],
+        [-1, 0, 0],
+        [0, 1, 0],
+        [0, -1, 0],
+        [0, 0, 1],
+        [0, 0, -1],
+      ]) {
+        const [ni, nj, nk] = [i + di, j + dj, k + dk]
+        if (ni < 0 || nj < 0 || nk < 0 || ni >= size[0] || nj >= size[1] || nk >= size[2]) continue
+        const next = cellIndex(size, ni, nj, nk)
+        if (chain[next] !== own || seen[next] === 1) continue
+        seen[next] = 1
+        stack.push(next)
+      }
+    }
+    pieces.set(own, [...(pieces.get(own) ?? []), piece])
+  }
+  return pieces
+}
+
+void test('a trunk and two limbs against it and each other, as at the groin, come out whole and walled where they touch, cut in either order', () => {
+  // The two limbs lie side by side against the trunk and against each other, so the three pairs' bands overlap
+  const size: Triple = [52, 42, 12]
+  const trunk: Shape = { i: 16, j: 21, radius: 12 }
+  const left: Shape = { i: 33, j: 15, radius: 6 }
+  const right: Shape = { i: 33, j: 26, radius: 6 }
+  const shapes = [trunk, left, right]
+  const volume = phantom(size, shapes)
+  // The chains of the trunk and of the two legs
+  const chains = [0, 3, 4]
+  const segments = shapes.map((shape, n) => along(shape, chains[n], n, size[2]))
+  const first = nearestChains(volume, segments, [])
+  const results = (['ascending', 'descending'] as const).map((order) => refineChains(volume, first, segments, undefined, order).chains.chain)
+  assert.deepEqual(results[0], results[1], 'the order the pairs are cut in changed the chains')
+  // The phantom's own chain at a voxel: the shape it lies deepest inside
+  const expected = new Uint8Array(volume.coverage.length).fill(noChain)
+  for (let k = 0; k < size[2]; k++) {
+    for (let j = 0; j < size[1]; j++) {
+      for (let i = 0; i < size[0]; i++) {
+        const n = cellIndex(size, i, j, k)
+        if (volume.coverage[n] < 128) continue
+        const depths = shapes.map((shape) => shape.radius - Math.hypot(i - shape.i, j - shape.j))
+        expected[n] = chains[depths.indexOf(Math.max(...depths))]
+      }
+    }
+  }
+  // Whether the phantom puts a wall within two voxels of a voxel
+  const nearWall = (i: number, j: number, k: number) => {
+    const own = expected[cellIndex(size, i, j, k)]
+    for (let dj = -2; dj <= 2; dj++) {
+      for (let di = -2; di <= 2; di++) {
+        const [ni, nj] = [i + di, j + dj]
+        if (ni < 0 || nj < 0 || ni >= size[0] || nj >= size[1]) continue
+        const other = expected[cellIndex(size, ni, nj, k)]
+        if (other !== noChain && other !== own) return true
+      }
+    }
+    return false
+  }
+  for (const chain of results) {
+    let wrongBefore = 0
+    for (let k = 0; k < size[2]; k++) {
+      for (let j = 0; j < size[1]; j++) {
+        for (let i = 0; i < size[0]; i++) {
+          const n = cellIndex(size, i, j, k)
+          if (expected[n] === noChain || nearWall(i, j, k)) continue
+          if (first.chain[n] !== expected[n]) wrongBefore++
+          assert.equal(chain[n], expected[n], `(${i}, ${j}, ${k})`)
+        }
+      }
+    }
+    assert.ok(wrongBefore > 0)
+    // Each chain is one piece, holding its own bone
+    const pieces = piecesOf(size, chain)
+    for (const [n, shape] of shapes.entries()) {
+      const own = pieces.get(chains[n]) ?? []
+      assert.equal(own.length, 1, `the ${chains[n]} chain is in ${own.length} pieces`)
+      assert.ok(own[0].includes(cellIndex(size, shape.i, shape.j, 5)))
+    }
+  }
+})
+
+void test("a band voxel that neither side of its pair's cut reaches keeps its own chain", () => {
+  const size: Triple = [44, 30, 12]
+  const wide: Shape = { i: 14, j: 15, radius: 12 }
+  const narrow: Shape = { i: 32, j: 15, radius: 6 }
+  const volume = phantom(size, [wide, narrow])
+  // A speck of the body alone in the air beside the wide one, nearest its bone and within the band about the parting,
+  // touching no flesh and no bone of either chain, so no tie to either reaches it
+  const speck = cellIndex(size, 16, 1, 5)
+  assert.equal(volume.coverage[cellIndex(size, 16, 2, 5)], 0)
+  volume.coverage[speck] = 255
+  const segments = [along(wide, 0, 0, size[2]), along(narrow, 1, 1, size[2])]
+  const first = nearestChains(volume, segments, [])
+  assert.equal(first.chain[speck], 0)
+  const { chains } = refineChains(volume, first, segments)
+  assert.equal(chains.chain[speck], 0)
+})
+
 void test('flesh follows the bone beside it, is shared about a joint, and a bone moves with its own joint alone', () => {
   // One limb along k, two bones meeting at its middle: the upper from k = 0 to 15, the lower from 15 to 29
   const size: Triple = [20, 20, 30]

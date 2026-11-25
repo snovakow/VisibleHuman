@@ -83,6 +83,12 @@ export class MinCut {
     return this.tree[node] === sourceTree
   }
 
+  // Whether a node is one the sink's tree still reaches. A node neither tree reaches lies on no side the cut chose: one
+  // the flow never touched, or one cut off from both terminals by edges the flow filled
+  isSink(node: number) {
+    return this.tree[node] === sinkTree
+  }
+
   // The maximum flow from the source to the sink, less what setTerminal pushed straight through a node tied to both
   maxflow(): number {
     const { nodes, terminal, tree, parent, first, next, head, residual, stamp, depth } = this

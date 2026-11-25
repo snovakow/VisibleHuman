@@ -25,6 +25,9 @@ export const bandMm = 40
 // that record no wall
 export const wallReachMm = 24
 
+// The chains: the trunk, the arms and the legs
+const chainCount = 5
+
 // What cutting through a voxel costs, per square millimetre of cut: 1 through pale tissue, fat and skin, 10 through
 // muscle and 50 through bone, each times the cube of the share of the voxel that's body, so the gel's line between two
 // bodies, only partly body, costs next to nothing
@@ -110,9 +113,28 @@ function partedPairs(volume: Volume, chains: Chains, walls: Uint8Array): [number
 // the band, lying along the trunk, has no voxel outside the band to hold it, but its bone always does
 const heldMm = 3
 
+// The order the pairs of chains are cut in. The chains found don't hang on it; the tests cut in both orders to show it
+export type PairOrder = 'ascending' | 'descending'
+
+// No pair owns the voxel
+const noOwner = 255
+
 // The chains found again in a band either side of each parting, by the cheapest cut between each pair's two chains
-// described above. Returns the refined chains and how many voxels changed chain
-export function refineChains(volume: Volume, first: Chains, segments: readonly Segment[], band = bandMm): { chains: Chains; changed: number } {
+// described above. Where several pairs' bands overlap, as the trunk's and both thighs' do at the groin, a voxel is the
+// pair's whose first parting lies nearest it, the pair of lower chains on a tie: every pair cuts across its whole band,
+// reading only the first parting's labels, and writes only the voxels it owns, so no pair writes a voxel from labels
+// another pair's cut has since changed, and the order the pairs are cut in changes nothing. A band voxel that neither
+// side of its pair's cut reaches keeps its own chain, since the cut says nothing of it. Last, a piece of a chain cut off
+// from the rest of it, inside other chains' flesh, joins the chain beside it that it shares the most faces with, since
+// no joint's bone of its own chain can reach it through the body to move it. Returns the refined chains, how many
+// voxels changed chain, and how many joined another in such pieces, some perhaps back to the chain a cut took them from
+export function refineChains(
+  volume: Volume,
+  first: Chains,
+  segments: readonly Segment[],
+  band = bandMm,
+  order: PairOrder = 'ascending',
+): { chains: Chains; changed: number; rejoined: number } {
   const { size, spacing, coverage, red, green, blue, density } = volume
   const count = coverage.length
   const walls = wallVoxels(volume, first)
@@ -120,16 +142,35 @@ export function refineChains(volume: Volume, first: Chains, segments: readonly S
   const faceArea = [spacing[1] * spacing[2], spacing[0] * spacing[2], spacing[0] * spacing[1]]
   // A tie to a terminal no cut can afford
   const held = 1e12
-  for (const [a, b] of partedPairs(volume, first, walls)) {
-    // The pair's band: its two chains' voxels within the band's reach of their parting, outside the joined flesh
+  const pairs = partedPairs(volume, first, walls)
+  if (order === 'descending') pairs.reverse()
+  // A voxel within both chains' joined reach, where they're of one flesh, is left out of a pair's band, so a cut ends
+  // there
+  const pairJoined = (n: number, a: number, b: number) => joinsAcross(a, b, first.joined[n], first.joined[n])
+  // Each pair's band, a bit for each pair: its two chains' voxels within the band's reach of their parting, outside the
+  // joined flesh. And each band voxel's owner, by the pair's chains, with its squared distance to that pair's parting
+  const inBand = new Uint16Array(count)
+  const owner = new Uint8Array(count).fill(noOwner)
+  const ownerDistance = new Float32Array(count).fill(Infinity)
+  const keyOf = (a: number, b: number) => a * 16 + b
+  pairs.forEach(([a, b], p) => {
     const near = featureTransform((n) => walls[n] === 1 && facesAcross(volume, first, n, a, b), size, spacing).squared
-    // A voxel within both chains' joined reach, where they're of one flesh, is left out of the band, so a cut ends there
-    const pairJoined = (n: number) => joinsAcross(a, b, first.joined[n], first.joined[n])
+    const key = keyOf(a, b)
+    for (let n = 0; n < count; n++) {
+      const own = first.chain[n]
+      if ((own !== a && own !== b) || pairJoined(n, a, b) || near[n] > band * band) continue
+      inBand[n] |= 1 << p
+      if (near[n] < ownerDistance[n] || (near[n] === ownerDistance[n] && key < owner[n])) {
+        ownerDistance[n] = near[n]
+        owner[n] = key
+      }
+    }
+  })
+  pairs.forEach(([a, b], p) => {
     const node = new Int32Array(count).fill(-1)
     const members: number[] = []
     for (let n = 0; n < count; n++) {
-      const own = first.chain[n]
-      if ((own !== a && own !== b) || pairJoined(n) || near[n] > band * band) continue
+      if ((inBand[n] & (1 << p)) === 0) continue
       node[n] = members.length
       members.push(n)
     }
@@ -150,7 +191,7 @@ export function refineChains(volume: Volume, first: Chains, segments: readonly S
           return
         }
         // Beside the band's edge, a voxel of its own chain outside the band holds it to its chain
-        if (first.chain[neighbour] === own && !pairJoined(neighbour)) edge = true
+        if (first.chain[neighbour] === own && !pairJoined(neighbour, a, b)) edge = true
       })
       // So does its own chain's segment through it
       if (!edge) {
@@ -160,11 +201,99 @@ export function refineChains(volume: Volume, first: Chains, segments: readonly S
       if (edge) cut.setTerminal(m, own === a ? held : 0, own === b ? held : 0)
     }
     cut.maxflow()
-    for (let m = 0; m < members.length; m++) chain[members[m]] = cut.isSource(m) ? a : b
-  }
+    const key = keyOf(a, b)
+    for (let m = 0; m < members.length; m++) {
+      const n = members[m]
+      if (owner[n] !== key) continue
+      chain[n] = cut.isSource(m) ? a : cut.isSink(m) ? b : first.chain[n]
+    }
+  })
+  const rejoined = rejoinPieces(size, chain)
   let changed = 0
   for (let n = 0; n < count; n++) if (chain[n] !== first.chain[n]) changed++
-  return { chains: { chain, joined: first.joined }, changed }
+  return { chains: { chain, joined: first.joined }, changed, rejoined }
+}
+
+// How many times the cut-off pieces are looked for again: a piece that touched only other cut-off pieces may touch a
+// chain's main piece once those have joined one
+const rejoinRounds = 4
+
+// Each chain's pieces of face-connected voxels other than its largest, which holds the chain's bones, that touch
+// another chain's largest piece: each joins the chain whose largest piece it shares the most faces with, the lower
+// chain on a tie. A piece joins only a largest piece, never another cut-off one, so no two pieces trade chains, and
+// every piece is judged on the labels as the round began, so the order the pieces are found in changes nothing. A piece
+// that touches no other chain, as a speck of the body alone in the air, is left as it is. Returns how many voxels
+// joined another chain
+function rejoinPieces(size: Triple, chain: Uint8Array): number {
+  const count = chain.length
+  const piece = new Int32Array(count)
+  const stack = new Int32Array(count)
+  const steps = faceSteps(size)
+  let moved = 0
+  for (let round = 0; round < rejoinRounds; round++) {
+    piece.fill(-1)
+    // Each piece's chain and size
+    const pieceChain: number[] = []
+    const pieceSize: number[] = []
+    for (let start = 0; start < count; start++) {
+      if (chain[start] === noChain || piece[start] >= 0) continue
+      const id = pieceChain.length
+      const own = chain[start]
+      let top = 0
+      let found = 0
+      stack[top++] = start
+      piece[start] = id
+      while (top > 0) {
+        const at = stack[--top]
+        found++
+        const place = voxelOf(size, at)
+        for (const { axis, step } of steps) {
+          if (!inside(size, place[axis], axis, step)) continue
+          const next = at + step
+          if (chain[next] !== own || piece[next] >= 0) continue
+          piece[next] = id
+          stack[top++] = next
+        }
+      }
+      pieceChain.push(own)
+      pieceSize.push(found)
+    }
+    const largest = new Int32Array(chainCount).fill(-1)
+    for (let id = 0; id < pieceChain.length; id++) {
+      const best = largest[pieceChain[id]]
+      if (best < 0 || pieceSize[id] > pieceSize[best]) largest[pieceChain[id]] = id
+    }
+    const isLargest = (id: number) => largest[pieceChain[id]] === id
+    // The faces each cut-off piece shares with each chain's largest piece
+    const faces = new Map<number, number[]>()
+    for (let n = 0; n < count; n++) {
+      if (piece[n] < 0 || isLargest(piece[n])) continue
+      const place = voxelOf(size, n)
+      for (const { axis, step } of steps) {
+        if (!inside(size, place[axis], axis, step)) continue
+        const next = piece[n + step]
+        if (next < 0 || !isLargest(next) || pieceChain[next] === chain[n]) continue
+        let shared = faces.get(piece[n])
+        if (!shared) faces.set(piece[n], (shared = new Array<number>(chainCount).fill(0)))
+        shared[pieceChain[next]]++
+      }
+    }
+    // The chain each joins, the most shared and the lower on a tie
+    const joins = new Map<number, number>()
+    for (const [id, shared] of faces) {
+      let best = 0
+      for (let c = 1; c < chainCount; c++) if (shared[c] > shared[best]) best = c
+      joins.set(id, best)
+    }
+    if (joins.size === 0) break
+    for (let n = 0; n < count; n++) {
+      const to = piece[n] >= 0 ? joins.get(piece[n]) : undefined
+      if (to === undefined) continue
+      chain[n] = to
+      moved++
+    }
+  }
+  return moved
 }
 
 // Whether a voxel of one chain of a pair faces the pair's other chain across a wall
@@ -202,7 +331,7 @@ export const gapMm = 20
 
 // Each chain's wall layer: its voxels within gapMm of another chain's flesh, where the two aren't of one flesh, which
 // face that chain across a wall or a narrow gap. One chain's distances to the rest are held at a time
-function wallLayers(volume: Volume, chains: Chains, chainCount: number): Uint8Array {
+function wallLayers(volume: Volume, chains: Chains): Uint8Array {
   const { size, spacing } = volume
   const layer = new Uint8Array(chains.chain.length)
   for (let c = 0; c < chainCount; c++) {
@@ -230,8 +359,7 @@ function wallLayers(volume: Volume, chains: Chains, chainCount: number): Uint8Ar
 export function wallField(volume: Volume, chains: Chains, places: PlaceGrid, own: Uint8Array, reach = wallReachMm): WallField {
   const { size, spacing, origin } = volume
   const count = own.length
-  const chainCount = 5
-  const layers = wallLayers(volume, chains, chainCount)
+  const layers = wallLayers(volume, chains)
   // Each place's distance to each chain's wall layer, kept only within reach, one chain at a time
   const distances = Array.from({ length: chainCount }, () => new Float32Array(count).fill(Infinity))
   const [px, py, pz] = places.size
