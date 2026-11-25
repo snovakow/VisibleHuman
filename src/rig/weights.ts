@@ -13,11 +13,25 @@ import { jointNames } from './rig.ts'
 // stand for the bone where the CT doesn't reach it, as at the outer edge of the male's arms. Pure, so the rig script
 // and the tests run it
 
-// How far through the body a joint's bone draws flesh, in millimetres: further than any flesh lies from its bone
-export const reachMm = 120
+// How far through the body a joint's bone draws flesh, in millimetres: far enough that a cell finds the two bones
+// nearest it wherever it lies. At 120 the male's inner thigh by the groin, further than that from his thigh's bone
+// through the flesh, followed the hips alone in places and the thigh alone in the cells beside them, which tore the
+// skin there apart as the thigh rose; at 200 the knee up's longest edge at the groin fell from 162 mm to 68, and at
+// 400 sitting's from 197 mm to 92
+export const reachMm = 400
 // How sharply a cell's share falls with its distance to a bone: as the inverse of the distance to this power, so that
 // flesh well nearer one bone than the other all but follows the one, while flesh about midway is shared evenly
 export const sharpness = 4
+// The same about the shoulders, for a cell one of whose two joints is a clavicle's or an upper arm's: gentler, so that a
+// raised arm draws the flesh at the back and the front of the shoulder after it over a wider band, rather than tearing
+// it where the shares change. Measured on the male with the reach above, from arms out, the T-pose and arms forward,
+// the longest edge at the back of a shoulder fell from 94, 102 and 108 mm to 82, 87 and 100, and the triangles there
+// stretched past twice their size from 935, 1,098 and 1,566 to 656, 833 and 812. Everywhere at once it cost the hips
+// as much: a knee up's longest edge rose from 73 mm to 119
+export const shoulderSharpness = 2
+const shoulderJoints: ReadonlySet<number> = new Set(
+  (['leftShoulder', 'rightShoulder', 'leftArm', 'rightArm'] as const).map((name) => jointNames.indexOf(name)),
+)
 // How near a segment a cell lies to stand for its joint's bone, as a share of the grid's spacing
 const segmentShare = 0.6
 // How far into the air the cells beside the body take its nearest cell's values, in cells, so that a read just
@@ -142,8 +156,9 @@ export function skinWeights(
       weight[n] = 255
       continue
     }
-    const a = firstDistance[n] ** sharpness
-    const b = secondDistance[n] ** sharpness
+    const power = shoulderJoints.has(firstJoint[n]) || shoulderJoints.has(secondJoint[n]) ? shoulderSharpness : sharpness
+    const a = firstDistance[n] ** power
+    const b = secondDistance[n] ** power
     // The nearer joint's share, which at a bone's own cell, at no distance, is the whole
     const share = a + b === 0 ? 1 : b / (a + b)
     jointA[n] = firstJoint[n]
