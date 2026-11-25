@@ -14,6 +14,11 @@ import type { Posed } from '../../posed.ts'
 
 // How far apart a wall's two sides must be, in millimetres, before its faces show
 const wallOpen = 0.5
+// How near a fragment's wall flag, blended from its triangle's corners, must come to 1 before it counts as a wall's
+// face: only where every corner lies on the wall. A triangle that joins the skin to a wall's face, with corners on
+// both, is skin wherever it's drawn; hidden from its middle on, as a flag of a half took it, it left a slit along
+// every wall where it meets the skin, open to the air behind (498 such pixels at rest from the front, 39 without)
+const wholeWall = 0.999
 
 // Where a mesh's point lies in the scan, and the way its surface faces there: its own attributes, before the skinning
 // moves them, since the meshes are made in the scene's frame at rest
@@ -60,7 +65,7 @@ function skinnedBy(skin: SkinMatrices, indices: string, shares: string): Node<'v
 // Whether a fragment of a mesh with walls is drawn: everywhere but a wall's face its pose hasn't parted
 export function wallShown(skin: SkinMatrices): Node<'bool'> {
   const gap = varying(length(skinnedBy(skin, 'skinIndex', 'skinWeight').sub(skinnedBy(skin, 'otherIndex', 'otherWeight'))), 'vWallGap')
-  return attribute('wall', 'float').lessThan(0.5).or(gap.greaterThan(float(wallOpen)))
+  return attribute('wall', 'float').lessThan(float(wholeWall)).or(gap.greaterThan(float(wallOpen)))
 }
 
 // Sets a geometry's skinning attributes from the worker's arrays: four joints and shares a vertex, and, for a mesh

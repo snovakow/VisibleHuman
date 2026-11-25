@@ -77,6 +77,16 @@ export function meshRigged(input: RiggedInput): RiggedMesh {
   const zEdges = new Int32Array(nxy)
   const made = new Map<number, number>()
   const isPlainFor = (n: number, side: number) => other[n] === noChain && (side === plain || field[n] < iso || chain[n] === side)
+  // Whether a voxel has air beside it. A wall's vertex beside the air is the skin's, not the wall's: there each side's
+  // crossing of the wall is pulled toward its own flesh by the coverage, so the two sides' wall faces open into a thin
+  // wedge where the wall meets the skin, which would show the air behind it if its faces were hidden as a wall's are
+  const besideAir = (n: number, x: number, y: number, z: number) =>
+    (x > 0 && field[n - 1] < iso) ||
+    (x < nx - 1 && field[n + 1] < iso) ||
+    (y > 0 && field[n - nx] < iso) ||
+    (y < ny - 1 && field[n + nx] < iso) ||
+    (z > 0 && field[n - nxy] < iso) ||
+    (z < nz - 1 && field[n + nxy] < iso)
   const gradient = [0, 0, 0]
   const point = [0, 0, 0]
   const normal = [0, 0, 0]
@@ -130,9 +140,11 @@ export function meshRigged(input: RiggedInput): RiggedMesh {
       walls = grown(walls)
     }
     sides[vertex] = owner
-    // On a wall where what lies beyond is body, cut off by the side's field rather than the coverage
+    // On a wall where what lies beyond is body, cut off by the side's field rather than the coverage, away from the air
     const outside = fa >= 0 ? b : a
-    walls[vertex] = field[outside] >= iso ? 1 : 0
+    const ahead = (step: 0 | 1 | 2) => (axis === step ? 1 : 0)
+    const nearAir = besideAir(a, x, y, z) || besideAir(b, x + ahead(0), y + ahead(1), z + ahead(2))
+    walls[vertex] = field[outside] >= iso && !nearAir ? 1 : 0
     return vertex
   }
   const vertexOn = (cache: Int32Array, x: number, y: number, z: number, axis: 0 | 1 | 2, side: number): number => {
@@ -174,9 +186,18 @@ export function meshRigged(input: RiggedInput): RiggedMesh {
         corners[5] = base + 1 + nxy
         corners[6] = base + 1 + nx + nxy
         corners[7] = base + nx + nxy
-        // A cube with no corner that records a wall is meshed once, plain; one with, once for each chain about it
+        // A cube whose body is all one chain's, with no corner that records a wall, is meshed once, plain; any other,
+        // once for each chain about it. So a plain cube never meets a cube meshed for each chain across a face that holds
+        // two chains' flesh, where their meshes would part: as where a wall ends in the joined flesh about a shoulder
         let walled = false
-        for (let corner = 0; corner < 8 && !walled; corner++) walled = other[corners[corner]] !== noChain
+        let bodyChain = noChain
+        for (let corner = 0; corner < 8 && !walled; corner++) {
+          const n = corners[corner]
+          walled = other[n] !== noChain
+          if (walled || field[n] < iso) continue
+          if (bodyChain === noChain) bodyChain = chain[n]
+          else walled = chain[n] !== bodyChain
+        }
         let meshed = plainSides
         if (walled) {
           sidesHere.clear()

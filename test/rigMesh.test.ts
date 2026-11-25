@@ -92,3 +92,32 @@ void test('a wall across the box parts it into two closed surfaces that meet on 
   }
   assert.ok(onWall[0] > 0 && onWall[1] > 0)
 })
+
+void test('where a wall ends in flesh the two chains share, each side and the whole skin stay closed', () => {
+  const field = box()
+  // Chain 0 up to i = 9, chain 1 from 10, walled apart only up to k = 4: above it the two are one flesh, as a limb and
+  // the trunk are about a shoulder, and record no wall
+  const chain = new Uint8Array(count)
+  const other = new Uint8Array(count).fill(noChain)
+  const wall = new Uint8Array(count).fill(wallMiddle)
+  for (let k = 0; k < size[2]; k++) {
+    for (let j = 0; j < size[1]; j++) {
+      for (let i = 0; i < size[0]; i++) {
+        const n = at(i, j, k)
+        chain[n] = i <= 9 ? 0 : 1
+        const distance = (9.5 - i) * spacing[0]
+        if (k > 4 || Math.abs(distance) > 12) continue
+        other[n] = i <= 9 ? 1 : 0
+        wall[n] = Math.max(0, Math.min(255, Math.round(wallMiddle + wallSlope * distance)))
+      }
+    }
+  }
+  const mesh = meshRigged({ field, size, spacing, origin, isolevel: 128, axes: plain, chain, other, wall })
+  const sideOf = (t: number) => mesh.sides[mesh.indices[t * 3]]
+  for (const side of [0, 1]) {
+    for (const [edge, used] of edgeUses(mesh.indices, (t) => sideOf(t) === side)) {
+      assert.equal(used, 2, `side ${side}'s edge ${edge} is used ${used} times`)
+    }
+  }
+  for (const [edge, used] of edgeUses(mesh.indices, () => true)) assert.equal(used % 2, 0, `the edge ${edge} is open`)
+})
