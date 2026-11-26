@@ -15,7 +15,7 @@ import {
 } from './options.ts'
 import { presetOptions, presets, type Preset } from './presets.ts'
 import { isStyle, styles } from './render/styles/styles.ts'
-import { levelKey, noMotion, scanMotion, styleMoves, useStore, type Status } from './store.ts'
+import { levelKey, motionMoves, noMotion, scanMotion, styleMoves, useStore, type Status } from './store.ts'
 import { levelOf } from './volume/levels.ts'
 
 const statusText: Record<Status, string> = { loading: 'Loading…', ready: 'Ready', failed: '' }
@@ -28,6 +28,12 @@ const loadingOption = { 'Loading…': '' }
 
 // Wide enough for the longest label inside a folder beside the scrollbar a panel taller than the window shows
 const panelTheme = { sizes: { rootWidth: '340px' } }
+
+// A layer's control by the motion it mixes in, unique among the panel's keys, and its path in the panel
+const layerKey = (id: string) => `layer:${id}`
+const layerPath = (id: string) => `Motion.Layers.${layerKey(id)}`
+// The fastest a clip plays, as a multiple of how it was written
+const fastest = 2
 
 // The full path in the panel of an option's control, its folder and its key, which a render test reads it by, as it
 // reads nothing from a bare key inside a folder
@@ -167,6 +173,11 @@ export function Panel({ renderer }: { renderer: string }) {
   const motion = useStore((s) => s.motion)
   const showJoints = useStore((s) => s.showJoints)
   const motions = useStore((s) => s.motions)
+  const playing = useStore((s) => s.playing)
+  const speed = useStore((s) => s.speed)
+  const layers = useStore((s) => s.layers)
+  // Whether what the body is drawn in changes over time, which Play, Speed and Step act on alone
+  const moves = useStore(motionMoves)
   // A body with limbs has a rig, and can move; the head can't
   const rigged = body?.rig !== undefined
   // The splats shown, while the splats are the style drawn: the shown Detail's level is always built
@@ -207,12 +218,40 @@ export function Panel({ renderer }: { renderer: string }) {
     () => ({ none: noMotion, 'as scanned': scanMotion, ...Object.fromEntries((motions ?? []).map((each) => [each.label, each.id])) }),
     [motions],
   )
+  // The motions the library offers as layers, once its index is in
+  const layerEntries = useMemo(() => (motions ?? []).filter((each) => each.layer), [motions])
   useEffect(() => {
     useStore.getState().loadMotions()
   }, [])
 
   const [, set] = useControls(() => {
     const { load, setOptions, options } = useStore.getState()
+    // Whether a motion is drawn, which the motion's controls act on: the body has limbs, the style moves them and a
+    // motion is picked; and whether, besides, what it's drawn in changes over time
+    const posing = (get: (path: string) => unknown) => rigged && styleMoves(get(stylePath)) && get('Motion.motion') !== noMotion
+    const moving = (get: (path: string) => unknown) => posing(get) && moves
+    // A slider for each layer the library offers, its weight as the store has it. Each is shown by its own rule, and
+    // the folder with them: leva keeps a folder's settings from the first time it meets it, so a rule of the folder's
+    // own would go on reading what the panel held then
+    const layerControls = (): FolderSchema =>
+      Object.fromEntries(
+        layerEntries.map((entry) => [
+          layerKey(entry.id),
+          {
+            label: entry.label,
+            value: useStore.getState().layers[entry.id] ?? 0,
+            min: 0,
+            max: 1,
+            step: 0.05,
+            transient: false,
+            render: (get: (path: string) => unknown) => posing(get),
+            onChange: (picked: unknown, _path: string, context: ChangeContext) => {
+              if (context.initial || !context.fromPanel || typeof picked !== 'number') return
+              useStore.getState().setLayer(entry.id, picked)
+            },
+          },
+        ]),
+      )
 
     // The control of one option, which sets the option as it's picked, shown for the styles its entry names and while
     // the controls its entry depends on allow. Its value is the store's, so that a rebuilt panel keeps what's set. A
@@ -304,8 +343,9 @@ export function Panel({ renderer }: { renderer: string }) {
           },
         },
       }),
-      // The motion the body is drawn in, while it has limbs to move and the style draws them moving, and whether its
-      // joints are drawn over it
+      // The motion the body is drawn in, while it has limbs to move and the style draws them moving; for a motion that
+      // changes over time, whether it plays and how fast, or, held, a step a frame on; whether its joints are drawn
+      // over it; and the layers mixed over it, each by a weight
       Motion: folder({
         motion: {
           label: 'Motion',
@@ -318,16 +358,44 @@ export function Panel({ renderer }: { renderer: string }) {
             useStore.getState().setMotion(picked)
           },
         },
+        play: {
+          label: 'Play',
+          value: useStore.getState().playing,
+          transient: false,
+          render: (get) => moving(get),
+          onChange: (picked: unknown, _path: string, context: ChangeContext) => {
+            if (context.initial || !context.fromPanel || typeof picked !== 'boolean') return
+            useStore.getState().setPlaying(picked)
+          },
+        },
+        speed: {
+          label: 'Speed',
+          value: useStore.getState().speed,
+          min: 0,
+          max: fastest,
+          step: 0.05,
+          transient: false,
+          render: (get) => moving(get) && get('Motion.play') === true,
+          onChange: (picked: unknown, _path: string, context: ChangeContext) => {
+            if (context.initial || !context.fromPanel || typeof picked !== 'number') return
+            useStore.getState().setSpeed(picked)
+          },
+        },
+        step: {
+          ...buttonRow([{ label: 'Step', onClick: () => useStore.getState().step() }]),
+          render: (get) => moving(get) && get('Motion.play') === false,
+        },
         joints: {
           label: 'Joints',
           value: useStore.getState().showJoints,
           transient: false,
-          render: (get) => rigged && styleMoves(get(stylePath)) && get('Motion.motion') !== noMotion,
+          render: (get) => posing(get),
           onChange: (picked: unknown, _path: string, context: ChangeContext) => {
             if (context.initial || !context.fromPanel || typeof picked !== 'boolean') return
             useStore.getState().setShowJoints(picked)
           },
         },
+        Layers: folder(layerControls()),
       }),
       Body: folder({
         body: {
@@ -376,7 +444,7 @@ export function Panel({ renderer }: { renderer: string }) {
         status: { label: 'Status', value: '', editable: false },
       }),
     }
-  }, [bodyOptions, levelOptions, detailOptions, motionOptions, rigged, capabilities])
+  }, [bodyOptions, levelOptions, detailOptions, motionOptions, layerEntries, rigged, moves, capabilities])
 
   // The store's choices go back to the controls, after leva has taken each rebuilt list, since a rebuilt control keeps
   // the value it held: a load picks its body, its level and its Detail, a level found not built goes back to the
@@ -411,10 +479,15 @@ export function Panel({ renderer }: { renderer: string }) {
   useEffect(() => {
     set({ sway: swaying })
   }, [set, swaying])
-  // The motion as the store has it, after leva has taken each rebuilt list
+  // The motion as the store has it, after leva has taken each rebuilt list: a motion the library turned out not to
+  // have goes back to none
   useEffect(() => {
-    set({ motion, joints: showJoints })
-  }, [set, motion, showJoints])
+    set({ motion, joints: showJoints, play: playing, speed })
+  }, [set, motion, showJoints, playing, speed])
+  // The layers' weights, set by their paths, as set knows by name only the controls the panel names
+  useEffect(() => {
+    if (layerEntries.length > 0) levaStore.set(Object.fromEntries(layerEntries.map((entry) => [layerPath(entry.id), layers[entry.id] ?? 0])), false)
+  }, [layerEntries, layers])
   useEffect(() => {
     set({
       renderer: renderer || 'Starting…',

@@ -7,8 +7,8 @@ import type { Volume } from './volume/format.ts'
 import { levelOf, stageBody, type Bounds, type Detail, type DetailEntry, type Levels, type StagedBody } from './volume/levels.ts'
 import type { SurfaceKind } from './surface/surfaceWorker.ts'
 import { isAbort, loadBodies, loadVolume, NotBuiltError } from './volume/loadVolume.ts'
-import type { AnglePose } from './motion/angles.ts'
-import { loadLibrary, loadPose, type MotionEntry } from './motion/library.ts'
+import type { MotionFile } from './motion/clip.ts'
+import { loadLibrary, loadMotionFile, type MotionEntry } from './motion/library.ts'
 import { skinningBuild, type PosedLevel, type SkinningBuild } from './rig/cellSkinning.ts'
 import { loadRig } from './rig/loadRig.ts'
 import { bindSkeleton, type Placement } from './rig/pose.ts'
@@ -69,13 +69,28 @@ interface State {
   swaying: boolean
   setSwaying: (swaying: boolean) => void
   // The motion the body is drawn in: none, as the body has always been drawn, the pose it was scanned in, or one of the
-  // library's, by its id. A body with limbs loads its rig the first time it's asked to move, and the library its pose;
-  // until both are in, the body is drawn as before. A preset leaves it as it is
+  // library's, by its id, a pose or a clip over time. A body with limbs loads its rig the first time it's asked to
+  // move in a style that moves it, and the library the motion's file; until both are in, the body is drawn as before.
+  // A preset leaves it, and all that follows, as it is
   motion: string
   setMotion: (motion: string) => void
-  // The library's motions, once its index has loaded, and the pose of the motion picked, once its file has
+  // The library's motions, once its index has loaded, and the files of those picked or layered so far, by id, each
+  // read once for the page
   motions: readonly MotionEntry[] | null
-  motionPose: AnglePose | null
+  motionFiles: Readonly<Record<string, MotionFile>>
+  // How fast a clip over time plays, 1 as it was written, and whether it plays or holds where it is
+  speed: number
+  setSpeed: (speed: number) => void
+  playing: boolean
+  setPlaying: (playing: boolean) => void
+  // How many single steps of a held clip have been asked for since the page opened, each moving it a frame on
+  steps: number
+  step: () => void
+  // The weight of each layer of the library's mixed over the motion, by its id, as a turn from the neutral pose added
+  // over whatever the motion holds; a layer at 0, or never set, changes nothing. Its file loads once its weight is
+  // first raised
+  layers: Readonly<Record<string, number>>
+  setLayer: (id: string, weight: number) => void
   // The rig of the body shown, once it's loaded, for a body that has one
   rig: RigFile | null
   // The splat levels of the volume shown built again for the body posed, each block a cell for each chain it holds,
@@ -95,6 +110,17 @@ export const scanMotion = 'scan'
 // The styles that draw a body posed, more as each learns to; the others draw it as it was scanned, whatever the motion
 const movingStyles: readonly Style[] = ['surface', 'splats']
 export const styleMoves = (style: unknown): boolean => movingStyles.some((each) => each === style)
+
+// Whether what the body is drawn in changes over time, so that playing it, its speed and a step change what's drawn:
+// a clip over time as the motion, or as a layer with a weight. A pose, as scanned among them, holds still
+export function motionMoves({ motion, motionFiles, layers }: Pick<State, 'motion' | 'motionFiles' | 'layers'>): boolean {
+  const overTime = (id: string) => {
+    const file = motionFiles[id]
+    return file !== undefined && file.kind !== 'pose'
+  }
+  if (motion === noMotion) return false
+  return overTime(motion) || Object.entries(layers).some(([id, weight]) => weight > 0 && overTime(id))
+}
 
 const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error))
 
@@ -279,41 +305,74 @@ function buildPosed(set: StoreApi<State>['setState'], get: StoreApi<State>['getS
   setTimeout(slice, 0)
 }
 
-// The library's index, fetched once for the page, and a load of a rig or a pose in progress, which the next one aborts
+// The library's index, fetched once for the page, and a load of a rig or a motion's file in progress, which the next
+// one aborts
 let libraryFetch: Promise<readonly MotionEntry[]> | null = null
 let motionLoad: AbortController | null = null
+// Each motion's file, fetched once for the page whatever asks for it, so that a load taking over from another, as the
+// body's arrival takes over from a ?motion= read before it, waits on the same request. A failed fetch is tried again
+const fileFetches = new Map<string, Promise<MotionFile>>()
+function fetchMotionFile(entry: MotionEntry): Promise<MotionFile> {
+  let fetching = fileFetches.get(entry.id)
+  if (!fetching) {
+    fetching = loadMotionFile(entry)
+    fileFetches.set(entry.id, fetching)
+    fetching.catch(() => fileFetches.delete(entry.id))
+  }
+  return fetching
+}
 
-// Brings in what the motion picked needs: the body's rig, if it has one and it isn't in, and the library's pose, for a
-// motion of the library's. A newer pick, or another body, takes over, and an older load's results are dropped
+// Brings in what the motion picked needs, once it's picked in a style that moves the body: the body's rig, if it has
+// one and it isn't in, and, for a motion of the library's, its file. A newer pick, or another body, takes over, and an
+// older load's results are dropped. A motion the library hasn't got, as a mistyped ?motion= names, is taken for none
 async function loadMotion(set: StoreApi<State>['setState'], get: StoreApi<State>['getState']) {
   motionLoad?.abort()
   const controller = new AbortController()
   motionLoad = controller
-  const { motion, body, bodies, rig } = get()
+  const { motion, body, bodies, rig, options, motionFiles } = get()
   const entry = bodies?.find((candidate) => candidate.id === body)
   const isCurrent = () => motionLoad === controller && get().motion === motion && get().body === body
   try {
-    if (motion === noMotion) return
+    if (motion === noMotion || !styleMoves(options.style)) return
     if (entry?.rig && !rig) {
       const loaded = await loadRig(entry.rig, controller.signal)
       if (!isCurrent()) return
       set({ rig: loaded })
       buildPosed(set, get)
     }
-    if (motion === scanMotion) return
+    if (motion === scanMotion || motionFiles[motion]) return
     const motions = await (libraryFetch ??= loadLibrary())
     if (motionLoad !== controller) return
     set({ motions })
     const picked = motions.find((candidate) => candidate.id === motion)
-    if (!picked) throw new Error(`The motion library has no ${motion}`)
-    const pose = await loadPose(picked, controller.signal)
+    if (!picked) {
+      console.warn(`VisibleHuman: the motion library has no ${motion}, so the body is drawn as it always has been`)
+      if (isCurrent()) set({ motion: noMotion })
+      return
+    }
+    const file = await fetchMotionFile(picked)
     if (!isCurrent()) return
-    set({ motionPose: pose })
+    set({ motionFiles: { ...get().motionFiles, [motion]: file } })
   } catch (error) {
     if (isAbort(error)) return
     console.warn(`VisibleHuman: ${messageOf(error)}`)
   } finally {
     if (motionLoad === controller) motionLoad = null
+  }
+}
+
+// Brings in a layer's file. It's the same file whatever asked for it, so one that arrives late is kept all the same
+async function loadLayer(id: string, set: StoreApi<State>['setState'], get: StoreApi<State>['getState']) {
+  if (get().motionFiles[id]) return
+  try {
+    const motions = await (libraryFetch ??= loadLibrary())
+    set({ motions })
+    const entry = motions.find((candidate) => candidate.id === id)
+    if (!entry) throw new Error(`The motion library has no layer ${id}`)
+    const file = await fetchMotionFile(entry)
+    if (!get().motionFiles[id]) set({ motionFiles: { ...get().motionFiles, [id]: file } })
+  } catch (error) {
+    console.warn(`VisibleHuman: ${messageOf(error)}`)
   }
 }
 
@@ -356,12 +415,18 @@ export const useStore = create<State>()((set, get, api) => ({
         buildRest(set, get)
       }
     } else if (detail !== undefined && waiting !== null) set({ waiting: null })
+    const styleBefore = get().options.style
     set((state) => {
       const picked = { ...state.picked, ...taken }
       if (shallow(picked, state.picked)) return state
       const options = drawableOptions(picked, state.capabilities)
       return { picked, options: shallow(options, state.options) ? state.options : options }
     })
+    // A motion picked, or opened on, in a style that doesn't move the body is brought in once one that does is shown
+    const { options, motion, rig, motionFiles } = get()
+    if (options.style !== styleBefore && styleMoves(options.style) && motion !== noMotion && (!rig || (motion !== scanMotion && !motionFiles[motion]))) {
+      void loadMotion(set, get)
+    }
     buildPosed(set, get)
   },
   capabilities: { weighted: true, oit: true, mri: false },
@@ -388,7 +453,19 @@ export const useStore = create<State>()((set, get, api) => ({
   setSwaying: (swaying) => set((state) => (state.swaying === swaying ? state : { swaying })),
   motion: noMotion,
   motions: null,
-  motionPose: null,
+  motionFiles: {},
+  speed: 1,
+  setSpeed: (speed) => set((state) => (state.speed === speed ? state : { speed })),
+  playing: true,
+  setPlaying: (playing) => set((state) => (state.playing === playing ? state : { playing })),
+  steps: 0,
+  step: () => set((state) => ({ steps: state.steps + 1 })),
+  layers: {},
+  setLayer: (id, weight) => {
+    if ((get().layers[id] ?? 0) === weight) return
+    set((state) => ({ layers: { ...state.layers, [id]: weight } }))
+    if (weight > 0) void loadLayer(id, set, get)
+  },
   rig: null,
   posedLevels: null,
   showJoints: false,
@@ -405,7 +482,7 @@ export const useStore = create<State>()((set, get, api) => ({
   },
   setMotion: (motion) => {
     if (get().motion === motion) return
-    set({ motion, motionPose: null })
+    set({ motion })
     if (motion === noMotion) return
     buildPosed(set, get)
     void loadMotion(set, get)

@@ -1,8 +1,9 @@
-import { readAnglePose, type AnglePose } from './angles.ts'
+import { readMotionFile, type MotionFile } from './clip.ts'
 
 // The motion library, public/motion/: an index of every pose and motion the page offers, each in a file of its own, so
 // that one is added by writing its file and its line in the index. A pose is written by hand as each joint's turn from
-// the neutral pose (angles.ts), the same for every body
+// the neutral pose (angles.ts), the same for every body, and a clip as such poses keyed in time (clip.ts). An entry
+// may say more than the page reads, which it passes over
 
 export interface MotionEntry {
   // Unique in the library
@@ -11,6 +12,8 @@ export interface MotionEntry {
   label: string
   // Relative to the page
   file: string
+  // Whether the panel offers it as a layer to mix over the motion, by a weight of its own
+  layer: boolean
 }
 
 const indexUrl = 'motion/index.json'
@@ -28,7 +31,7 @@ export function readLibrary(json: unknown): MotionEntry[] {
   const entries = json.motions.map((value: unknown, n): MotionEntry => {
     const where = `Motion ${n + 1}`
     if (!isRecord(value)) throw new Error(`${where} isn't an object`)
-    return { id: text(value, 'id', where), label: text(value, 'label', where), file: text(value, 'file', where) }
+    return { id: text(value, 'id', where), label: text(value, 'label', where), file: text(value, 'file', where), layer: value.layer === true }
   })
   if (new Set(entries.map((entry) => entry.id)).size !== entries.length) throw new Error('The motion library names a motion twice')
   return entries
@@ -44,6 +47,6 @@ export async function loadLibrary(signal?: AbortSignal): Promise<MotionEntry[]> 
   return readLibrary(await fetchJson(indexUrl, signal))
 }
 
-export async function loadPose(entry: MotionEntry, signal?: AbortSignal): Promise<AnglePose> {
-  return readAnglePose(await fetchJson(entry.file, signal), `The motion ${entry.id}`)
+export async function loadMotionFile(entry: MotionEntry, signal?: AbortSignal): Promise<MotionFile> {
+  return readMotionFile(await fetchJson(entry.file, signal), `The motion ${entry.id}`)
 }

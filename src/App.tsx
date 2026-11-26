@@ -31,6 +31,12 @@ const framedFrom = preset?.view ?? frontView
 const lessMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
 useStore.getState().setSwaying(preset !== null && !lessMotion)
 
+// ?motion=<id> opens on that motion, of the library's or `scan` for the pose the body was scanned in, playing, for a
+// body with limbs in a style that moves them; in a style that doesn't, it's held until one that does is shown. A
+// motion the library hasn't got is taken for none. Like ?preset=, it isn't written back as the motion changes
+const requestedMotion = search.get('motion')
+if (requestedMotion) useStore.getState().setMotion(requestedMotion)
+
 // ?body=<id> opens on that body, and a body chosen in the panel is written there, so a reload or a shared link opens
 // on the body shown. A page opened without it isn't given one until another body is chosen
 const requestedBody = search.get('body')
