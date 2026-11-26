@@ -115,6 +115,11 @@ void test("the library's index lists a file of its own kind for each motion, and
     sitting: 'pose',
     breathing: 'keyed',
     walk: 'keyed',
+    'ual-idle': 'baked',
+    'ual-walk': 'baked',
+    'ual-jog': 'baked',
+    'ual-jump': 'baked',
+    'ual-reach': 'baked',
   })
   assert.deepEqual(
     entries.filter((entry) => entry.layer).map((entry) => entry.id),

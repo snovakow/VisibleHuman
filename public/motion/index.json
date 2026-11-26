@@ -8,6 +8,11 @@
     { "id": "knee-up", "label": "knee up", "file": "motion/knee-up.json", "kind": "pose", "layer": true },
     { "id": "sitting", "label": "sitting", "file": "motion/sitting.json", "kind": "pose", "layer": true },
     { "id": "breathing", "label": "breathing", "file": "motion/breathing.json", "kind": "keyed", "duration": 4, "layer": true },
-    { "id": "walk", "label": "walk in place", "file": "motion/walk.json", "kind": "keyed", "duration": 1.2 }
+    { "id": "walk", "label": "walk in place", "file": "motion/walk.json", "kind": "keyed", "duration": 1.2 },
+    { "id": "ual-idle", "label": "idle (Quaternius)", "file": "motion/ual-idle.json", "kind": "baked", "duration": 2.5 },
+    { "id": "ual-walk", "label": "walk (Quaternius)", "file": "motion/ual-walk.json", "kind": "baked", "duration": 1.333333 },
+    { "id": "ual-jog", "label": "jog (Quaternius)", "file": "motion/ual-jog.json", "kind": "baked", "duration": 0.933333 },
+    { "id": "ual-jump", "label": "jump (Quaternius)", "file": "motion/ual-jump.json", "kind": "baked", "duration": 1.333333 },
+    { "id": "ual-reach", "label": "reach out (Quaternius)", "file": "motion/ual-reach.json", "kind": "baked", "duration": 2 }
   ]
 }
