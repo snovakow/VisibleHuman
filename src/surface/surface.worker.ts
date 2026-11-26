@@ -3,8 +3,9 @@ import { distanceField, skinDistance } from './distanceField.ts'
 import { meshIsosurface, type IsosurfaceMesh } from './marchingCubes.ts'
 import { meshRigged, type RiggedMesh } from './rigMesh.ts'
 import { chainNames, jointNames, skeletonShape } from '../rig/rig.ts'
+import { capMesh } from './capGrid.ts'
 import { partedTriangles, skinMesh, type MeshSkinning } from './rigSkin.ts'
-import type { DistanceTiming, SurfaceMessage, SurfaceReply } from './surfaceWorker.ts'
+import { isCapRequest, type CapRequest, type DistanceTiming, type SurfaceMessage, type SurfaceReply } from './surfaceWorker.ts'
 
 // Answers one request per message, meshing the surface asked for, and sends the mesh back with its arrays
 // transferred rather than copied. A shell is meshed from the distance under the skin, which is computed from its grid's
@@ -22,6 +23,10 @@ self.onmessage = (event: MessageEvent<SurfaceMessage>) => {
   }
   try {
     const request = event.data
+    if (isCapRequest(request)) {
+      answerCap(request)
+      return
+    }
     const { kind, size, spacing, origin, axes, colors } = request
     let field: Uint8Array | Float32Array
     let isolevel: number
@@ -68,4 +73,18 @@ self.onmessage = (event: MessageEvent<SurfaceMessage>) => {
     const reply: SurfaceReply = { error: error instanceof Error ? error.message : String(error) }
     self.postMessage(reply)
   }
+}
+
+// A cap's sections, skinned, sent back with their arrays transferred
+function answerCap(request: CapRequest) {
+  if (rig?.key !== request.rig.key) throw new Error(`The worker holds no rig ${request.rig.key}`)
+  const start = performance.now()
+  const { placement } = request.rig
+  const built = capMesh({ file: rig.file, placement, axis: request.axis, level: request.level })
+  const skinning = skinMesh(built, rig.file, placement, 'blended')
+  const mesh = { positions: built.positions, normals: built.normals, indices: built.indices }
+  const cap = { measures: built.measures, chains: built.chains }
+  const reply: SurfaceReply = { kind: request.kind, mesh, milliseconds: performance.now() - start, skinning, cap }
+  const transfer = [mesh.positions.buffer, mesh.normals.buffer, mesh.indices.buffer, built.measures.buffer, skinning.joints.buffer, skinning.weights.buffer]
+  self.postMessage(reply, { transfer })
 }

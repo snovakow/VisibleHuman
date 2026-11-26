@@ -25,7 +25,7 @@ The panel at the top right groups its controls in folders, and shows in each onl
 
 ### Motion
 
-- **Motion**, for the male in the surface style, draws him in a pose: *as scanned*, the pose he was frozen in, or one from the page's library, *standing*, *T-pose*, *arms out*, *arms forward*, *knee up* or *sitting*; *none* draws him unposed, as the other styles do. His skin and bone move on the skeleton described under [The rig](#the-rig), the bone rigidly with its own joint and the flesh with the bones about it, and the skin parts where his arms, hands and thighs lay against him in the scan. The cuts move with him, so each stays the same section of his anatomy: a cut that crosses his upper arm where it hung in the scan cuts that arm wherever the pose carries it. With a motion on, the caps and the shell aren't drawn. The folder shows for the male alone, in the surface style alone, since only he has a skeleton and only the surface poses one.
+- **Motion**, for the male in the surface style, draws him in a pose: *as scanned*, the pose he was frozen in, or one from the page's library, *standing*, *T-pose*, *arms out*, *arms forward*, *knee up* or *sitting*; *none* draws him unposed, as the other styles do. His skin and bone move on the skeleton described under [The rig](#the-rig), the bone rigidly with its own joint and the flesh with the bones about it, and the skin parts where his arms, hands and thighs lay against him in the scan. The cuts move with him, so each stays the same section of his anatomy, its cap with it: a cut that crosses his upper arm where it hung in the scan cuts that arm wherever the pose carries it. With a motion on, the shell isn't drawn. The folder shows for the male alone, in the surface style alone, since only he has a skeleton and only the surface poses one.
 - **Joints**, with a motion on, draws the skeleton over the body, each bone a line and each joint a dot.
 
 ### Body
@@ -82,6 +82,8 @@ The MRI's controls and choices are offered only for the head. A body without an 
 
 - **Axial**, **Coronal** and **Sagittal** cut the body open. Axial cuts down from the head, coronal back from the front, and sagittal across from the body's right. At 0 nothing is cut, and at 1 the whole body is cut away. The raytrace draws each cut face as the photographs show it, with the bone's section flush with the tissue's.
 - **Caps**, with the surface and a cut open, shows the section on each cut in the same way: the part of it that belongs to the mesh inside the skin is solid, the bone's or, with Inner on the brain, the brain's, and the rest of the tissue's is at the skin's Opacity.
+
+With a motion on, the surface makes each cut where the body lay in the scan, so the cut and its cap stay the same section of the anatomy as the body moves: a cut through the chest that crosses the arms as they hung leaves the forearms below it, wherever the pose holds them, each with its own section. Each limb's section ends where it parts from the trunk, as its skin does, and the caps are built again in the background as a cut is dragged, the last one shown until the next is ready.
 
 ### Scene
 

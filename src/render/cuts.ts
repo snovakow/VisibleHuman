@@ -70,3 +70,13 @@ export function cutDistances(planes: readonly [CutPlane, CutPlane, CutPlane], po
   const inside = ({ normal, constant }: CutPlane) => normal[0] * point[0] + normal[1] * point[1] + normal[2] * point[2] + constant
   return [inside(planes[0]), inside(planes[1]), inside(planes[2])]
 }
+
+// Which axis of the scene each cut's plane runs across, as it moves from 0 to 1: Axial along y, Coronal along z and
+// Sagittal along x
+export const cutAxes = { axial: 1, coronal: 2, sagittal: 0 } as const satisfies Record<keyof Cuts, 0 | 1 | 2>
+
+// Where along its axis each cut's plane lies, as cutLimits gives it
+export function cutLevels(half: Triple, cuts: Cuts): Record<keyof Cuts, number> {
+  const { top, front, right } = cutLimits(half, cuts)
+  return { axial: top, coronal: front, sagittal: right }
+}

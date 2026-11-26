@@ -44,8 +44,22 @@ interface ShellRequest extends GridRequest {
   depth: number
 }
 
-// What the worker is asked for: a surface of the kind, on the grid given
-export type SurfaceRequest = FieldRequest | ShellRequest
+// The cap on one of a posed body's cuts: its sections in the cut's plane as the scan holds it, one for each chain the
+// plane meets, on the rig's own grid, skinned to the rig the worker holds. Each cut's is a kind of its own, so that a
+// newer one replaces only that cut's still waiting
+export const capKinds = { axial: 'axialCap', coronal: 'coronalCap', sagittal: 'sagittalCap' } as const
+export type CapKind = (typeof capKinds)[keyof typeof capKinds]
+export interface CapRequest {
+  kind: CapKind
+  // The scene's axis the cut's plane runs across, and where along it the plane lies, in millimetres
+  axis: 0 | 1 | 2
+  level: number
+  rig: { key: string; placement: Placement }
+}
+
+// What the worker is asked for: a surface of the kind, on the grid given, or a cap
+export type SurfaceRequest = FieldRequest | ShellRequest | CapRequest
+export const isCapRequest = (request: SurfaceRequest): request is CapRequest => Object.values<string>(capKinds).includes(request.kind)
 
 // The surfaces the worker meshes, each from its own field
 export type SurfaceKind = SurfaceRequest['kind']
@@ -64,6 +78,8 @@ interface SurfaceResult {
   distance?: DistanceTiming
   // Its vertices' skinning, where it was asked for posed
   skinning?: MeshSkinning
+  // For a cap: each vertex's measure on its chain's side, and how many chains' sections it holds
+  cap?: { measures: Float32Array<ArrayBuffer>; chains: number }
 }
 
 // The worker's reply: the mesh, or why it failed
@@ -97,6 +113,7 @@ const waiting = new Map<SurfaceKind, Job>()
 
 // The request with its arrays copied, so that the worker can take the copies' buffers and the caller's stay whole
 function copied(request: SurfaceRequest): SurfaceRequest {
+  if (isCapRequest(request)) return request
   const colors = request.colors ? { colors: request.colors.slice() } : {}
   if (request.kind === 'shell') return { ...request, coverage: request.coverage.slice(), ...colors }
   return { ...request, field: request.field.slice(), ...colors }
@@ -104,6 +121,7 @@ function copied(request: SurfaceRequest): SurfaceRequest {
 
 // The buffers the worker takes with a request
 function transferOf(request: SurfaceRequest) {
+  if (isCapRequest(request)) return []
   const buffers = [request.kind === 'shell' ? request.coverage.buffer : request.field.buffer]
   if (request.colors) buffers.push(request.colors.buffer)
   return buffers

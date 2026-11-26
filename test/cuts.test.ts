@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { cutBox, cutDistances, cutLimits, cutPlanes, isCut, type CutPlane } from '../src/render/cuts.ts'
+import { cutAxes, cutBox, cutDistances, cutLevels, cutLimits, cutPlanes, isCut, type CutPlane } from '../src/render/cuts.ts'
 import { createCellTable, isPainted, paintCellTable } from '../src/render/styles/splats/cellTable.ts'
 import type { Triple } from '../src/volume/format.ts'
 import type { Level } from '../src/volume/levels.ts'
@@ -150,6 +150,17 @@ void test('the distances a posed mesh tests at the rest position keep exactly wh
   close(cutDistances(planes, [0, top - 7, 0])[0], 7)
   close(cutDistances(planes, [0, 0, front - 3])[1], 3)
   close(cutDistances(planes, [right + 5, 0, 0])[2], 5)
+  // Each cut's plane lies across its own axis, at the level the limits give
+  const levels = cutLevels(male, cuts)
+  assert.deepEqual(levels, { axial: top, coronal: front, sagittal: right })
+  for (const name of ['axial', 'coronal', 'sagittal'] as const) {
+    const n = name === 'axial' ? 0 : name === 'coronal' ? 1 : 2
+    const normal = planes[n].normal
+    assert.equal(Math.abs(normal[cutAxes[name]]), 1)
+    const onPlane: [number, number, number] = [0, 0, 0]
+    onPlane[cutAxes[name]] = levels[name]
+    close(cutDistances(planes, onPlane)[n], 0)
+  }
   // With every cut at 0, no point within the body's length of the bounds is cut, however a pose has carried the
   // flesh there, since the test is made where the scan holds it
   const length = 2 * 944

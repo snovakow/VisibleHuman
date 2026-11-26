@@ -11,7 +11,7 @@ import { cutPlanes } from '../../cuts.ts'
 import type { SurfaceLook } from '../../look.ts'
 import { whenFirstDrawn, type StyleContext, type StyleDrawing } from '../style.ts'
 import type { Posed } from '../../posed.ts'
-import { createCaps } from './caps.ts'
+import { createCaps, createPosedCaps } from './caps.ts'
 import { blockGridOf, gridOf } from './grids.ts'
 import { createCutTest, createSkinMatrices, restNormal, restPosition, setSkinning, skinnedMesh, wallShown } from './posed.ts'
 import { isBackShell, isOit } from './rules.ts'
@@ -23,9 +23,9 @@ import { positionInside, rimAt } from './shading.ts'
 // skin's grid. Each is coloured from the body's 3D texture just inside the surface, or by the colour of the cells
 // either side of each vertex, lit by the style's own lights, darkened with depth by the scene's fog, and cut by the
 // three planes through one clipping group, with a cap on each open cut; a posed body is cut where the scan holds each
-// point, so its cuts stay with the anatomy. The skin is see-through below full Opacity by a depth pass ahead of its
-// colour, with its far side under it as a choice, or, with OIT on, by the frame's sum of every layer, which needs no
-// depth pass
+// point, so its cuts stay with the anatomy, and its caps are skinned with it. The skin is see-through below full
+// Opacity by a depth pass ahead of its colour, with its far side under it as a choice, or, with OIT on, by the frame's
+// sum of every layer, which needs no depth pass
 
 // A see-through skin's draws, in the order they go, each ahead of the colour's at three's default of 0: the far
 // side's depth alone, then its colour, then the near side's depth alone, then its colour. All four list with the
@@ -151,13 +151,15 @@ export function createSurface({ events }: StyleContext): StyleDrawing {
   const materialsOf = (posed: Posed | null) => (posed ? posedMaterialsOf() : materials)
 
   // The meshes sit in one clipping group, whose three planes the cuts move in place, so the materials keep their
-  // three planes and never recompile; the caps sit outside it. A posed body's meshes sit in a group of their own
+  // three planes and never recompile; the caps sit outside it. A posed body's meshes sit in a group of their own, and
+  // its caps in theirs
   const planes: [Plane, Plane, Plane] = [new Plane(), new Plane(), new Plane()]
   const group = new ClippingGroup()
   group.clippingPlanes = planes
   const posedGroup = new Group()
   const caps = createCaps(sampler)
-  root.add(group, posedGroup, caps.object)
+  const posedCaps = createPosedCaps(sampler, cutTest)
+  root.add(group, posedGroup, caps.object, posedCaps.object)
 
   const drawn: Record<Drawable, Drawn | null> = { skin: null, bone: null, shell: null }
   const asked: Record<Drawable, Asked | null> = { skin: null, bone: null, shell: null }
@@ -378,13 +380,10 @@ export function createSurface({ events }: StyleContext): StyleDrawing {
       used.back.visible = backShell
       used.backDepth.visible = backShell && !oit
 
-      // A cap's solid part starts at the threshold of the Inner surface
-      // A posed body's caps wait for their own skinning, which follows; until then they aren't drawn posed
-      caps.update(shown?.bounds ?? null, look.cuts, {
-        shown: look.surface.caps && !posed,
-        opacity: look.surface.opacity,
-        solidFrom: (innerIsBrain ? mriThreshold : boneThreshold) / 255,
-      })
+      // A cap's solid part starts at the threshold of the Inner surface. A posed body's caps are its own
+      const capsLook = { opacity: look.surface.opacity, solidFrom: (innerIsBrain ? mriThreshold : boneThreshold) / 255 }
+      caps.update(shown?.bounds ?? null, look.cuts, { shown: look.surface.caps && !posed, ...capsLook })
+      posedCaps.update(posed, shown?.bounds ?? null, look.cuts, { shown: look.surface.caps, ...capsLook })
     },
     beforeFrame(camera) {
       headlight.position.copy(camera.position)
@@ -397,6 +396,7 @@ export function createSurface({ events }: StyleContext): StyleDrawing {
       for (const material of Object.values(materials)) material.dispose()
       if (posedMaterials) for (const material of Object.values(posedMaterials)) material.dispose()
       caps.dispose()
+      posedCaps.dispose()
       sampler.dispose()
     },
   }

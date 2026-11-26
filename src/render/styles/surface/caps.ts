@@ -1,11 +1,15 @@
-import { DoubleSide, Group, Mesh, PlaneGeometry } from 'three'
-import { Discard, float, Fn, If, positionWorld, select, uniform, vec4 } from 'three/tsl'
-import { MeshBasicNodeMaterial } from 'three/webgpu'
+import { BufferAttribute, BufferGeometry, DoubleSide, Group, Mesh, PlaneGeometry, type SkinnedMesh } from 'three'
+import { attribute, Discard, float, Fn, If, positionWorld, select, uniform, vec4 } from 'three/tsl'
+import { MeshBasicNodeMaterial, type Node } from 'three/webgpu'
+import { capMiddle } from '../../../surface/capGrid.ts'
+import { capKinds, requestSurface } from '../../../surface/surfaceWorker.ts'
 import { boneDensity } from '../../../volume/density.ts'
 import { bodyCoverage } from '../../../volume/format.ts'
 import type { Bounds } from '../../../volume/levels.ts'
 import type { BodySampler } from '../../body/sampler.ts'
-import { cutLimits, type Cuts } from '../../cuts.ts'
+import { cutAxes, cutLevels, cutLimits, type Cuts } from '../../cuts.ts'
+import type { Posed } from '../../posed.ts'
+import { restPosition, setSkinning, skinnedMesh, type CutTest } from './posed.ts'
 
 // The caps on the surface's cuts: a quad in each active cut's plane, sized to the box the cuts leave, showing the
 // section through the body in the photographs' colours, read from the 3D texture at each pixel's place. Outside the
@@ -49,19 +53,26 @@ export interface Caps {
   dispose(): void
 }
 
+// A cap's colour: the section's at a point, see-through outside the skin and, where another test is given, outside
+// it too
+function sectionColour(sampler: BodySampler, at: Node<'vec3'>, opacity: Node<'float'>, solidFrom: Node<'float'>, outside?: Node<'bool'>) {
+  return Fn(() => {
+    const beyond = sampler.coverageAt(at).lessThan(skinIso)
+    If(outside ? beyond.or(outside) : beyond, () => {
+      Discard()
+    })
+    const texel = sampler.texelAt(at)
+    const solid = texel.a.greaterThanEqual(solidFrom)
+    return vec4(sampler.colourOf(texel), select(solid, float(1), opacity))
+  })()
+}
+
 // The caps of the body a sampler reads, which must read the coverage too
 export function createCaps(sampler: BodySampler): Caps {
   const opacity = uniform(1)
   const solidFrom = uniform(boneDensity / 255)
   const material = new MeshBasicNodeMaterial({ side: DoubleSide, polygonOffset: true, polygonOffsetFactor, polygonOffsetUnits })
-  material.colorNode = Fn(() => {
-    If(sampler.coverageAt(positionWorld).lessThan(skinIso), () => {
-      Discard()
-    })
-    const texel = sampler.texelAt(positionWorld)
-    const solid = texel.a.greaterThanEqual(solidFrom)
-    return vec4(sampler.colourOf(texel), select(solid, float(1), opacity))
-  })()
+  material.colorNode = sectionColour(sampler, positionWorld, opacity, solidFrom)
 
   // Each is a unit square turned into its cut's plane and scaled to the box's face there. The square faces +z: the
   // Axial cap turns to face +y and the Sagittal to face +x
@@ -108,6 +119,140 @@ export function createCaps(sampler: BodySampler): Caps {
     dispose() {
       geometry.dispose()
       material.dispose()
+    },
+  }
+}
+
+// The caps on a posed body's cuts, which the pose carries with the anatomy: each the section through the body where the
+// scan holds it, a grid in its cut's plane at rest with one part for each chain the plane meets, skinned as each
+// chain's flesh, coloured and ended at the skin as the unposed caps are, at the rest position, and ended where one
+// chain's flesh meets another's across a wall by that chain's side of the walls' measure. A cap is cut by the other
+// two cuts at the rest position, as the posed meshes are, by its material's own test. Each is made again by the mesh
+// worker whenever its cut moves, the last one shown until the next arrives, so that dragging a cut never holds the
+// page up
+export interface PosedCaps {
+  readonly object: Group
+  update(posed: Posed | null, bounds: Bounds | null, cuts: Cuts, look: CapsLook): void
+  dispose(): void
+}
+
+// A posed body's cap on one cut: its material, the group it's drawn in, what was last asked of the worker for it, and
+// what's drawn
+interface PosedCap {
+  name: keyof Cuts
+  material: MeshBasicNodeMaterial
+  holder: Group
+  asked: { posed: Posed; level: number; order: number; cancel: () => void } | null
+  drawn: { posed: Posed; level: number; order: number; mesh: SkinnedMesh } | null
+  // The posed body it's wanted for while shown
+  wanted: Posed | null
+}
+
+// The cuts in the order cutPlanes gives their planes, each with its plane's place among them
+const cutOrder = [
+  ['axial', 0],
+  ['coronal', 1],
+  ['sagittal', 2],
+] as const
+
+export function createPosedCaps(sampler: BodySampler, test: CutTest): PosedCaps {
+  const object = new Group()
+  const opacity = uniform(1)
+  const solidFrom = uniform(boneDensity / 255)
+  // The measure, carried from the grid's vertices as a fraction, ends a chain's section below the middle
+  const ended = attribute('capMeasure', 'float').lessThan(capMiddle / 255)
+  const caps = cutOrder.map(([name, n]) => {
+    const material = new MeshBasicNodeMaterial({ side: DoubleSide, polygonOffset: true, polygonOffsetFactor, polygonOffsetUnits })
+    material.colorNode = sectionColour(sampler, restPosition, opacity, solidFrom, ended)
+    material.maskNode = test.kept(n)
+    const cap: PosedCap = { name, material, holder: object, asked: null, drawn: null, wanted: null }
+    return cap
+  })
+
+  // A cap's mesh taken off and disposed of, which frees the uniforms the renderer keeps for it until then, and its
+  // geometry freed too
+  const forget = (holder: Group, mesh: SkinnedMesh) => {
+    holder.remove(mesh)
+    mesh.dispose()
+    mesh.geometry.dispose()
+  }
+
+  const drop = (cap: PosedCap) => {
+    cap.asked?.cancel()
+    cap.asked = null
+    if (!cap.drawn) return
+    forget(cap.holder, cap.drawn.mesh)
+    cap.drawn = null
+  }
+
+  // Asks the worker for a cap's sections at its cut's level, and shows them when they arrive, in place of the last,
+  // while the cap is still wanted for that posed body. A newer ask replaces one still waiting in the worker's queue, and
+  // leaves one under way to finish and show, rather than cut the worker off, which would cost it the rig it holds; so a
+  // cap dragged without a pause follows it
+  let gone = false
+  let asks = 0
+  const ask = (cap: PosedCap, posed: Posed, level: number) => {
+    const pending = requestSurface({ kind: capKinds[cap.name], axis: cutAxes[cap.name], level, rig: { key: posed.key, placement: posed.placement } })
+    const asked = { posed, level, order: ++asks, cancel: () => pending.cancel() }
+    cap.asked = asked
+    pending.result.then(
+      ({ mesh: built, skinning, cap: sections, milliseconds }) => {
+        if (cap.asked === asked) cap.asked = null
+        if (gone || cap.wanted !== posed || (cap.drawn && cap.drawn.order > asked.order) || !skinning || !sections) return
+        const geometry = new BufferGeometry()
+        geometry.setAttribute('position', new BufferAttribute(built.positions, 3))
+        geometry.setAttribute('normal', new BufferAttribute(built.normals, 3))
+        geometry.setAttribute('capMeasure', new BufferAttribute(sections.measures.map((measure) => measure / 255), 1))
+        geometry.setIndex(new BufferAttribute(built.indices, 1))
+        setSkinning(geometry, skinning)
+        const mesh = skinnedMesh(geometry, cap.material, posed)
+        mesh.renderOrder = capRenderOrder
+        if (cap.drawn) {
+          forget(cap.holder, cap.drawn.mesh)
+        }
+        cap.holder.add(mesh)
+        cap.drawn = { posed, level, order: asked.order, mesh }
+        console.info(
+          `VisibleHuman: the posed ${cap.name} cap, ${(built.positions.length / 3).toLocaleString('en')} vertices in ${sections.chains} ` +
+            `chains' sections, built in ${Math.round(milliseconds)} ms`,
+        )
+      },
+      (error: unknown) => console.warn(`VisibleHuman: the ${cap.name} cap couldn't be built: ${String(error)}`),
+    )
+  }
+
+  return {
+    object,
+    update(posed, bounds, cuts, look) {
+      opacity.value = look.opacity
+      solidFrom.value = look.solidFrom
+      const transparent = look.opacity < 1
+      const levels = bounds ? cutLevels(bounds.half, cuts) : null
+      for (const cap of caps) {
+        if (cap.material.transparent !== transparent) {
+          cap.material.transparent = transparent
+          cap.material.needsUpdate = true
+        }
+        const shown = posed !== null && levels !== null && look.shown && cuts[cap.name] > 0
+        cap.wanted = shown ? posed : null
+        if (!shown) {
+          drop(cap)
+          continue
+        }
+        const level = levels[cap.name]
+        const wanted = cap.asked ?? cap.drawn
+        if (wanted && wanted.posed === posed && wanted.level === level) continue
+        // A cap of another posed body goes at once; one of this body stays until the next arrives
+        if (cap.drawn && cap.drawn.posed !== posed) drop(cap)
+        ask(cap, posed, level)
+      }
+    },
+    dispose() {
+      gone = true
+      for (const cap of caps) {
+        drop(cap)
+        cap.material.dispose()
+      }
     },
   }
 }

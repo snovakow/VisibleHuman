@@ -118,6 +118,17 @@ export interface ChainsOnGrid {
   wall: Uint8Array
 }
 
+// How far a place lies into a side's flesh by the walls' measure, as the byte the wall field holds, for a place of the
+// chain given, recording the chain across its nearest wall, with the wall field read there: in the side's own flesh
+// with no wall near, 255; in its flesh or across from it near a wall, the field signed to the side, crossing
+// wallMiddle at the wall; in the flesh of another chain with no wall to the side, as the trunk's in the joined flesh
+// about a shoulder, 0, none of the side's
+export function sideMeasure(chain: number, other: number, wall: number, side: number) {
+  if (chain === side) return other === noChain ? 255 : side < other ? wall : 255 - wall
+  if (other === side) return side < chain ? wall : 255 - wall
+  return 0
+}
+
 // The rig file's chains and walls laid onto another grid, a mesh's or a finer level's, at each of its cells' centres.
 // On the rig file's own grid, as the default level's skin at its finest Detail is meshed on, they're the file's own
 export function chainsOnGrid(file: RigGridCells, grid: SourceGrid): ChainsOnGrid {
