@@ -2,6 +2,12 @@
 
 Version Release Notes
 
+## 0.4.0 - 2026-11-25
+
+- Cuts on the posed body, each the same section of the anatomy in any pose
+- Caps on the posed body's cuts, each limb's section moving with the limb
+- Depth shell on the posed body, under each limb's own skin
+
 ## 0.3.1 - 2026-11-25
 
 - Posed skin unbroken where the arms, hands and thighs part from the body
