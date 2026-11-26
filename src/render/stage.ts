@@ -1,6 +1,9 @@
-import type { AnimationClip } from 'three'
+import type { AnimationClip, Vector3 } from 'three'
 import type { Camera, Scene, WebGPURenderer } from 'three/webgpu'
+import { anglesOfPose, type AnglePose } from '../motion/angles.ts'
 import { createAnimator, type Animator, type Layer } from '../motion/animator.ts'
+import { createLimbs, type HandleName, type Limbs, type Offsets } from '../motion/ik.ts'
+import { byJoint } from '../rig/rig.ts'
 import { isWebGPU } from './backend.ts'
 import type { Body, BodySource } from './body/body.ts'
 import { createBodyTextures } from './body/textures.ts'
@@ -8,7 +11,7 @@ import { createDepthCue } from './depthCue.ts'
 import { createCompositor } from './frame/compositor.ts'
 import { framePlan } from './frame/plan.ts'
 import type { Look, Style } from './look.ts'
-import { createJointsOverlay } from './overlay.ts'
+import { createBodyOverlay } from './overlay.ts'
 import { bindPosed, settlePosed, type Posed } from './posed.ts'
 import { createStyle } from './styles/create.ts'
 import type { StyleDrawing, StyleEvents } from './styles/style.ts'
@@ -31,11 +34,17 @@ import type { StyleDrawing, StyleEvents } from './styles/style.ts'
 // only then, the animator advances, the bones' matrices and the skeleton's follow, the count the styles watch goes up,
 // the joints drawn over the body follow, and then the style readies its frame, in that order, so no style reads
 // matrices a frame old. With no motion, nothing of the rig is made, and every style draws the body as scanned, as it
-// always has
+// always has.
+//
+// While a motion is drawn, a handle at each wrist and ankle poses the body by hand: whoever reads the pointer finds the
+// handle under it from where the stage says each stands, grabs it, and drags its target through the scene, and the
+// limb follows within its limits. What a drag leaves is laid over the motion as offsets, which the stage hands back on
+// release for whoever keeps them, and which come back in the motion it's handed
 
 // The motion to draw a rigged body in: the clip it plays, a pose's or one over time, the layers mixed over it, how
 // fast its clips run and whether they do, how many single steps have been asked for since the page opened, each new
-// one stepping the clips once, and whether its joints are drawn
+// one stepping the clips once, whether its joints and its handles are drawn, and what dragging the handles has laid
+// over it
 export interface Motion {
   clip: AnimationClip
   layers: readonly Layer[]
@@ -43,6 +52,8 @@ export interface Motion {
   playing: boolean
   steps: number
   joints: boolean
+  handles: boolean
+  offsets: Offsets
 }
 
 // The most a frame moves a motion on, in seconds, so that the first frame after a hidden tab doesn't jump it
@@ -59,6 +70,16 @@ export interface Stage {
   // Brings the scene up to date with the body, the look and the motion, the motion moved on by the seconds since the
   // last frame, and draws a frame
   render(seconds: number): void
+  // Where a handle stands in the scene as last drawn, or none while the handles aren't
+  handlePlace(handle: HandleName): Vector3 | null
+  // Starts dragging a handle, which stays where it stands until its target moves; false while the handles aren't drawn
+  grab(handle: HandleName): boolean
+  // Moves the dragged handle's target, which the next frame turns its limb toward
+  drag(point: Vector3): void
+  // Ends the drag, and gives back the offsets it leaves over the motion, or none where nothing was dragged
+  release(): Offsets | null
+  // The pose the body stands in now, as a pose is written by hand, or none while it isn't posed
+  pose(): AnglePose | null
   // Frees everything the stage made and leaves the scene as it found it
   dispose(): void
 }
@@ -90,28 +111,30 @@ export function createStage(renderer: WebGPURenderer, scene: Scene, camera: Came
   // What the scene holds: the body, with its textures and its posed rig, and the style drawing it
   let body: Body | null = null
   let drawn: { style: Style; drawing: StyleDrawing } | null = null
-  const overlay = createJointsOverlay()
+  const overlay = createBodyOverlay()
   scene.add(overlay.object)
-  // The animator playing on the posed body's bones, made with its binding and let go with it, and the motion it was
-  // last handed, with the steps it has taken
-  let animated: { posed: Posed; animator: Animator; motion: Motion | null; steps: number } | null = null
+  // The animator playing on the posed body's bones and the limbs the handles turn, made with its binding and let go
+  // with it, and the motion it was last handed, with the steps it has taken
+  let animated: { posed: Posed; animator: Animator; limbs: Limbs; motion: Motion | null; steps: number } | null = null
 
   // Hands the animator what changed in the motion since it was last handed one: a new clip fades in, or, for a newly
   // bound body, shows at once; the steps asked for since are taken
   const animate = (posed: Posed, next: Motion) => {
     if (animated?.posed !== posed) {
       animated?.animator.dispose()
-      animated = { posed, animator: createAnimator(posed.skeleton.root), motion: null, steps: next.steps }
+      const limbs = createLimbs(posed.skeleton)
+      animated = { posed, animator: createAnimator(posed.skeleton.root, limbs), limbs, motion: null, steps: next.steps }
     }
     const last = animated.motion
     if (last === next) return animated.animator
-    const { animator } = animated
+    const { animator, limbs } = animated
     if (last?.clip !== next.clip) animator.play(next.clip, !last)
     if (last?.layers !== next.layers) animator.setLayers(next.layers)
+    if (last?.offsets !== next.offsets) limbs.setOffsets(next.offsets)
     animator.setSpeed(next.speed)
     animator.setPlaying(next.playing)
     for (; animated.steps < next.steps; animated.steps++) animator.step()
-    if (last?.joints !== next.joints) turned = true
+    if (last?.joints !== next.joints || last.handles !== next.handles) turned = true
     animated.motion = next
     return animator
   }
@@ -190,8 +213,9 @@ export function createStage(renderer: WebGPURenderer, scene: Scene, camera: Came
           turned = false
           animator.update(Math.min(seconds, longestStep))
           settlePosed(posed)
-          overlay.update(posed, motion.joints)
+          overlay.update(posed, motion.joints, motion.handles)
         }
+        if (motion.handles) overlay.fit(camera, renderer.domElement.height, renderer.getPixelRatio())
       } else {
         if (animated) {
           animated.animator.dispose()
@@ -199,11 +223,31 @@ export function createStage(renderer: WebGPURenderer, scene: Scene, camera: Came
         }
         if (turned) {
           turned = false
-          overlay.update(null, false)
+          overlay.update(null, false, false)
         }
       }
       drawn?.drawing.beforeFrame?.(camera)
       compositor.render()
+    },
+    handlePlace(handle) {
+      return animated && motion?.handles ? overlay.handlePlace(handle) : null
+    },
+    grab(handle) {
+      if (!animated || !motion?.handles || !overlay.handlePlace(handle)) return false
+      animated.limbs.grab(handle)
+      return true
+    },
+    drag(point) {
+      animated?.limbs.aim(point)
+    },
+    release() {
+      if (!animated?.limbs.dragging) return null
+      return animated.limbs.release()
+    },
+    pose() {
+      if (!animated) return null
+      const { bones, root } = animated.posed.skeleton
+      return anglesOfPose({ rotations: byJoint((name) => bones[name].quaternion), root: root.position })
     },
     dispose() {
       animated?.animator.dispose()

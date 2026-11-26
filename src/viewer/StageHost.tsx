@@ -9,7 +9,7 @@ import { createStage, type Motion, type Stage } from '../render/stage.ts'
 import { scanRotations } from '../rig/pose.ts'
 import type { RigFile } from '../rig/rigFile.ts'
 import type { SceneAxes } from '../volume/format.ts'
-import { noMotion, scanMotion, styleMoves, useStore } from '../store.ts'
+import { noMotion, providePose, scanMotion, styleMoves, useStore } from '../store.ts'
 
 type StoreState = ReturnType<typeof useStore.getState>
 
@@ -57,9 +57,9 @@ function layersOf({ layers: weights, motionFiles: files }: StoreState): readonly
 // it hands the animator nothing
 let lastMotion: { from: readonly unknown[]; motion: Motion | null } | null = null
 function motionOf(state: StoreState): Motion | null {
-  const { motion, rig, motionFiles, volume, showJoints, speed, playing, steps } = state
+  const { motion, rig, motionFiles, volume, showJoints, showHandles, offsets, speed, playing, steps } = state
   const layers = layersOf(state)
-  const from = [motion, rig, motionFiles, volume?.axes, showJoints, layers, speed, playing, steps]
+  const from = [motion, rig, motionFiles, volume?.axes, showJoints, showHandles, offsets, layers, speed, playing, steps]
   if (lastMotion && lastMotion.from.every((value, n) => value === from[n])) return lastMotion.motion
   let clip: AnimationClip | null = null
   if (motion !== noMotion && rig && volume) {
@@ -68,7 +68,7 @@ function motionOf(state: StoreState): Motion | null {
     else if (file) clip = clipFor(motion, file)
     else if (lastMotion?.from[1] === rig) clip = lastMotion.motion?.clip ?? null
   }
-  const made = clip ? { clip, layers, speed, playing, steps, joints: showJoints } : null
+  const made = clip ? { clip, layers, speed, playing, steps, joints: showJoints, handles: showHandles, offsets } : null
   lastMotion = { from, motion: made }
   return made
 }
@@ -81,8 +81,9 @@ const renderPriority = 1
 // switch of backend mounts anew. The store is read straight from its subscription rather than through React, so a
 // slider's drag reaches the stage as it moves and renders no component on the way; the stage takes whatever it was
 // handed since the last frame into the scene as it draws the next. It writes back to the store only what it reports,
-// the first draw and the meshes' counts
-export function StageHost() {
+// the first draw and the meshes' counts. The stage is handed out as it's made and taken back as it goes, for the
+// handles to read and drag, and lends the store the pose it draws, for Copy pose
+export function StageHost({ onStage }: { onStage: (stage: Stage | null) => void }) {
   const gl = useThree((s) => s.gl)
   const scene = useThree((s) => s.scene)
   const camera = useThree((s) => s.camera)
@@ -100,12 +101,16 @@ export function StageHost() {
     feed(useStore.getState())
     const unsubscribe = useStore.subscribe(feed)
     stage.current = made
+    onStage(made)
+    providePose(() => made.pose())
     return () => {
       unsubscribe()
+      providePose(null)
+      onStage(null)
       stage.current = null
       made.dispose()
     }
-  }, [gl, scene, camera])
+  }, [gl, scene, camera, onStage])
 
   // The frame callback subscribes before the stage is made, so until then it renders the scene as R3F would
   useFrame((state, delta) => {

@@ -7,7 +7,9 @@ import type { Volume } from './volume/format.ts'
 import { levelOf, stageBody, type Bounds, type Detail, type DetailEntry, type Levels, type StagedBody } from './volume/levels.ts'
 import type { SurfaceKind } from './surface/surfaceWorker.ts'
 import { isAbort, loadBodies, loadVolume, NotBuiltError } from './volume/loadVolume.ts'
+import { writeAnglePose, type AnglePose } from './motion/angles.ts'
 import type { MotionFile } from './motion/clip.ts'
+import type { Offsets } from './motion/ik.ts'
 import { loadLibrary, loadMotionFile, type MotionEntry } from './motion/library.ts'
 import { skinningBuild, type PosedLevel, type SkinningBuild } from './rig/cellSkinning.ts'
 import { loadRig } from './rig/loadRig.ts'
@@ -100,6 +102,16 @@ interface State {
   // Whether the posed body's joints are drawn over it
   showJoints: boolean
   setShowJoints: (visible: boolean) => void
+  // Whether the handles at the posed body's wrists and ankles are drawn, to pose him by dragging them
+  showHandles: boolean
+  setShowHandles: (visible: boolean) => void
+  // What dragging the handles has laid over the motion, each turned joint's turn from what the motion holds, kept
+  // across a change of motion, style or body and back until it's reset
+  offsets: Offsets
+  setOffsets: (offsets: Offsets) => void
+  resetOffsets: () => void
+  // Puts the pose the body stands in now on the clipboard, written as a pose of the library is
+  copyPose: () => void
   // Loads the library's index, for the panel's list, once
   loadMotions: () => void
 }
@@ -123,6 +135,17 @@ export function motionMoves({ motion, motionFiles, layers }: Pick<State, 'motion
 }
 
 const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error))
+
+// No drag laid over the motion
+export const noOffsets: Offsets = {}
+const hasOffsets = (offsets: Offsets) => Object.keys(offsets).length > 0
+export const isDragged = (state: Pick<State, 'offsets'>) => hasOffsets(state.offsets)
+
+// Where Copy pose reads the pose the body stands in: from whatever draws it, which says so while it can
+let poseSource: (() => AnglePose | null) | null = null
+export function providePose(read: (() => AnglePose | null) | null) {
+  poseSource = read
+}
 
 // The load in progress, which the next one aborts, and the level whose volume the store holds
 let current: AbortController | null = null
@@ -470,6 +493,25 @@ export const useStore = create<State>()((set, get, api) => ({
   posedLevels: null,
   showJoints: false,
   setShowJoints: (visible) => set((state) => (state.showJoints === visible ? state : { showJoints: visible })),
+  showHandles: true,
+  setShowHandles: (visible) => set((state) => (state.showHandles === visible ? state : { showHandles: visible })),
+  offsets: noOffsets,
+  setOffsets: (offsets) => set((state) => (!hasOffsets(offsets) && !hasOffsets(state.offsets) ? state : { offsets })),
+  resetOffsets: () => set((state) => (hasOffsets(state.offsets) ? { offsets: noOffsets } : state)),
+  copyPose: () => {
+    const pose = poseSource?.()
+    if (!pose) return
+    // A browser offers the clipboard only to a page served securely, so one served over plain http from another
+    // machine has none
+    const clipboard = navigator.clipboard as Clipboard | undefined
+    if (!clipboard) {
+      console.warn("VisibleHuman: the pose couldn't be copied, as the browser offers the clipboard only to a page served securely")
+      return
+    }
+    clipboard.writeText(writeAnglePose(pose)).catch((error: unknown) => {
+      console.warn(`VisibleHuman: the pose couldn't be copied. ${messageOf(error)}`)
+    })
+  },
   loadMotions: () => {
     if (get().motions) return
     ;(libraryFetch ??= loadLibrary()).then(

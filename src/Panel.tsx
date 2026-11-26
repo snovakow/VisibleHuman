@@ -15,7 +15,7 @@ import {
 } from './options.ts'
 import { presetOptions, presets, type Preset } from './presets.ts'
 import { isStyle, styles } from './render/styles/styles.ts'
-import { levelKey, motionMoves, noMotion, scanMotion, styleMoves, useStore, type Status } from './store.ts'
+import { isDragged, levelKey, motionMoves, noMotion, scanMotion, styleMoves, useStore, type Status } from './store.ts'
 import { levelOf } from './volume/levels.ts'
 
 const statusText: Record<Status, string> = { loading: 'Loading…', ready: 'Ready', failed: '' }
@@ -172,6 +172,9 @@ export function Panel({ renderer }: { renderer: string }) {
   const swaying = useStore((s) => s.swaying)
   const motion = useStore((s) => s.motion)
   const showJoints = useStore((s) => s.showJoints)
+  const showHandles = useStore((s) => s.showHandles)
+  // Whether a drag has left anything over the motion, which Reset clears
+  const dragged = useStore(isDragged)
   const motions = useStore((s) => s.motions)
   const playing = useStore((s) => s.playing)
   const speed = useStore((s) => s.speed)
@@ -395,6 +398,26 @@ export function Panel({ renderer }: { renderer: string }) {
             useStore.getState().setShowJoints(picked)
           },
         },
+        // The handles at the wrists and ankles, which pose him by dragging; the pose he stands in, to the clipboard as a
+        // pose file is written; and Reset, while a drag has left something to undo, which gives the motion back
+        handles: {
+          label: 'Handles',
+          value: useStore.getState().showHandles,
+          transient: false,
+          render: (get) => posing(get),
+          onChange: (picked: unknown, _path: string, context: ChangeContext) => {
+            if (context.initial || !context.fromPanel || typeof picked !== 'boolean') return
+            useStore.getState().setShowHandles(picked)
+          },
+        },
+        copy: {
+          ...buttonRow([{ label: 'Copy pose', onClick: () => useStore.getState().copyPose() }]),
+          render: (get) => posing(get),
+        },
+        reset: {
+          ...buttonRow([{ label: 'Reset', onClick: () => useStore.getState().resetOffsets() }]),
+          render: (get) => posing(get) && dragged,
+        },
         Layers: folder(layerControls()),
       }),
       Body: folder({
@@ -444,7 +467,7 @@ export function Panel({ renderer }: { renderer: string }) {
         status: { label: 'Status', value: '', editable: false },
       }),
     }
-  }, [bodyOptions, levelOptions, detailOptions, motionOptions, layerEntries, rigged, moves, capabilities])
+  }, [bodyOptions, levelOptions, detailOptions, motionOptions, layerEntries, rigged, moves, dragged, capabilities])
 
   // The store's choices go back to the controls, after leva has taken each rebuilt list, since a rebuilt control keeps
   // the value it held: a load picks its body, its level and its Detail, a level found not built goes back to the
@@ -482,8 +505,8 @@ export function Panel({ renderer }: { renderer: string }) {
   // The motion as the store has it, after leva has taken each rebuilt list: a motion the library turned out not to
   // have goes back to none
   useEffect(() => {
-    set({ motion, joints: showJoints, play: playing, speed })
-  }, [set, motion, showJoints, playing, speed])
+    set({ motion, joints: showJoints, handles: showHandles, play: playing, speed })
+  }, [set, motion, showJoints, showHandles, playing, speed])
   // The layers' weights, set by their paths, as set knows by name only the controls the panel names
   useEffect(() => {
     if (layerEntries.length > 0) levaStore.set(Object.fromEntries(layerEntries.map((entry) => [layerPath(entry.id), layers[entry.id] ?? 0])), false)
