@@ -1,7 +1,7 @@
 import { Euler, MathUtils, Quaternion } from 'three'
 import type { Triple } from '../volume/format.ts'
 import { byJoint, isJointName, type JointName } from '../rig/rig.ts'
-import type { Bound, Pose } from '../rig/pose.ts'
+import type { Pose } from '../rig/pose.ts'
 
 // A pose written by hand: each joint's turn from the neutral pose, as Euler angles in degrees in the limits' order, X
 // then Y then Z, about the joint's own axes as they stand in the neutral pose: for a bone that hangs, x swings it back
@@ -40,17 +40,6 @@ export function rotationsOfAngles(angles: AnglePose): Record<JointName, Quaterni
     const turn = angles.joints[name]
     return turn ? rotationOf(turn) : new Quaternion()
   })
-}
-
-// The pose a hand-written one gives a bound skeleton, its root where the scan has it
-export function poseOfAngles(angles: AnglePose, bound: Bound): Pose {
-  return {
-    rotations: byJoint((name) => {
-      const turn = angles.joints[name]
-      return turn ? rotationOf(turn) : new Quaternion()
-    }),
-    root: bound.offsets.hips.clone(),
-  }
 }
 
 // A pose's turns in degrees, as a hand-written pose writes them, rounded to a tenth, so that a pose can be written into

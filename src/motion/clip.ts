@@ -1,7 +1,7 @@
 import { AnimationClip, AnimationUtils, Quaternion, QuaternionKeyframeTrack } from 'three'
 import type { Triple } from '../volume/format.ts'
 import { byJoint, isJointName, jointNames, type JointName } from '../rig/rig.ts'
-import { readAnglePose, rotationOf, type AnglePose } from './angles.ts'
+import { readAnglePose, rotationOf, rotationsOfAngles, type AnglePose } from './angles.ts'
 
 // A motion of the library, public/motion/, as its file holds it, and as three's animation system plays it. A file is
 // one of three things, told apart by its keys: a pose, a `joints` object of each joint's turn in degrees (angles.ts);
@@ -160,16 +160,7 @@ function bakedTracks(clip: BakedClip) {
 
 // A motion file's clip, named for the motion
 export function clipOf(name: string, file: MotionFile): AnimationClip {
-  if (file.kind === 'pose') {
-    const { joints } = file.pose
-    return poseClip(
-      name,
-      byJoint((joint) => {
-        const turn = joints[joint]
-        return turn ? rotationOf(turn) : new Quaternion()
-      }),
-    )
-  }
+  if (file.kind === 'pose') return poseClip(name, rotationsOfAngles(file.pose))
   const tracks = file.kind === 'keyed' ? keyedTracks(file.clip) : bakedTracks(file.clip)
   return new AnimationClip(name, file.clip.duration, tracks)
 }
@@ -180,4 +171,21 @@ export function layerClip(clip: AnimationClip): AnimationClip {
   const layer = AnimationUtils.makeClipAdditive(clip.clone(), 0, neutralClip())
   if (isStill(clip)) stillClips.add(layer)
   return layer
+}
+
+// What a baked clip's file says of itself beside its tracks, which the readers pass over: the label the library lists
+// it by, and where it came from, the file and the clip in it it was baked from, and their terms
+export interface BakedNote {
+  label: string
+  source: string
+}
+
+// A baked clip as its file is written, a joint's track to a line, its label and source first
+export function writeBakedClip(clip: BakedClip, note: BakedNote): string {
+  const tracks = jointNames.flatMap((joint) => {
+    const track = clip.tracks[joint]
+    return track ? [`    ${JSON.stringify(joint)}: { "times": [${track.times.join(', ')}], "values": [${track.values.join(', ')}] }`] : []
+  })
+  const head = [`  "label": ${JSON.stringify(note.label)}`, `  "source": ${JSON.stringify(note.source)}`, `  "duration": ${clip.duration}`]
+  return `{\n${head.join(',\n')},\n  "tracks": {\n${tracks.join(',\n')}\n  }\n}\n`
 }
