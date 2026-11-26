@@ -23,9 +23,9 @@ import { positionInside, rimAt } from './shading.ts'
 // skin's grid. Each is coloured from the body's 3D texture just inside the surface, or by the colour of the cells
 // either side of each vertex, lit by the style's own lights, darkened with depth by the scene's fog, and cut by the
 // three planes through one clipping group, with a cap on each open cut; a posed body is cut where the scan holds each
-// point, so its cuts stay with the anatomy, and its caps are skinned with it. The skin is see-through below full
-// Opacity by a depth pass ahead of its colour, with its far side under it as a choice, or, with OIT on, by the frame's
-// sum of every layer, which needs no depth pass
+// point, so its cuts stay with the anatomy, and its caps and shell are skinned with it. The skin is see-through below
+// full Opacity by a depth pass ahead of its colour, with its far side under it as a choice, or, with OIT on, by the
+// frame's sum of every layer, which needs no depth pass
 
 // A see-through skin's draws, in the order they go, each ahead of the colour's at three's default of 0: the far
 // side's depth alone, then its colour, then the near side's depth alone, then its colour. All four list with the
@@ -117,8 +117,8 @@ export function createSurface({ events }: StyleContext): StyleDrawing {
   const cutTest = createCutTest()
 
   // The same, for a posed body: each colour read where the scan holds the point rather than where the pose has moved it,
-  // and the skin's passes, a wall's faces drawn only once the pose has parted it; and every one cut at the rest
-  // position. Made the first time the body is posed
+  // and the skin's passes and the shell's, a wall's faces drawn only once the pose has parted it; and every one cut at
+  // the rest position. Made the first time the body is posed
   const posedColourings = {
     texture: sampler.colourOf(sampler.texelAt(restPosition.sub(restNormal.normalize().mul(sampler.leastVoxel.mul(0.5))))),
     cells: colourings.cells,
@@ -143,8 +143,8 @@ export function createSurface({ events }: StyleContext): StyleDrawing {
       material.contextNode = samePosition
       material.maskNode = shown.and(kept)
     }
+    made.shell.maskNode = shown.and(kept)
     made.bone.maskNode = kept
-    made.shell.maskNode = kept
     posedMaterials = made
     return made
   }
@@ -321,11 +321,11 @@ export function createSurface({ events }: StyleContext): StyleDrawing {
 
       // The shell under the skin, on the skin's grid, present while there's a Depth: meshed again when the volume,
       // the Detail or the Depth changes, the worker keeping the grid's distance field from one Depth to the next. The
-      // Depth is in millimetres and the field in the grid's voxels, taken as cubes of their mean spacing
-      // A posed body's shell waits for its own meshing, which follows; until then it isn't drawn posed
-      if (shown && depth > 0 && !posed) {
+      // Depth is in millimetres and the field in the grid's voxels, taken as cubes of their mean spacing. A posed
+      // body's shell is measured for each chain from its own side of the walls, and skinned as the skin is
+      if (shown && depth > 0) {
         const { volume, bounds } = shown
-        keep('shell', [volume, detail, depth], () => {
+        keep('shell', [volume, detail, depth, posed], () => {
           const grid = blockGridOf(volume, detail)
           const voxel = (grid.spacing[0] + grid.spacing[1] + grid.spacing[2]) / 3
           const request = {
@@ -334,11 +334,12 @@ export function createSurface({ events }: StyleContext): StyleDrawing {
             key: `${volume.body}/${grid.block}/${grid.coverage.byteLength}`,
             depth: depth / voxel,
             ...gridOf(volume, grid, bounds),
+            ...rigOf(grid, 'blended'),
           } satisfies SurfaceRequest
           const about =
             `${depth} mm under the skin at ${labelOf(volume, grid.block)} ` +
             `(${(depth / voxel).toFixed(2)} voxels of ${voxel.toFixed(2)} mm)`
-          return mesh(request, volume, about, (geometry) => [new Mesh(geometry, materials.shell)])
+          return mesh(request, volume, about, (geometry, skinning) => [meshOf(geometry, used.shell, skinning)])
         })
       } else drop('shell')
 

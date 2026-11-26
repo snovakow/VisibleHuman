@@ -1,3 +1,5 @@
+import { noChain, wallMiddle } from '../rig/rigFile.ts'
+import { sideMeasure, type ChainsOnGrid } from '../rig/sampling.ts'
 import { isBodyVoxel, type Triple } from '../volume/format.ts'
 
 // How far each body voxel lies inside the body: its Euclidean distance to the nearest voxel centre outside the body,
@@ -103,4 +105,30 @@ export function distanceField(coverage: Uint8Array, size: Triple): Float32Array<
   for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) pass(i + nx * j, nz, nxy)
   for (let n = 0; n < cells; n++) field[n] = Math.sqrt(field[n])
   return field
+}
+
+// One chain's distance under a posed body's skin: as distanceField's, but with the far side of the chain's walls
+// counted as outside as the air is, so that the chain's shell, a depth under its skin, also lies that depth from each
+// wall and closes under the wall's face, which the pose parts from the other side's. A voxel recording no wall to the
+// chain is inside as the body is, whichever chain's it is, so that where a limb is one flesh with the trunk, about a
+// shoulder or a hip, the distance runs on from one to the other as the plain one does
+export function chainDistanceField(coverage: Uint8Array, size: Triple, chains: Walls, side: number) {
+  const inside = new Uint8Array(coverage.length)
+  for (let n = 0; n < coverage.length; n++) if (isBodyVoxel(coverage[n]) && !isAcross(chains, n, side)) inside[n] = 255
+  return distanceField(inside, size)
+}
+
+// Whether anything lies across a wall from a chain, without which its distance is the plain one
+export function hasWallsTo(chains: Walls, side: number) {
+  for (let n = 0; n < chains.chain.length; n++) if (isAcross(chains, n, side)) return true
+  return false
+}
+
+type Walls = Pick<ChainsOnGrid, 'chain' | 'other' | 'wall'>
+
+// Whether a voxel recording a wall to the chain, or of the chain recording a wall to another, lies on the far side of
+// that wall from the chain
+function isAcross({ chain, other, wall }: Walls, n: number, side: number) {
+  const walled = (chain[n] === side && other[n] !== noChain) || (other[n] === side && chain[n] !== side)
+  return walled && sideMeasure(chain[n], other[n], wall[n], side) < wallMiddle
 }

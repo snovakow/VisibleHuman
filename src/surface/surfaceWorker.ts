@@ -35,13 +35,16 @@ interface FieldRequest extends GridRequest {
 }
 
 // The closed shell a depth under the skin, meshed from each body voxel's distance to the outside, which the worker
-// computes from the coverage and keeps under the key, so that the next shell on the grid of the same key reuses it
+// computes from the coverage and keeps under the key, so that the next shell on the grid of the same key reuses it.
+// For a posed body, each chain's distance too, counting the far side of its walls as outside, kept under the key and
+// the rig's, and the shell skinned as the skin is
 interface ShellRequest extends GridRequest {
   kind: 'shell'
   coverage: Uint8Array
   key: string
   // How far under the skin, in the grid's voxels
   depth: number
+  rig?: RigRequest
 }
 
 // The cap on one of a posed body's cuts: its sections in the cut's plane as the scan holds it, one for each chain the

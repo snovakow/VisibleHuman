@@ -1,7 +1,7 @@
-import { chainsOnGrid, type RigGridCells } from '../rig/sampling.ts'
-import { distanceField, skinDistance } from './distanceField.ts'
+import { chainsOnGrid, type ChainsOnGrid, type RigGridCells } from '../rig/sampling.ts'
+import { chainDistanceField, distanceField, hasWallsTo, skinDistance } from './distanceField.ts'
 import { meshIsosurface, type IsosurfaceMesh } from './marchingCubes.ts'
-import { meshRigged, type RiggedMesh } from './rigMesh.ts'
+import { meshRigged, meshRiggedShell, type RiggedMesh } from './rigMesh.ts'
 import { chainNames, jointNames, skeletonShape } from '../rig/rig.ts'
 import { capMesh } from './capGrid.ts'
 import { partedTriangles, skinMesh, type MeshSkinning } from './rigSkin.ts'
@@ -11,8 +11,14 @@ import { isCapRequest, type CapRequest, type DistanceTiming, type SurfaceMessage
 // transferred rather than copied. A shell is meshed from the distance under the skin, which is computed from its grid's
 // coverage once and kept, so that a new depth on the same grid only meshes again
 
-// The last distance field, with the key of the grid it was computed on
-let kept: { key: string; field: Float32Array } | null = null
+// The last distance field, with the key of the grid it was computed on, and for a posed body the rig's chains on that
+// grid and each chain's own distance, with the rig's key
+interface Kept {
+  key: string
+  field: Float32Array
+  posed?: { rig: string; chains: ChainsOnGrid; distances: (Float32Array | undefined)[] }
+}
+let kept: Kept | null = null
 // The rig posed requests read, as the page last gave it
 let rig: { key: string; file: RigGridCells } | null = null
 
@@ -33,8 +39,18 @@ self.onmessage = (event: MessageEvent<SurfaceMessage>) => {
     let distance: DistanceTiming | undefined
     if (request.kind === 'shell') {
       const start = performance.now()
-      const reused = kept?.key === request.key
-      if (!kept || !reused) kept = { key: request.key, field: distanceField(request.coverage, size) }
+      const shellRig = request.rig
+      const reused = kept?.key === request.key && (!shellRig || kept.posed?.rig === shellRig.key)
+      if (!kept || !reused) {
+        const plainField = kept?.key === request.key ? kept.field : distanceField(request.coverage, size)
+        kept = { key: request.key, field: plainField }
+        if (shellRig) {
+          if (rig?.key !== shellRig.key) throw new Error(`The worker holds no rig ${shellRig.key}`)
+          const chains = chainsOnGrid(rig.file, shellRig.grid)
+          const distances = chainNames.map((_, side) => (hasWallsTo(chains, side) ? chainDistanceField(request.coverage, size, chains, side) : undefined))
+          kept.posed = { rig: shellRig.key, chains, distances }
+        }
+      }
       distance = { reused, milliseconds: performance.now() - start }
       field = kept.field
       isolevel = skinDistance + request.depth
@@ -44,12 +60,20 @@ self.onmessage = (event: MessageEvent<SurfaceMessage>) => {
     }
     const start = performance.now()
     const input = { field, size, spacing, origin, isolevel, axes, ...(colors ? { colors } : {}) }
-    const posed = request.kind !== 'shell' ? request.rig : undefined
+    const posed = request.rig
     let mesh: IsosurfaceMesh | RiggedMesh
     let skinning: MeshSkinning | undefined
     if (posed) {
       if (rig?.key !== posed.key) throw new Error(`The worker holds no rig ${posed.key}`)
-      mesh = request.kind === 'skin' ? meshRigged({ ...input, ...chainsOnGrid(rig.file, posed.grid) }) : meshIsosurface(input)
+      if (request.kind === 'shell') {
+        const shell = kept?.posed
+        if (!kept || !shell || shell.rig !== posed.key) throw new Error(`The worker holds no chains' distances for the rig ${posed.key}`)
+        const { chain, other } = shell.chains
+        const fields = { distance: kept.field, chainDistances: shell.distances, level: isolevel, chain, other }
+        mesh = meshRiggedShell({ ...fields, size, spacing, origin, axes, ...(colors ? { colors } : {}) })
+      } else {
+        mesh = request.kind === 'skin' ? meshRigged({ ...input, ...chainsOnGrid(rig.file, posed.grid) }) : meshIsosurface(input)
+      }
       skinning = skinMesh(mesh, rig.file, posed.placement, posed.mode)
       // A rigid mesh's triangles across two chains' bones go, which a pose would stretch apart
       if (posed.mode === 'rigid') {
