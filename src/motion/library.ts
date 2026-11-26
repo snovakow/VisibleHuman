@@ -14,6 +14,8 @@ export interface MotionEntry {
   file: string
   // Whether the panel offers it as a layer to mix over the motion, by a weight of its own
   layer: boolean
+  // A shorter label, for a layer's slider, where the label is too long to sit beside one
+  short?: string
 }
 
 const indexUrl = 'motion/index.json'
@@ -31,7 +33,9 @@ export function readLibrary(json: unknown): MotionEntry[] {
   const entries = json.motions.map((value: unknown, n): MotionEntry => {
     const where = `Motion ${n + 1}`
     if (!isRecord(value)) throw new Error(`${where} isn't an object`)
-    return { id: text(value, 'id', where), label: text(value, 'label', where), file: text(value, 'file', where), layer: value.layer === true }
+    const entry: MotionEntry = { id: text(value, 'id', where), label: text(value, 'label', where), file: text(value, 'file', where), layer: value.layer === true }
+    if (value.short !== undefined) entry.short = text(value, 'short', where)
+    return entry
   })
   if (new Set(entries.map((entry) => entry.id)).size !== entries.length) throw new Error('The motion library names a motion twice')
   return entries

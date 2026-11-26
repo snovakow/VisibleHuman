@@ -122,6 +122,17 @@ void test("the library's index lists a file of its own kind for each motion, and
   )
 })
 
+void test("an index entry may give a shorter label for a layer's slider, and none that's empty", () => {
+  const entries = readLibrary(readJson('index.json'))
+  assert.deepEqual(
+    entries.filter((entry) => entry.short !== undefined).map((entry) => [entry.id, entry.short]),
+    [['anatomical', 'anatomical']],
+  )
+  const entry = { id: 'a', label: 'a pose with a long name', file: 'motion/a.json', layer: true }
+  assert.equal(readLibrary({ motions: [{ ...entry, short: 'a pose' }] })[0].short, 'a pose')
+  assert.throws(() => readLibrary({ motions: [{ ...entry, short: '' }] }), /Motion 1 has no short/)
+})
+
 void test('a clip is sampled at its keys, between them, and across its loop, which comes back to its first key at its end', () => {
   const file: MotionFile = readMotionFile(
     keyed(

@@ -1,7 +1,7 @@
 {
   "motions": [
     { "id": "standing", "label": "standing", "file": "motion/standing.json" },
-    { "id": "anatomical", "label": "anatomical position", "file": "motion/anatomical.json", "layer": true },
+    { "id": "anatomical", "label": "anatomical position", "short": "anatomical", "file": "motion/anatomical.json", "layer": true },
     { "id": "t-pose", "label": "T-pose", "file": "motion/t-pose.json", "layer": true },
     { "id": "arms-out", "label": "arms out", "file": "motion/arms-out.json", "layer": true },
     { "id": "arms-forward", "label": "arms forward", "file": "motion/arms-forward.json", "layer": true },

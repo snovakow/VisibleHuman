@@ -238,7 +238,7 @@ export function Panel({ renderer }: { renderer: string }) {
         layerEntries.map((entry) => [
           layerKey(entry.id),
           {
-            label: entry.label,
+            label: entry.short ?? entry.label,
             value: useStore.getState().layers[entry.id] ?? 0,
             min: 0,
             max: 1,
