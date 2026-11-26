@@ -14,6 +14,7 @@
     "volume": "node scripts/build-volume.ts",
     "register": "node scripts/register.ts",
     "rig": "node scripts/build-rig.ts",
+    "motion": "node scripts/motion.ts",
     "fetch": "node scripts/fetch-data.ts"
   },
   "dependencies": {
