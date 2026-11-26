@@ -15,7 +15,8 @@ import {
 } from './options.ts'
 import { presetOptions, presets, type Preset } from './presets.ts'
 import { isStyle, styles } from './render/styles/styles.ts'
-import { isDragged, levelKey, motionMoves, noMotion, scanMotion, styleMoves, useStore, type Status } from './store.ts'
+import { openImportPicker } from './motion/import.ts'
+import { isDragged, isImported, levelKey, motionMoves, noMotion, scanMotion, styleMoves, useStore, type Status } from './store.ts'
 import { levelOf } from './volume/levels.ts'
 
 const statusText: Record<Status, string> = { loading: 'Loading…', ready: 'Ready', failed: '' }
@@ -176,6 +177,7 @@ export function Panel({ renderer }: { renderer: string }) {
   // Whether a drag has left anything over the motion, which Reset clears
   const dragged = useStore(isDragged)
   const motions = useStore((s) => s.motions)
+  const imported = useStore((s) => s.imported)
   const playing = useStore((s) => s.playing)
   const speed = useStore((s) => s.speed)
   const layers = useStore((s) => s.layers)
@@ -215,11 +217,16 @@ export function Panel({ renderer }: { renderer: string }) {
     () => (details ? Object.fromEntries(details.toReversed().map((each) => [each.label, each.block])) : null),
     [details],
   )
-  // The motions: none, as the body has always been drawn, the pose it was scanned in, and the library's, once its index
-  // is in
+  // The motions: none, as the body has always been drawn, the pose it was scanned in, the library's, once its index is
+  // in, and the clips brought in from files
   const motionOptions = useMemo(
-    () => ({ none: noMotion, 'as scanned': scanMotion, ...Object.fromEntries((motions ?? []).map((each) => [each.label, each.id])) }),
-    [motions],
+    () => ({
+      none: noMotion,
+      'as scanned': scanMotion,
+      ...Object.fromEntries((motions ?? []).map((each) => [each.label, each.id])),
+      ...Object.fromEntries(imported.map((each) => [each.label, each.id])),
+    }),
+    [motions, imported],
   )
   // The motions the library offers as layers, once its index is in
   const layerEntries = useMemo(() => (motions ?? []).filter((each) => each.layer), [motions])
@@ -360,6 +367,16 @@ export function Panel({ renderer }: { renderer: string }) {
             if (context.initial || !context.fromPanel || typeof picked !== 'string') return
             useStore.getState().setMotion(picked)
           },
+        },
+        // A clip from a file, chosen here or dropped on the page, played at once; and, while one is shown, Save, which
+        // downloads it as a clip of the library's is written
+        import: {
+          ...buttonRow([{ label: 'Import', onClick: openImportPicker }]),
+          render: (get) => rigged && styleMoves(get(stylePath)),
+        },
+        save: {
+          ...buttonRow([{ label: 'Save', onClick: () => useStore.getState().saveMotion() }]),
+          render: (get) => posing(get) && isImported(get('Motion.motion')),
         },
         play: {
           label: 'Play',

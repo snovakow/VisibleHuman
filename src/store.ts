@@ -8,8 +8,9 @@ import { levelOf, stageBody, type Bounds, type Detail, type DetailEntry, type Le
 import type { SurfaceKind } from './surface/surfaceWorker.ts'
 import { isAbort, loadBodies, loadVolume, NotBuiltError } from './volume/loadVolume.ts'
 import { writeAnglePose, type AnglePose } from './motion/angles.ts'
-import type { MotionFile } from './motion/clip.ts'
+import type { BakedClip, MotionFile } from './motion/clip.ts'
 import type { Offsets } from './motion/ik.ts'
+import { importMotionFile, saveBakedClip, type ImportedFile } from './motion/import.ts'
 import { loadLibrary, loadMotionFile, type MotionEntry } from './motion/library.ts'
 import { skinningBuild, type PosedLevel, type SkinningBuild } from './rig/cellSkinning.ts'
 import { loadRig } from './rig/loadRig.ts'
@@ -114,6 +115,30 @@ interface State {
   copyPose: () => void
   // Loads the library's index, for the panel's list, once
   loadMotions: () => void
+  // The clips brought in from files dropped on the page or chosen with Import, each a motion of its own beside the
+  // library's, kept for the page's life
+  imported: readonly ImportedMotion[]
+  // Reads a file's clips, retargets them onto the rig and plays the first at once. A file chosen while another is
+  // still being read takes over from it
+  importMotion: (file: File) => void
+  // Downloads the imported clip shown as a baked clip, as the library's files are written
+  saveMotion: () => void
+}
+
+// A clip brought in from a file, not yet in the library
+export interface ImportedMotion {
+  // Unique among the motions, the library's and the imported
+  id: string
+  // As the panel lists it, and as its saved file is labelled
+  label: string
+  saved: string
+  clip: BakedClip
+  // The file and the clip in it it was brought in from, which its saved file names
+  source: string
+  // The file's rest pose on the rig, and where its limbs point at rest (import.ts), which nothing on the page reads:
+  // kept so that how a file was read can be looked into
+  rest: ImportedFile['rest']
+  directions: ImportedFile['directions']
 }
 
 // No motion: the body drawn as it always has been, and as it was scanned, the pose the rig is bound in
@@ -135,6 +160,10 @@ export function motionMoves({ motion, motionFiles, layers }: Pick<State, 'motion
 }
 
 const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error))
+
+// An imported clip's id, which no motion of the library's can have, since the library's ids are file names
+const importedPrefix = 'imported:'
+export const isImported = (motion: unknown) => typeof motion === 'string' && motion.startsWith(importedPrefix)
 
 // No drag laid over the motion
 export const noOffsets: Offsets = {}
@@ -399,6 +428,19 @@ async function loadLayer(id: string, set: StoreApi<State>['setState'], get: Stor
   }
 }
 
+// How many files have been chosen to import, so that one still being read when another is chosen is dropped
+let imports = 0
+let importedClips = 0
+
+// A label no other motion has, the library's or an imported one, since the panel lists the motions by their labels
+function freeLabel(label: string, state: Pick<State, 'motions' | 'imported'>) {
+  const taken = new Set([...(state.motions ?? []).map((each) => each.label), ...state.imported.map((each) => each.label), 'none', 'as scanned'])
+  if (!taken.has(label)) return label
+  let n = 2
+  while (taken.has(`${label} ${n}`)) n++
+  return `${label} ${n}`
+}
+
 export const useStore = create<State>()((set, get, api) => ({
   bodies: null,
   body: null,
@@ -521,6 +563,37 @@ export const useStore = create<State>()((set, get, api) => ({
         console.warn(`VisibleHuman: the motion library couldn't be read. ${messageOf(error)}`)
       },
     )
+  },
+  imported: [],
+  importMotion: (file) => {
+    const chosen = ++imports
+    importMotionFile(file).then(
+      (read) => {
+        if (chosen !== imports) {
+          console.info(`VisibleHuman: ${file.name} was read, but a file chosen after it is shown instead`)
+          return
+        }
+        const state = get()
+        const made: ImportedMotion[] = []
+        for (const { name, clip } of read.clips) {
+          const saved = read.clips.length === 1 ? read.name : name
+          const label = freeLabel(`${read.clips.length === 1 ? read.name : `${read.name}: ${name}`} (imported)`, { motions: state.motions, imported: [...state.imported, ...made] })
+          made.push({ id: `${importedPrefix}${++importedClips}`, label, saved, clip, rest: read.rest, directions: read.directions, source: `${file.name}, its clip ${name}, read by ${read.rig}'s bone names` })
+        }
+        const files = Object.fromEntries(made.map((each): [string, MotionFile] => [each.id, { kind: 'baked', clip: each.clip }]))
+        set({ imported: [...state.imported, ...made], motionFiles: { ...state.motionFiles, ...files } })
+        const [first] = made
+        if (first) get().setMotion(first.id)
+      },
+      (error: unknown) => {
+        if (chosen === imports) console.warn(`VisibleHuman: ${file.name} couldn't be imported. ${messageOf(error)}`)
+      },
+    )
+  },
+  saveMotion: () => {
+    const { imported, motion } = get()
+    const picked = imported.find((each) => each.id === motion)
+    if (picked) saveBakedClip(picked.clip, { label: picked.saved, source: picked.source })
   },
   setMotion: (motion) => {
     if (get().motion === motion) return

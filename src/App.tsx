@@ -6,6 +6,7 @@ import { createRenderer, type Backend, type BackendReport } from './render/backe
 import { pixelRatioFor } from './render/frame/plan.ts'
 import { isStyle } from './render/styles/styles.ts'
 import { useStore } from './store.ts'
+import { MotionDrop } from './viewer/MotionDrop.tsx'
 import { frontView } from './viewer/viewAngle.ts'
 import { Viewer } from './viewer/Viewer.tsx'
 
@@ -123,6 +124,7 @@ function App() {
       </Canvas>
       <Panel renderer={started?.name ?? ''} />
       <LoadStatus />
+      <MotionDrop />
       <a className="credit" href={creditUrl} target="_blank" rel="noreferrer">
         Images courtesy of the U.S. National Library of Medicine
       </a>
