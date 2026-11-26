@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { cutBox, cutLimits, cutPlanes, isCut, type CutPlane } from '../src/render/cuts.ts'
+import { cutBox, cutDistances, cutLimits, cutPlanes, isCut, type CutPlane } from '../src/render/cuts.ts'
 import { createCellTable, isPainted, paintCellTable } from '../src/render/styles/splats/cellTable.ts'
 import type { Triple } from '../src/volume/format.ts'
 import type { Level } from '../src/volume/levels.ts'
@@ -127,4 +127,39 @@ void test('an inactive cut\'s plane lies beyond where any pose reaches and keeps
   const all = cutBox(male, { axial: 1, coronal: 1, sagittal: 1 })
   assert.deepEqual(all.max, [285.12, -944, -164.34])
   assert.deepEqual(all.min, [285.12, -944, -164.34])
+})
+
+void test('the distances a posed mesh tests at the rest position keep exactly what the planes keep, and a cut that is off never cuts', () => {
+  const cuts = { axial: 0.25, coronal: 0.5, sagittal: 0.1 }
+  const planes = cutPlanes(male, cuts)
+  const { top, front, right } = cutLimits(male, cuts)
+  const points: Triple[] = [
+    [0, top - 1, 0],
+    [0, top + 1, 0],
+    [0, 0, front - 1],
+    [0, 0, front + 1],
+    [right + 1, 0, 0],
+    [right - 1, 0, 0],
+    [100, -500, -100],
+  ]
+  for (const point of points) {
+    const distances = cutDistances(planes, point)
+    distances.forEach((distance, n) => assert.equal(distance >= 0, keeps(planes[n], point), `plane ${n} at ${point.join(', ')}`))
+  }
+  // Each distance is the millimetres inside its plane
+  close(cutDistances(planes, [0, top - 7, 0])[0], 7)
+  close(cutDistances(planes, [0, 0, front - 3])[1], 3)
+  close(cutDistances(planes, [right + 5, 0, 0])[2], 5)
+  // With every cut at 0, no point within the body's length of the bounds is cut, however a pose has carried the
+  // flesh there, since the test is made where the scan holds it
+  const length = 2 * 944
+  const none = cutPlanes(male, { axial: 0, coronal: 0, sagittal: 0 })
+  for (const reached of [
+    [0, 944 + length, 0],
+    [0, 0, 164.34 + length],
+    [-285.12 - length, 0, 0],
+    [285.12, -944, -164.34],
+  ] satisfies Triple[]) {
+    assert.ok(cutDistances(none, reached).every((distance) => distance >= 0), `${reached.join(', ')} is cut`)
+  }
 })

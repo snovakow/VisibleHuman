@@ -1,7 +1,8 @@
-import { BufferGeometry, Float32BufferAttribute, Matrix4, SkinnedMesh, Uint16BufferAttribute, type Material } from 'three'
-import { add, attribute, float, length, normalGeometry, positionGeometry, uniformArray, varying, vec4 } from 'three/tsl'
+import { BufferGeometry, Float32BufferAttribute, Matrix4, SkinnedMesh, Uint16BufferAttribute, Vector4, type Material } from 'three'
+import { add, attribute, dot, float, length, normalGeometry, positionGeometry, uniform, uniformArray, varying, vec3, vec4 } from 'three/tsl'
 import type { Node } from 'three/webgpu'
 import { jointNames } from '../../../rig/rig.ts'
+import type { CutPlane } from '../../cuts.ts'
 import type { MeshSkinning } from '../../../surface/rigSkin.ts'
 import type { Posed } from '../../posed.ts'
 
@@ -66,6 +67,34 @@ function skinnedBy(skin: SkinMatrices, indices: string, shares: string): Node<'v
 export function wallShown(skin: SkinMatrices): Node<'bool'> {
   const gap = varying(length(skinnedBy(skin, 'skinIndex', 'skinWeight').sub(skinnedBy(skin, 'otherIndex', 'otherWeight'))), 'vWallGap')
   return attribute('wall', 'float').lessThan(float(wholeWall)).or(gap.greaterThan(float(wallOpen)))
+}
+
+// The three cuts as a posed mesh's materials test them, at the rest position, where the scan holds each point, rather
+// than where the pose has moved it, so a cut stays the same section of the anatomy as the body moves. Each fragment's
+// distances inside the three planes are measured at its vertices and carried to it, which is exact, since the rest
+// position runs linearly across a triangle; the planes are uniforms set in place, so moving a cut compiles nothing
+export interface CutTest {
+  // Sets the planes from the cuts, Axial, Coronal and Sagittal, as cutPlanes gives them
+  set(planes: readonly [CutPlane, CutPlane, CutPlane]): void
+  // Whether a fragment lies inside every plane, or every plane but the one skipped, which a cap lies on
+  kept(skip?: 0 | 1 | 2): Node<'bool'>
+}
+
+export function createCutTest(): CutTest {
+  const planes = [new Vector4(), new Vector4(), new Vector4()] as const
+  const nodes = planes.map((plane) => uniform(plane))
+  const inside = (n: number) => dot(nodes[n].xyz, positionGeometry).add(nodes[n].w)
+  const distances = varying(vec3(inside(0), inside(1), inside(2)), 'vCutDistance')
+  const axes = [distances.x, distances.y, distances.z]
+  return {
+    set(cut) {
+      cut.forEach(({ normal, constant }, n) => planes[n].set(normal[0], normal[1], normal[2], constant))
+    },
+    kept(skip) {
+      const tested = axes.filter((_, n) => n !== skip).map((distance) => distance.greaterThanEqual(0))
+      return tested.reduce((all, each) => all.and(each))
+    },
+  }
 }
 
 // Sets a geometry's skinning attributes from the worker's arrays: four joints and shares a vertex, and, for a mesh

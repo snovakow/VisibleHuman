@@ -13,7 +13,7 @@ import { whenFirstDrawn, type StyleContext, type StyleDrawing } from '../style.t
 import type { Posed } from '../../posed.ts'
 import { createCaps } from './caps.ts'
 import { blockGridOf, gridOf } from './grids.ts'
-import { createSkinMatrices, restNormal, restPosition, setSkinning, skinnedMesh, wallShown } from './posed.ts'
+import { createCutTest, createSkinMatrices, restNormal, restPosition, setSkinning, skinnedMesh, wallShown } from './posed.ts'
 import { isBackShell, isOit } from './rules.ts'
 import { positionInside, rimAt } from './shading.ts'
 
@@ -22,9 +22,10 @@ import { positionInside, rimAt } from './shading.ts'
 // loaded grid's density at the Bone threshold; with a Depth, the closed shell that far under the skin, meshed on the
 // skin's grid. Each is coloured from the body's 3D texture just inside the surface, or by the colour of the cells
 // either side of each vertex, lit by the style's own lights, darkened with depth by the scene's fog, and cut by the
-// three planes through one clipping group, with a cap on each open cut; the skin is see-through below full Opacity by
-// a depth pass ahead of its colour, with its far side under it as a choice, or, with OIT on, by the frame's sum of
-// every layer, which needs no depth pass
+// three planes through one clipping group, with a cap on each open cut; a posed body is cut where the scan holds each
+// point, so its cuts stay with the anatomy. The skin is see-through below full Opacity by a depth pass ahead of its
+// colour, with its far side under it as a choice, or, with OIT on, by the frame's sum of every layer, which needs no
+// depth pass
 
 // A see-through skin's draws, in the order they go, each ahead of the colour's at three's default of 0: the far
 // side's depth alone, then its colour, then the near side's depth alone, then its colour. All four list with the
@@ -109,8 +110,15 @@ export function createSurface({ events }: StyleContext): StyleDrawing {
     material.contextNode = samePosition
   }
 
+  // A posed body is cut at the rest position, where the scan holds each point, so that a cut stays the same section of
+  // the anatomy whatever the pose: its meshes stand outside the clipping group, which clips where the pose has moved
+  // them, and each material tests the planes itself, the discard three itself falls back to on a backend without clip
+  // distances
+  const cutTest = createCutTest()
+
   // The same, for a posed body: each colour read where the scan holds the point rather than where the pose has moved it,
-  // and the skin's passes, a wall's faces drawn only once the pose has parted it. Made the first time the body is posed
+  // and the skin's passes, a wall's faces drawn only once the pose has parted it; and every one cut at the rest
+  // position. Made the first time the body is posed
   const posedColourings = {
     texture: sampler.colourOf(sampler.texelAt(restPosition.sub(restNormal.normalize().mul(sampler.leastVoxel.mul(0.5))))),
     cells: colourings.cells,
@@ -130,22 +138,26 @@ export function createSurface({ events }: StyleContext): StyleDrawing {
     }
     for (const material of [made.skin, made.back, made.bone, made.shell]) material.colorNode = posedColourings.texture
     for (const material of [made.skin, made.back]) material.opacityNode = max(opacity, edge)
+    const kept = cutTest.kept()
     for (const material of [made.skin, made.skinDepth, made.back, made.backDepth]) {
       material.contextNode = samePosition
-      material.maskNode = shown
+      material.maskNode = shown.and(kept)
     }
+    made.bone.maskNode = kept
+    made.shell.maskNode = kept
     posedMaterials = made
     return made
   }
   const materialsOf = (posed: Posed | null) => (posed ? posedMaterialsOf() : materials)
 
   // The meshes sit in one clipping group, whose three planes the cuts move in place, so the materials keep their
-  // three planes and never recompile; the caps sit outside it
+  // three planes and never recompile; the caps sit outside it. A posed body's meshes sit in a group of their own
   const planes: [Plane, Plane, Plane] = [new Plane(), new Plane(), new Plane()]
   const group = new ClippingGroup()
   group.clippingPlanes = planes
+  const posedGroup = new Group()
   const caps = createCaps(sampler)
-  root.add(group, caps.object)
+  root.add(group, posedGroup, caps.object)
 
   const drawn: Record<Drawable, Drawn | null> = { skin: null, bone: null, shell: null }
   const asked: Record<Drawable, Asked | null> = { skin: null, bone: null, shell: null }
@@ -165,7 +177,7 @@ export function createSurface({ events }: StyleContext): StyleDrawing {
   const discard = (kind: Drawable) => {
     const last = drawn[kind]
     if (!last) return
-    group.remove(...last.meshes)
+    for (const each of last.meshes) each.removeFromParent()
     last.geometry.dispose()
     drawn[kind] = null
   }
@@ -198,7 +210,7 @@ export function createSurface({ events }: StyleContext): StyleDrawing {
         const meshes = build(geometry, skinning)
         discard(kind)
         for (const each of meshes) whenFirstDrawn(each, () => events.drawn(volume))
-        group.add(...meshes)
+        ;(posedAsked ? posedGroup : group).add(...meshes)
         drawn[kind] = { geometry, meshes, volume }
         const triangles = built.indices.length / 3
         events.meshed(kind, triangles)
@@ -338,10 +350,12 @@ export function createSurface({ events }: StyleContext): StyleDrawing {
       }
 
       if (shown) {
-        cutPlanes(shown.bounds.half, look.cuts).forEach(({ normal, constant }, n) => {
+        const cut = cutPlanes(shown.bounds.half, look.cuts)
+        cut.forEach(({ normal, constant }, n) => {
           planes[n].normal.set(...normal)
           planes[n].constant = constant
         })
+        cutTest.set(cut)
       }
 
       // Below full opacity, the near side's depth pass draws ahead of its colour and hides every layer but the

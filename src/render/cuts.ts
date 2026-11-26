@@ -62,3 +62,11 @@ export function cutPlanes(half: Triple, cuts: Cuts): [CutPlane, CutPlane, CutPla
     { normal: [1, 0, 0], constant: -(right - parked(cuts.sagittal)) },
   ]
 }
+
+// How far inside each of the three planes a point lies, Axial, Coronal and Sagittal: dot(normal, point) + constant,
+// which keeps the point where it's at least 0. The posed surface's materials measure this at a vertex's rest
+// position, where the scan holds it, so that a cut stays the same section of the anatomy whatever the pose
+export function cutDistances(planes: readonly [CutPlane, CutPlane, CutPlane], point: Triple): [number, number, number] {
+  const inside = ({ normal, constant }: CutPlane) => normal[0] * point[0] + normal[1] * point[1] + normal[2] * point[2] + constant
+  return [inside(planes[0]), inside(planes[1]), inside(planes[2])]
+}
