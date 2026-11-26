@@ -2,6 +2,13 @@
 
 Version Release Notes
 
+## 0.8.0 - 2026-11-26
+
+- Import, playing a clip made for another skeleton on the male, from a GLB, glTF, FBX or BVH file chosen with the button or dropped on the page
+- Save, downloading an imported clip as a file for the motion library
+- Idle, walk, jog, jump and reach out from Quaternius's Universal Animation Library in the Motion folder
+- Idle, walking, jogging, jump, big jump, waving, sitting idle, goalkeeper idle and batter on deck from Mixamo in the Motion folder
+
 ## 0.7.0 - 2026-11-26
 
 - Handles at the wrists and ankles, posing the male by dragging a hand or a foot, each joint turning within a body's natural range
