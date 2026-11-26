@@ -1,6 +1,6 @@
-import type { Quaternion } from 'three'
+import type { AnimationClip } from 'three'
 import type { Camera, Scene, WebGPURenderer } from 'three/webgpu'
-import type { JointName } from '../rig/rig.ts'
+import { createAnimator, type Animator, type Layer } from '../motion/animator.ts'
 import { isWebGPU } from './backend.ts'
 import type { Body, BodySource } from './body/body.ts'
 import { createBodyTextures } from './body/textures.ts'
@@ -9,7 +9,7 @@ import { createCompositor } from './frame/compositor.ts'
 import { framePlan } from './frame/plan.ts'
 import type { Look, Style } from './look.ts'
 import { createJointsOverlay } from './overlay.ts'
-import { bindPosed, posePosed, type Posed } from './posed.ts'
+import { bindPosed, settlePosed, type Posed } from './posed.ts'
 import { createStyle } from './styles/create.ts'
 import type { StyleDrawing, StyleEvents } from './styles/style.ts'
 
@@ -26,26 +26,39 @@ import type { StyleDrawing, StyleEvents } from './styles/style.ts'
 // A style is made when the look first names it and disposed of when the look names another, so only the style drawn
 // holds anything on the GPU, and the body's textures go with the last style that reads them.
 //
-// A body with a rig is drawn posed while a pose is set: its rig is bound to the body as drawn, the styles that can are
-// handed it, and each frame turns its bones to the pose last set. With no pose, nothing of the rig is made, and every
-// style draws the body as scanned, as it always has
+// A body with a rig is drawn posed while a motion is set: its rig is bound to the body as drawn, the styles that can
+// are handed it, and an animator plays the motion on its bones. Ahead of each frame in which the motion moves, and
+// only then, the animator advances, the bones' matrices and the skeleton's follow, the count the styles watch goes up,
+// the joints drawn over the body follow, and then the style readies its frame, in that order, so no style reads
+// matrices a frame old. With no motion, nothing of the rig is made, and every style draws the body as scanned, as it
+// always has
 
-// The pose to draw a rigged body in: each joint's rotation from the neutral pose, and whether its joints are drawn
+// The motion to draw a rigged body in: the clip it plays, a pose's or one over time, the layers mixed over it, how
+// fast its clips run and whether they do, how many single steps have been asked for since the page opened, each new
+// one stepping the clips once, and whether its joints are drawn
 export interface Motion {
-  rotations: Record<JointName, Quaternion>
+  clip: AnimationClip
+  layers: readonly Layer[]
+  speed: number
+  playing: boolean
+  steps: number
   joints: boolean
 }
+
+// The most a frame moves a motion on, in seconds, so that the first frame after a hidden tab doesn't jump it
+const longestStep = 0.1
 
 export interface Stage {
   // The body to draw from the next frame on, or none between two bodies
   setBody(source: BodySource | null): void
   // The look to draw it with from the next frame on
   setLook(look: Look): void
-  // The pose to draw it in from the next frame on, or none, to draw it as scanned. A new pose for the same body turns
-  // its bones and rebuilds nothing
+  // The motion to draw it in from the next frame on, or none, to draw it as scanned. A new motion for the same body
+  // fades into it from what the body shows and rebuilds nothing
   setMotion(motion: Motion | null): void
-  // Brings the scene up to date with the body and the look, and draws a frame
-  render(): void
+  // Brings the scene up to date with the body, the look and the motion, the motion moved on by the seconds since the
+  // last frame, and draws a frame
+  render(seconds: number): void
   // Frees everything the stage made and leaves the scene as it found it
   dispose(): void
 }
@@ -79,6 +92,29 @@ export function createStage(renderer: WebGPURenderer, scene: Scene, camera: Came
   let drawn: { style: Style; drawing: StyleDrawing } | null = null
   const overlay = createJointsOverlay()
   scene.add(overlay.object)
+  // The animator playing on the posed body's bones, made with its binding and let go with it, and the motion it was
+  // last handed, with the steps it has taken
+  let animated: { posed: Posed; animator: Animator; motion: Motion | null; steps: number } | null = null
+
+  // Hands the animator what changed in the motion since it was last handed one: a new clip fades in, or, for a newly
+  // bound body, shows at once; the steps asked for since are taken
+  const animate = (posed: Posed, next: Motion) => {
+    if (animated?.posed !== posed) {
+      animated?.animator.dispose()
+      animated = { posed, animator: createAnimator(posed.skeleton.root), motion: null, steps: next.steps }
+    }
+    const last = animated.motion
+    if (last === next) return animated.animator
+    const { animator } = animated
+    if (last?.clip !== next.clip) animator.play(next.clip, !last)
+    if (last?.layers !== next.layers) animator.setLayers(next.layers)
+    animator.setSpeed(next.speed)
+    animator.setPlaying(next.playing)
+    for (; animated.steps < next.steps; animated.steps++) animator.step()
+    if (last?.joints !== next.joints) turned = true
+    animated.motion = next
+    return animator
+  }
 
   const strike = (last: { drawing: StyleDrawing }) => {
     scene.remove(last.drawing.object)
@@ -135,28 +171,43 @@ export function createStage(renderer: WebGPURenderer, scene: Scene, camera: Came
     },
     setMotion(next) {
       if (next === motion) return
-      // Posing a body or letting it go remakes it; a new pose for it only turns its bones
+      // Posing a body or letting it go remakes it; a new motion for it only plays on its bones
       if ((next === null) !== (motion === null)) stale = true
       motion = next
-      turned = true
     },
-    render() {
+    render(seconds) {
       if (stale) {
         // Cleared first, so that an update that fails isn't tried again on every frame
         stale = false
         update()
       }
-      // The bones turn, and the joints drawn over them follow, only when the pose or the body has changed
-      if (turned) {
-        turned = false
-        const posed = body?.posed ?? null
-        if (posed && motion) posePosed(posed, motion.rotations)
-        overlay.update(posed, motion?.joints ?? false)
+      const posed = body?.posed ?? null
+      if (posed && motion) {
+        // The bones turn, and the joints drawn over them follow, only while the motion moves or when the body has
+        // changed, so a pose held draws as it did and costs nothing
+        const animator = animate(posed, motion)
+        if (turned || animator.moving) {
+          turned = false
+          animator.update(Math.min(seconds, longestStep))
+          settlePosed(posed)
+          overlay.update(posed, motion.joints)
+        }
+      } else {
+        if (animated) {
+          animated.animator.dispose()
+          animated = null
+        }
+        if (turned) {
+          turned = false
+          overlay.update(null, false)
+        }
       }
       drawn?.drawing.beforeFrame?.(camera)
       compositor.render()
     },
     dispose() {
+      animated?.animator.dispose()
+      animated = null
       if (drawn) strike(drawn)
       drawn = null
       scene.remove(overlay.object)

@@ -1,29 +1,52 @@
 import { useFrame, useThree } from '@react-three/fiber'
 import { useEffect, useRef } from 'react'
+import type { AnimationClip } from 'three'
 import { lookOf } from '../look.ts'
-import { rotationsOfAngles } from '../motion/angles.ts'
+import type { AnglePose } from '../motion/angles.ts'
+import type { Layer } from '../motion/animator.ts'
+import { clipOf, poseClip } from '../motion/clip.ts'
 import { asWebGPU } from '../render/backend.ts'
 import { createStage, type Motion, type Stage } from '../render/stage.ts'
 import { scanRotations } from '../rig/pose.ts'
+import type { RigFile } from '../rig/rigFile.ts'
+import type { SceneAxes } from '../volume/format.ts'
 import { noMotion, scanMotion, styleMoves, useStore } from '../store.ts'
 
 type StoreState = ReturnType<typeof useStore.getState>
 
+// Each pose's clip, made once, so that the animator meets the same clip again and goes on with the action it made
+// for it
+const clips = new WeakMap<AnglePose, AnimationClip>()
+const clipFor = (id: string, pose: AnglePose) => {
+  let clip = clips.get(pose)
+  if (!clip) clips.set(pose, (clip = clipOf(id, { kind: 'pose', pose })))
+  return clip
+}
+// No layers over the motion, the same list each time, so that a new motion hands the animator none afresh
+const noLayers: readonly Layer[] = []
+// The scan's pose as a clip, for the rig and the axes it was made for
+let scanned: { rig: RigFile; axes: SceneAxes; clip: AnimationClip } | null = null
+const scanClipFor = (rig: RigFile, axes: SceneAxes) => {
+  if (scanned?.rig !== rig || scanned.axes !== axes) scanned = { rig, axes, clip: poseClip(scanMotion, scanRotations(rig.rig, axes)) }
+  return scanned.clip
+}
+
 // The motion the stage draws the body in, as the store has it: none until the body's rig is in, and, for a motion of
-// the library's, its pose. While a pose picked is still on its way the body holds the one it was drawn in, so that
-// going from one pose to the next never lets it go between, which would mesh it unposed and then posed again. The same
-// object comes back while nothing it's made from changes, so a store change that doesn't touch it turns no bones
+// the library's, its clip once its pose is. While a pose picked is still on its way the body holds the one it was
+// drawn in, so that going from one pose to the next never lets it go between, which would mesh it unposed and then
+// posed again. The same object comes back while nothing it's made from changes, so a store change that doesn't touch
+// it hands the animator nothing
 let lastMotion: { from: readonly unknown[]; motion: Motion | null } | null = null
 function motionOf({ motion, rig, motionPose, volume, showJoints }: StoreState): Motion | null {
   const from = [motion, rig, motionPose, volume?.axes, showJoints]
   if (lastMotion && lastMotion.from.every((value, n) => value === from[n])) return lastMotion.motion
-  let made: Motion | null = null
+  let clip: AnimationClip | null = null
   if (motion !== noMotion && rig && volume) {
-    const held = lastMotion?.from[1] === rig ? lastMotion.motion : null
-    if (motion === scanMotion) made = { rotations: scanRotations(rig.rig, volume.axes), joints: showJoints }
-    else if (motionPose) made = { rotations: rotationsOfAngles(motionPose), joints: showJoints }
-    else if (held) made = held.joints === showJoints ? held : { ...held, joints: showJoints }
+    if (motion === scanMotion) clip = scanClipFor(rig, volume.axes)
+    else if (motionPose) clip = clipFor(motion, motionPose)
+    else if (lastMotion?.from[1] === rig) clip = lastMotion.motion?.clip ?? null
   }
+  const made = clip ? { clip, layers: noLayers, speed: 1, playing: true, steps: 0, joints: showJoints } : null
   lastMotion = { from, motion: made }
   return made
 }
@@ -63,8 +86,8 @@ export function StageHost() {
   }, [gl, scene, camera])
 
   // The frame callback subscribes before the stage is made, so until then it renders the scene as R3F would
-  useFrame((state) => {
-    if (stage.current) stage.current.render()
+  useFrame((state, delta) => {
+    if (stage.current) stage.current.render(delta)
     else state.gl.render(state.scene, state.camera)
   }, renderPriority)
 

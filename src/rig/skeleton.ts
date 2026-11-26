@@ -42,7 +42,12 @@ export function applyPose(rig: RigSkeleton, pose: Pose) {
   rig.skeleton.update()
 }
 
-// Each joint's place in the scene as the skeleton stands, for drawing it
-export function jointPlaces(rig: RigSkeleton): Record<JointName, Vector3> {
-  return byJoint((name) => new Vector3().setFromMatrixPosition(rig.bones[name].matrixWorld))
+// Each joint's place in the scene as the skeleton stands, for drawing it, set in the places given where a frame draws
+// it again, so that nothing is made each time
+export function jointPlaces(rig: RigSkeleton, into: Record<JointName, Vector3> = byJoint(() => new Vector3())): Record<JointName, Vector3> {
+  for (let n = 0; n < jointNames.length; n++) {
+    const name = jointNames[n]
+    into[name].setFromMatrixPosition(rig.bones[name].matrixWorld)
+  }
+  return into
 }

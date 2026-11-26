@@ -27,7 +27,8 @@ export const restPosition = positionGeometry
 export const restNormal = normalGeometry
 
 // The bones' skinning matrices as a material reads them: one per joint, copied from the posed skeleton's ahead of each
-// frame, so a material can skin a vertex by joints three's own skinning doesn't use
+// frame, so a material can skin a vertex by joints three's own skinning doesn't use. The copy runs every frame, a
+// motion's included, so it makes nothing
 export interface SkinMatrices {
   matrices: Matrix4[]
   node: ReturnType<typeof uniformArray<'mat4'>>
@@ -44,7 +45,7 @@ export function createSkinMatrices(): SkinMatrices {
     copyFrom(posed) {
       const from = posed.skeleton.skeleton.boneMatrices
       if (!from) return
-      matrices.forEach((matrix, n) => matrix.fromArray(from, n * 16))
+      for (let n = 0; n < matrices.length; n++) matrices[n].fromArray(from, n * 16)
     },
   }
 }
