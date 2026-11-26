@@ -50,9 +50,15 @@ export interface Stage {
   dispose(): void
 }
 
-// Whether two bodies, or two of what a body is made from, are of the same volume, bounds, levels and rig
+// Whether two bodies, or two of what a body is made from, are of the same volume, bounds, levels, rig and posed levels
 function isSame(a: BodySource | null, b: BodySource | null) {
-  return a?.volume === b?.volume && a?.bounds === b?.bounds && a?.levels === b?.levels && a?.rig === b?.rig
+  return (
+    a?.volume === b?.volume &&
+    a?.bounds === b?.bounds &&
+    a?.levels === b?.levels &&
+    a?.rig === b?.rig &&
+    a?.posedLevels === b?.posedLevels
+  )
 }
 
 export function createStage(renderer: WebGPURenderer, scene: Scene, camera: Camera, events: StyleEvents): Stage {

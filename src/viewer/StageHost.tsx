@@ -47,8 +47,8 @@ export function StageHost() {
     const { drawn, setTriangles } = useStore.getState()
     const made = createStage(asWebGPU(gl), scene, camera, { drawn, meshed: setTriangles })
     const feed = (state: StoreState) => {
-      const { volume, bounds, levels, options, rig } = state
-      made.setBody(volume && bounds && levels ? { volume, bounds, levels, rig } : null)
+      const { volume, bounds, levels, options, rig, posedLevels } = state
+      made.setBody(volume && bounds && levels ? { volume, bounds, levels, rig, posedLevels } : null)
       made.setLook(lookOf(options))
       made.setMotion(styleMoves(options.style) ? motionOf(state) : null)
     }

@@ -16,6 +16,8 @@ export interface Posed {
   bound: Bound
   skeleton: RigSkeleton
   key: string
+  // How many times the bones have turned, so a style that keeps something posed can tell it's out of date
+  turns: number
 }
 
 let bindings = 0
@@ -23,11 +25,12 @@ let bindings = 0
 export function bindPosed(volume: Volume, bounds: Bounds, file: RigFile): Posed {
   const placement: Placement = { axes: volume.axes, origin: volume.origin, center: bounds.center }
   const bound = bindSkeleton(file.rig, placement)
-  return { file, placement, bound, skeleton: createRigSkeleton(bound), key: `${volume.body}/${++bindings}` }
+  return { file, placement, bound, skeleton: createRigSkeleton(bound), key: `${volume.body}/${++bindings}`, turns: 0 }
 }
 
 // Turns the bones to a pose's rotations, the root where the scan holds it
 export function posePosed(posed: Posed, rotations: Record<JointName, Quaternion>) {
   const pose: Pose = { rotations, root: posed.bound.offsets.hips }
   applyPose(posed.skeleton, pose)
+  posed.turns++
 }

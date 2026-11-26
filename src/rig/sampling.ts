@@ -185,3 +185,20 @@ export function chainsOnGrid(file: RigGridCells, grid: SourceGrid): ChainsOnGrid
   }
   return { chain, other, wall }
 }
+
+// The chain of each voxel of another grid, a volume's, from the rig file's nearest cell, or noChain beyond the file's
+// grid: what a posed body's splat levels part their blocks by. Read voxel by voxel as the levels are built, rather
+// than laid out for the whole grid, which for a finer level would be tens of millions of cells at once
+export function chainOfVoxel(file: RigGridCells, grid: SourceGrid): (i: number, j: number, k: number) => number {
+  const [fx, fy, fz] = file.size
+  const scale = [0, 1, 2].map((axis) => grid.spacing[axis] / file.spacing[axis])
+  const offset = [0, 1, 2].map((axis) => (grid.origin[axis] - file.origin[axis]) / file.spacing[axis])
+  const { chain } = file.cells
+  return (i, j, k) => {
+    const ri = Math.round(offset[0] + i * scale[0])
+    const rj = Math.round(offset[1] + j * scale[1])
+    const rk = Math.round(offset[2] + k * scale[2])
+    if (ri < 0 || rj < 0 || rk < 0 || ri >= fx || rj >= fy || rk >= fz) return noChain
+    return chain[ri + fx * (rj + fy * rk)]
+  }
+}

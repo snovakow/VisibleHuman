@@ -1,3 +1,4 @@
+import type { PosedLevel } from '../../rig/cellSkinning.ts'
 import type { RigFile } from '../../rig/rigFile.ts'
 import type { Volume } from '../../volume/format.ts'
 import type { Bounds, Levels } from '../../volume/levels.ts'
@@ -13,11 +14,13 @@ export interface Body extends BodySource {
   posed: Posed | null
 }
 
-// What the stage makes a body from, as the page holds it: the volume, its bounds and its levels, and its rig file
-// once it's loaded, which a body with no limbs never has
+// What the stage makes a body from, as the page holds it: the volume, its bounds and its levels, its rig file once
+// it's loaded, which a body with no limbs never has, and its levels built again for drawing it posed, with their
+// skinning, as they're built
 export interface BodySource {
   volume: Volume
   bounds: Bounds
   levels: Levels
   rig: RigFile | null
+  posedLevels: readonly PosedLevel[] | null
 }

@@ -32,7 +32,7 @@ function volumeOf(mri: boolean): Volume {
 }
 
 function bodyOf(volume: Volume): Body {
-  return { volume, bounds: bodyBounds(volume), levels: [], rig: null, textures: createBodyTextures(volume), posed: null }
+  return { volume, bounds: bodyBounds(volume), levels: [], rig: null, posedLevels: null, textures: createBodyTextures(volume), posed: null }
 }
 
 // Counts a texture's disposals, which is how three frees it from the GPU
@@ -109,7 +109,7 @@ void test('a sampler holds only what it reads, and lets go of it when it binds a
   const volume = volumeOf(true)
   const textures = createBodyTextures(volume)
   const { noting, built, freed } = noted(textures)
-  const body: Body = { volume, bounds: bodyBounds(volume), levels: [], rig: null, textures: noting, posed: null }
+  const body: Body = { volume, bounds: bodyBounds(volume), levels: [], rig: null, posedLevels: null, textures: noting, posed: null }
 
   // One that doesn't read the coverage never asks for it
   const plain = createBodySampler({ coverage: false })
@@ -149,7 +149,7 @@ void test('a sampler that reads the fields holds them and the colour but not the
   // As the trace's does, which reads the coverage only within the fields
   const volume = volumeOf(true)
   const { noting, built, freed } = noted(createBodyTextures(volume))
-  const body: Body = { volume, bounds: bodyBounds(volume), levels: [], rig: null, textures: noting, posed: null }
+  const body: Body = { volume, bounds: bodyBounds(volume), levels: [], rig: null, posedLevels: null, textures: noting, posed: null }
   const sampler = createBodySampler({ coverage: false, fields: true })
   sampler.bind(body, 'density')
   assert.deepEqual(built, ['colour', 'fields'])

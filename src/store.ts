@@ -9,8 +9,11 @@ import type { SurfaceKind } from './surface/surfaceWorker.ts'
 import { isAbort, loadBodies, loadVolume, NotBuiltError } from './volume/loadVolume.ts'
 import type { AnglePose } from './motion/angles.ts'
 import { loadLibrary, loadPose, type MotionEntry } from './motion/library.ts'
+import { skinningBuild, type PosedLevel, type SkinningBuild } from './rig/cellSkinning.ts'
 import { loadRig } from './rig/loadRig.ts'
+import { bindSkeleton, type Placement } from './rig/pose.ts'
 import type { RigFile } from './rig/rigFile.ts'
+import { chainOfVoxel } from './rig/sampling.ts'
 import type { Style } from './render/look.ts'
 
 export type Status = 'loading' | 'ready' | 'failed'
@@ -75,6 +78,10 @@ interface State {
   motionPose: AnglePose | null
   // The rig of the body shown, once it's loaded, for a body that has one
   rig: RigFile | null
+  // The splat levels of the volume shown built again for the body posed, each block a cell for each chain it holds,
+  // with their cells' skinning, as they're built: once the rig is in, a motion is picked and the splats are shown,
+  // the Detail shown first
+  posedLevels: readonly PosedLevel[] | null
   // Whether the posed body's joints are drawn over it
   showJoints: boolean
   setShowJoints: (visible: boolean) => void
@@ -86,7 +93,7 @@ interface State {
 export const noMotion = 'none'
 export const scanMotion = 'scan'
 // The styles that draw a body posed, more as each learns to; the others draw it as it was scanned, whatever the motion
-const movingStyles: readonly Style[] = ['surface']
+const movingStyles: readonly Style[] = ['surface', 'splats']
 export const styleMoves = (style: unknown): boolean => movingStyles.some((each) => each === style)
 
 const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error))
@@ -182,6 +189,96 @@ function buildRest(set: StoreApi<State>['setState'], get: StoreApi<State>['getSt
   setTimeout(slice, 0)
 }
 
+// The posed levels being built for the volume shown and its rig, which a new volume or rig replaces: the build of the
+// levels by chain, the level being skinned, the levels taken to skin, and those done
+let posing: {
+  volume: Volume
+  rig: RigFile
+  levels: ReturnType<StagedBody['stagePosed']>
+  skinning: { level: PosedLevel['level']; build: SkinningBuild } | null
+  taken: Set<PosedLevel['level']>
+  done: PosedLevel[]
+} | null = null
+// The cells skinned between looks at the clock, about as long as a slice of the levels' voxels
+const sliceCells = 4_096
+
+// Builds the posed levels, a slice at a time from a task of its own as buildRest builds the levels, the Detail shown
+// or waited for first, each level skinned once it's built and handed on once it's skinned, until a new volume or rig
+// replaces them. Started only while a motion is picked and the splats are shown, the one style that needs them, and
+// once for a volume and its rig
+function buildPosed(set: StoreApi<State>['setState'], get: StoreApi<State>['getState']) {
+  const { volume, bounds, rig, motion, options, body } = get()
+  if (!volume || !bounds || !rig || motion === noMotion || options.style !== 'splats') return
+  if (posing?.volume === volume && posing.rig === rig) return
+  if (!staging || staging.volume !== volume) return
+  const placement: Placement = { axes: volume.axes, origin: volume.origin, center: bounds.center }
+  const bound = bindSkeleton(rig.rig, placement)
+  const mine: NonNullable<typeof posing> = {
+    volume,
+    rig,
+    levels: staging.staged.stagePosed(chainOfVoxel(rig, volume)),
+    skinning: null,
+    taken: new Set(),
+    done: [],
+  }
+  posing = mine
+  set({ posedLevels: null })
+  const start = performance.now()
+  // When each level was ready, by Detail, and the longest slice
+  const ready = new Map<number, number>()
+  let longest = 0
+  let slices = 0
+  const wanted = () => get().waiting ?? get().options.detail
+  const slice = () => {
+    if (posing !== mine) return
+    const sliceStart = performance.now()
+    const end = sliceStart + sliceMs
+    const before = mine.done.length
+    let more = true
+    while (more && performance.now() < end) {
+      if (!mine.skinning) {
+        const unskinned = mine.levels.levels.filter((level) => !mine.taken.has(level))
+        const level = unskinned.find((each) => each.block === wanted()) ?? unskinned[0]
+        if (level) {
+          mine.taken.add(level)
+          mine.skinning = { level, build: skinningBuild(level, rig, placement, bound) }
+        }
+      }
+      if (mine.skinning) {
+        const { level, build } = mine.skinning
+        const skinning = build.advance(sliceCells)
+        if (skinning) {
+          ready.set(level.block, performance.now() - start)
+          mine.done.push({ level, skinning })
+          mine.skinning = null
+        }
+        continue
+      }
+      more = mine.levels.advance(sliceVoxels, wanted())
+      // The last level built is still to skin
+      if (!more && mine.levels.levels.some((level) => !mine.taken.has(level))) more = true
+    }
+    slices++
+    longest = Math.max(longest, performance.now() - sliceStart)
+    if (mine.done.length !== before) {
+      const posedLevels = [...mine.done].sort((a, b) => a.level.block - b.level.block)
+      set({ posedLevels })
+    }
+    if (more || mine.skinning) {
+      setTimeout(slice, 0)
+      return
+    }
+    const counts = [...mine.done]
+      .sort((a, b) => a.level.block - b.level.block)
+      .map(({ level }) => `${level.count.toLocaleString('en')} at ${level.label}, ready at ${Math.round(ready.get(level.block) ?? 0)} ms`)
+    console.info(
+      `VisibleHuman: the ${body ?? 'body'}'s posed levels, as ${counts.join('; ') || 'none'}, built and skinned in ` +
+        `${Math.round(performance.now() - start)} ms over ${slices} slices, the longest ${Math.round(longest)} ms`,
+    )
+  }
+  setTimeout(slice, 0)
+}
+
 // The library's index, fetched once for the page, and a load of a rig or a pose in progress, which the next one aborts
 let libraryFetch: Promise<readonly MotionEntry[]> | null = null
 let motionLoad: AbortController | null = null
@@ -201,6 +298,7 @@ async function loadMotion(set: StoreApi<State>['setState'], get: StoreApi<State>
       const loaded = await loadRig(entry.rig, controller.signal)
       if (!isCurrent()) return
       set({ rig: loaded })
+      buildPosed(set, get)
     }
     if (motion === scanMotion) return
     const motions = await (libraryFetch ??= loadLibrary())
@@ -264,6 +362,7 @@ export const useStore = create<State>()((set, get, api) => ({
       const options = drawableOptions(picked, state.capabilities)
       return { picked, options: shallow(options, state.options) ? state.options : options }
     })
+    buildPosed(set, get)
   },
   capabilities: { weighted: true, oit: true, mri: false },
   // A backend that lacks something draws the options that need it at their defaults, as a switch to the fallback may
@@ -291,6 +390,7 @@ export const useStore = create<State>()((set, get, api) => ({
   motions: null,
   motionPose: null,
   rig: null,
+  posedLevels: null,
   showJoints: false,
   setShowJoints: (visible) => set((state) => (state.showJoints === visible ? state : { showJoints: visible })),
   loadMotions: () => {
@@ -307,6 +407,7 @@ export const useStore = create<State>()((set, get, api) => ({
     if (get().motion === motion) return
     set({ motion, motionPose: null })
     if (motion === noMotion) return
+    buildPosed(set, get)
     void loadMotion(set, get)
   },
   load: async (bodyId, levelId, signal) => {
@@ -357,9 +458,12 @@ export const useStore = create<State>()((set, get, api) => ({
         level: level.id,
         status: 'loading',
         error: null,
-        ...(sameBody ? {} : { volume: null, bounds: null, levels: null, details: null, waiting: null, rig: null }),
+        ...(sameBody ? {} : { volume: null, bounds: null, levels: null, details: null, waiting: null, rig: null, posedLevels: null }),
       })
-      if (!sameBody) staging = null
+      if (!sameBody) {
+        staging = null
+        posing = null
+      }
 
       let loaded
       try {
@@ -400,6 +504,7 @@ export const useStore = create<State>()((set, get, api) => ({
       shown = { body: body.id, level: level.id }
       lastLevels.set(body.id, level.id)
       staging = { volume: loaded.volume, body: body.id, staged, started: false }
+      posing = null
       // A body without an MRI draws the options that read one at their defaults, and keeps them as picked, so that
       // they come back with a body that has one
       const mri = loaded.volume.mri !== undefined
@@ -412,12 +517,14 @@ export const useStore = create<State>()((set, get, api) => ({
         levels: staged.levels,
         details: staged.details,
         waiting: null,
+        posedLevels: null,
         capabilities,
         picked: taken,
         options: drawableOptions(taken, capabilities),
       })
-      // A body asked to move loads its own rig
+      // A body asked to move loads its own rig, and with it in, a new level of the body builds its posed levels
       if (get().motion !== noMotion && !get().rig) void loadMotion(set, get)
+      buildPosed(set, get)
 
       if (firstFrame !== 'logged') {
         firstFrame = {
