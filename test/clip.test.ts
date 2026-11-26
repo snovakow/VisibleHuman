@@ -4,6 +4,7 @@ import { test } from 'node:test'
 import { AdditiveAnimationBlendMode, Quaternion, type AnimationClip } from 'three'
 import { readAnglePose, rotationOf } from '../src/motion/angles.ts'
 import { clipOf, isStill, layerClip, poseLength, readMotionFile, type MotionFile } from '../src/motion/clip.ts'
+import { readLibrary } from '../src/motion/library.ts'
 import { jointNames, type JointName } from '../src/rig/rig.ts'
 
 // The motion files (src/motion/clip.ts): the three kinds told apart and read strictly, the library's committed files
@@ -99,6 +100,26 @@ void test("a pose file of 0.3.0 reads as before, and its clip holds each joint's
       for (const time of [0, 0.25, poseLength, 7.5]) assert.deepEqual(sample(clip, joint, time).toArray(), rotation.toArray())
     }
   }
+})
+
+void test("the library's index lists a file of its own kind for each motion, and offers the poses and the breathing as layers", () => {
+  const entries = readLibrary(readJson('index.json'))
+  const kinds = Object.fromEntries(entries.map((entry) => [entry.id, readMotionFile(readJson(entry.file.replace('motion/', '')), entry.id).kind]))
+  assert.deepEqual(kinds, {
+    standing: 'pose',
+    anatomical: 'pose',
+    't-pose': 'pose',
+    'arms-out': 'pose',
+    'arms-forward': 'pose',
+    'knee-up': 'pose',
+    sitting: 'pose',
+    breathing: 'keyed',
+    walk: 'keyed',
+  })
+  assert.deepEqual(
+    entries.filter((entry) => entry.layer).map((entry) => entry.id),
+    ['anatomical', 't-pose', 'arms-out', 'arms-forward', 'knee-up', 'sitting', 'breathing'],
+  )
 })
 
 void test('a clip is sampled at its keys, between them, and across its loop, which comes back to its first key at its end', () => {

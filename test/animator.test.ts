@@ -193,7 +193,7 @@ void test('speed 0 holds the pose, a paused clip holds, and a step moves it on o
 void test("a clip's end is its start: after a whole loop it is where it began", () => {
   const rig = skeleton()
   const animator = createAnimator(rig.root)
-  for (const clip of [swing]) {
+  for (const clip of [swing, library('walk'), library('breathing')]) {
     const { name } = clip
     animator.play(clip, true)
     animator.update(0)
@@ -237,9 +237,9 @@ void test('letting the animator go leaves the bones in the neutral pose and the 
 })
 
 // A clip has a track for every joint, named for its bone, so every motion binds every bone and none goes unbound
-void test('every track of a clip binds to a bone of the skeleton', () => {
+void test("every track of the library's motions binds to a bone of the skeleton", () => {
   const rig = skeleton()
-  for (const clip of [swing]) {
+  for (const clip of [swing, library('walk'), library('breathing'), library('anatomical')]) {
     const joints: string[] = clip.tracks.map((track) => track.name.replace('.quaternion', ''))
     assert.deepEqual(joints, [...jointNames])
     const animator = createAnimator(rig.root)

@@ -1,10 +1,13 @@
 {
   "motions": [
     { "id": "standing", "label": "standing", "file": "motion/standing.json" },
+    { "id": "anatomical", "label": "anatomical position", "file": "motion/anatomical.json", "layer": true },
     { "id": "t-pose", "label": "T-pose", "file": "motion/t-pose.json", "layer": true },
     { "id": "arms-out", "label": "arms out", "file": "motion/arms-out.json", "layer": true },
     { "id": "arms-forward", "label": "arms forward", "file": "motion/arms-forward.json", "layer": true },
     { "id": "knee-up", "label": "knee up", "file": "motion/knee-up.json", "layer": true },
-    { "id": "sitting", "label": "sitting", "file": "motion/sitting.json", "layer": true }
+    { "id": "sitting", "label": "sitting", "file": "motion/sitting.json", "layer": true },
+    { "id": "breathing", "label": "breathing", "file": "motion/breathing.json", "layer": true },
+    { "id": "walk", "label": "walk in place", "file": "motion/walk.json" }
   ]
 }
