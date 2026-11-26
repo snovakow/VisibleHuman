@@ -2,6 +2,10 @@
 
 Version Release Notes
 
+## 0.5.0 - 2026-11-26
+
+- Motion folder in the splats style, each splat moving with the male's flesh and each limb taking its own splats with it
+
 ## 0.4.0 - 2026-11-25
 
 - Cuts on the posed body, each the same section of the anatomy in any pose
