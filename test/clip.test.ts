@@ -120,6 +120,15 @@ void test("the library's index lists a file of its own kind for each motion, and
     'ual-jog': 'baked',
     'ual-jump': 'baked',
     'ual-reach': 'baked',
+    'mixamo-idle': 'baked',
+    'mixamo-walk': 'baked',
+    'mixamo-jog': 'baked',
+    'mixamo-jump': 'baked',
+    'mixamo-big-jump': 'baked',
+    'mixamo-wave': 'baked',
+    'mixamo-sitting': 'baked',
+    'mixamo-goalkeeper': 'baked',
+    'mixamo-batter': 'baked',
   })
   assert.deepEqual(
     entries.filter((entry) => entry.layer).map((entry) => entry.id),

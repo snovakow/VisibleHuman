@@ -13,6 +13,15 @@
     { "id": "ual-walk", "label": "walk (Quaternius)", "file": "motion/ual-walk.json", "kind": "baked", "duration": 1.333333 },
     { "id": "ual-jog", "label": "jog (Quaternius)", "file": "motion/ual-jog.json", "kind": "baked", "duration": 0.933333 },
     { "id": "ual-jump", "label": "jump (Quaternius)", "file": "motion/ual-jump.json", "kind": "baked", "duration": 1.333333 },
-    { "id": "ual-reach", "label": "reach out (Quaternius)", "file": "motion/ual-reach.json", "kind": "baked", "duration": 2 }
+    { "id": "ual-reach", "label": "reach out (Quaternius)", "file": "motion/ual-reach.json", "kind": "baked", "duration": 2 },
+    { "id": "mixamo-idle", "label": "idle (Mixamo)", "file": "motion/mixamo-idle.json", "kind": "baked", "duration": 8.333333 },
+    { "id": "mixamo-walk", "label": "walking (Mixamo)", "file": "motion/mixamo-walk.json", "kind": "baked", "duration": 1.033333 },
+    { "id": "mixamo-jog", "label": "jogging (Mixamo)", "file": "motion/mixamo-jog.json", "kind": "baked", "duration": 2.566667 },
+    { "id": "mixamo-jump", "label": "jump (Mixamo)", "file": "motion/mixamo-jump.json", "kind": "baked", "duration": 2.166667 },
+    { "id": "mixamo-big-jump", "label": "big jump (Mixamo)", "file": "motion/mixamo-big-jump.json", "kind": "baked", "duration": 2.366667 },
+    { "id": "mixamo-wave", "label": "waving (Mixamo)", "file": "motion/mixamo-wave.json", "kind": "baked", "duration": 1.466667 },
+    { "id": "mixamo-sitting", "label": "sitting idle (Mixamo)", "file": "motion/mixamo-sitting.json", "kind": "baked", "duration": 4.3 },
+    { "id": "mixamo-goalkeeper", "label": "goalkeeper idle (Mixamo)", "file": "motion/mixamo-goalkeeper.json", "kind": "baked", "duration": 4.633333 },
+    { "id": "mixamo-batter", "label": "batter on deck (Mixamo)", "file": "motion/mixamo-batter.json", "kind": "baked", "duration": 37.333332 }
   ]
 }
