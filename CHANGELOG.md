@@ -2,6 +2,14 @@
 
 Version Release Notes
 
+## 0.6.0 - 2026-11-26
+
+- Anatomical position, breathing and walk in place in the Motion folder, the breathing and the walk playing over and over
+- Crossfades between motions, half a second long, from wherever the body stands
+- Play, Speed and Step, playing or holding a clip, setting how fast it plays and moving it on a frame at a time
+- Layers folder, mixing poses and the breathing over the motion, each by its own weight
+- Motion named in the page's address, opening the page on it
+
 ## 0.5.0 - 2026-11-26
 
 - Motion folder in the splats style, each splat moving with the male's flesh and each limb taking its own splats with it
