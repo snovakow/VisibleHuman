@@ -2,6 +2,12 @@
 
 Version Release Notes
 
+## 0.7.0 - 2026-11-26
+
+- Handles at the wrists and ankles, posing the male by dragging a hand or a foot, each joint turning within a body's natural range
+- Poses dragged by hand kept over the motion playing, a raised hand staying raised over the walk, until Reset
+- Copy pose, putting the pose drawn on the clipboard as a pose file for the motion library
+
 ## 0.6.0 - 2026-11-26
 
 - Anatomical position, breathing and walk in place in the Motion folder, the breathing and the walk playing over and over
