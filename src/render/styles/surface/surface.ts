@@ -5,6 +5,7 @@ import { installRig, requestSurface, type RigRequest, type SurfaceRequest } from
 import type { MeshSkinning, SkinningMode } from '../../../surface/rigSkin.ts'
 import { bodyCoverage, type Triple, type Volume } from '../../../volume/format.ts'
 import { labelOf } from '../../../volume/levels.ts'
+import { hasClipDistances } from '../../backend.ts'
 import type { Body } from '../../body/body.ts'
 import { createBodySampler, type Channel } from '../../body/sampler.ts'
 import { cutPlanes } from '../../cuts.ts'
@@ -14,6 +15,7 @@ import type { Posed } from '../../posed.ts'
 import { createCaps, createPosedCaps } from './caps.ts'
 import { blockGridOf, gridOf } from './grids.ts'
 import { createCutTest, createSkinMatrices, restNormal, restPosition, setSkinning, skinnedMesh, wallShown } from './posed.ts'
+import { clipAtRest } from './restClipping.ts'
 import { isBackShell, isOit } from './rules.ts'
 import { positionInside, rimAt } from './shading.ts'
 
@@ -65,7 +67,7 @@ interface Asked {
 
 const sameValues = (a: readonly unknown[], b: readonly unknown[]) => a.length === b.length && a.every((value, n) => value === b[n])
 
-export function createSurface({ events }: StyleContext): StyleDrawing {
+export function createSurface({ events, renderer }: StyleContext): StyleDrawing {
   const root = new Group()
   const headlight = new PointLight()
   headlight.decay = 0
@@ -111,14 +113,16 @@ export function createSurface({ events }: StyleContext): StyleDrawing {
   }
 
   // A posed body is cut at the rest position, where the scan holds each point, so that a cut stays the same section of
-  // the anatomy whatever the pose: its meshes stand outside the clipping group, which clips where the pose has moved
-  // them, and each material tests the planes itself, the discard three itself falls back to on a backend without clip
-  // distances
+  // the anatomy whatever the pose. Where the backend clips by distance, as the unposed meshes are cut, the posed
+  // meshes share their clipping group and their materials clip at the rest position by the same distances, so the two
+  // cuts' edges are alike; elsewhere they stand outside the group and each material tests the planes itself, the
+  // discard three itself falls back to there
+  const byDistance = hasClipDistances(renderer)
   const cutTest = createCutTest()
 
   // The same, for a posed body: each colour read where the scan holds the point rather than where the pose has moved it,
-  // and the skin's passes and the shell's, a wall's faces drawn only once the pose has parted it; and every one cut at
-  // the rest position. Made the first time the body is posed
+  // and the skin's passes and the shell's, a wall's faces drawn only once the pose has parted it. Made the first time
+  // the body is posed
   const posedColourings = {
     texture: sampler.colourOf(sampler.texelAt(restPosition.sub(restNormal.normalize().mul(sampler.leastVoxel.mul(0.5))))),
     cells: colourings.cells,
@@ -138,28 +142,29 @@ export function createSurface({ events }: StyleContext): StyleDrawing {
     }
     for (const material of [made.skin, made.back, made.bone, made.shell]) material.colorNode = posedColourings.texture
     for (const material of [made.skin, made.back]) material.opacityNode = max(opacity, edge)
-    const kept = cutTest.kept()
-    for (const material of [made.skin, made.skinDepth, made.back, made.backDepth]) {
-      material.contextNode = samePosition
-      material.maskNode = shown.and(kept)
+    const kept = byDistance ? null : cutTest.kept()
+    for (const material of [made.skin, made.skinDepth, made.back, made.backDepth]) material.contextNode = samePosition
+    for (const material of [made.skin, made.skinDepth, made.back, made.backDepth, made.shell]) {
+      material.maskNode = kept ? shown.and(kept) : shown
     }
-    made.shell.maskNode = shown.and(kept)
     made.bone.maskNode = kept
+    if (byDistance) for (const material of Object.values(made)) clipAtRest(material)
     posedMaterials = made
     return made
   }
   const materialsOf = (posed: Posed | null) => (posed ? posedMaterialsOf() : materials)
 
   // The meshes sit in one clipping group, whose three planes the cuts move in place, so the materials keep their
-  // three planes and never recompile; the caps sit outside it. A posed body's meshes sit in a group of their own, and
-  // its caps in theirs
+  // three planes and never recompile; the caps sit outside it. A posed body's meshes sit in the group where they clip
+  // by distance, and otherwise in a group of their own, and its caps in theirs
   const planes: [Plane, Plane, Plane] = [new Plane(), new Plane(), new Plane()]
   const group = new ClippingGroup()
   group.clippingPlanes = planes
-  const posedGroup = new Group()
+  const posedGroup = byDistance ? group : new Group()
   const caps = createCaps(sampler)
-  const posedCaps = createPosedCaps(sampler, cutTest)
-  root.add(group, posedGroup, caps.object, posedCaps.object)
+  const posedCaps = createPosedCaps(sampler, { planes, byDistance, test: cutTest })
+  root.add(group, caps.object, posedCaps.object)
+  if (posedGroup !== group) root.add(posedGroup)
 
   const drawn: Record<Drawable, Drawn | null> = { skin: null, bone: null, shell: null }
   const asked: Record<Drawable, Asked | null> = { skin: null, bone: null, shell: null }

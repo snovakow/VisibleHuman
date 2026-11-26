@@ -1,6 +1,6 @@
-import { BufferAttribute, BufferGeometry, DoubleSide, Group, Mesh, PlaneGeometry, type SkinnedMesh } from 'three'
+import { BufferAttribute, BufferGeometry, DoubleSide, Group, Mesh, PlaneGeometry, type Plane, type SkinnedMesh } from 'three'
 import { attribute, Discard, float, Fn, If, positionWorld, select, uniform, vec4 } from 'three/tsl'
-import { MeshBasicNodeMaterial, type Node } from 'three/webgpu'
+import { ClippingGroup, MeshBasicNodeMaterial, type Node } from 'three/webgpu'
 import { capMiddle } from '../../../surface/capGrid.ts'
 import { capKinds, requestSurface } from '../../../surface/surfaceWorker.ts'
 import { boneDensity } from '../../../volume/density.ts'
@@ -10,6 +10,7 @@ import type { BodySampler } from '../../body/sampler.ts'
 import { cutAxes, cutLevels, cutLimits, type Cuts } from '../../cuts.ts'
 import type { Posed } from '../../posed.ts'
 import { restPosition, setSkinning, skinnedMesh, type CutTest } from './posed.ts'
+import { clipAtRest } from './restClipping.ts'
 
 // The caps on the surface's cuts: a quad in each active cut's plane, sized to the box the cuts leave, showing the
 // section through the body in the photographs' colours, read from the 3D texture at each pixel's place. Outside the
@@ -127,9 +128,10 @@ export function createCaps(sampler: BodySampler): Caps {
 // scan holds it, a grid in its cut's plane at rest with one part for each chain the plane meets, skinned as each
 // chain's flesh, coloured and ended at the skin as the unposed caps are, at the rest position, and ended where one
 // chain's flesh meets another's across a wall by that chain's side of the walls' measure. A cap is cut by the other
-// two cuts at the rest position, as the posed meshes are, by its material's own test. Each is made again by the mesh
-// worker whenever its cut moves, the last one shown until the next arrives, so that dragging a cut never holds the
-// page up
+// two cuts at the rest position, as the posed meshes are: by the same clip distances where the backend has them, in a
+// clipping group of the two other planes, or else by its material's own test. Each is made again by the mesh worker
+// whenever its cut moves, the last one shown until the next arrives, so that dragging a cut never holds the page
+// up
 export interface PosedCaps {
   readonly object: Group
   update(posed: Posed | null, bounds: Bounds | null, cuts: Cuts, look: CapsLook): void
@@ -155,7 +157,7 @@ const cutOrder = [
   ['sagittal', 2],
 ] as const
 
-export function createPosedCaps(sampler: BodySampler, test: CutTest): PosedCaps {
+export function createPosedCaps(sampler: BodySampler, clip: { planes: readonly [Plane, Plane, Plane]; byDistance: boolean; test: CutTest }): PosedCaps {
   const object = new Group()
   const opacity = uniform(1)
   const solidFrom = uniform(boneDensity / 255)
@@ -164,8 +166,17 @@ export function createPosedCaps(sampler: BodySampler, test: CutTest): PosedCaps 
   const caps = cutOrder.map(([name, n]) => {
     const material = new MeshBasicNodeMaterial({ side: DoubleSide, polygonOffset: true, polygonOffsetFactor, polygonOffsetUnits })
     material.colorNode = sectionColour(sampler, restPosition, opacity, solidFrom, ended)
-    material.maskNode = test.kept(n)
-    const cap: PosedCap = { name, material, holder: object, asked: null, drawn: null, wanted: null }
+    let holder: Group = object
+    if (clip.byDistance) {
+      clipAtRest(material)
+      const others = new ClippingGroup()
+      others.clippingPlanes = clip.planes.filter((_, m) => m !== n)
+      object.add(others)
+      holder = others
+    } else {
+      material.maskNode = clip.test.kept(n)
+    }
+    const cap: PosedCap = { name, material, holder, asked: null, drawn: null, wanted: null }
     return cap
   })
 
@@ -187,8 +198,8 @@ export function createPosedCaps(sampler: BodySampler, test: CutTest): PosedCaps 
 
   // Asks the worker for a cap's sections at its cut's level, and shows them when they arrive, in place of the last,
   // while the cap is still wanted for that posed body. A newer ask replaces one still waiting in the worker's queue, and
-  // leaves one under way to finish and show, rather than cut the worker off, which would cost it the rig it holds; so a
-  // cap dragged without a pause follows it
+  // leaves one under way to finish and show, rather than cut the worker off, which would cost it the rig and the
+  // shell's distances it holds; so a cap dragged without a pause follows it
   let gone = false
   let asks = 0
   const ask = (cap: PosedCap, posed: Posed, level: number) => {

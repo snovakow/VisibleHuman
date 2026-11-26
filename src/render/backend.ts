@@ -57,6 +57,7 @@ export async function createRenderer(canvas: object, backend: Backend, fallBack:
     forceWebGL || failingGPU ? await startFallback(canvas) : await new WebGPURenderer({ canvas, antialias: true }).init()
   const webgpu = isWebGPU(renderer)
   console.info(`VisibleHuman: rendering with ${webgpu ? 'WebGPU' : 'the WebGL 2 fallback'}`)
+  console.info(`VisibleHuman: the backend ${hasClipDistances(renderer) ? 'has' : 'lacks'} clip distances`)
   // A Canvas replaced while its renderer was starting is off the page by then, and only the one on the page reports
   if (canvas.isConnected) {
     const name = webgpu ? 'WebGPU' : failingGPU ? 'WebGL 2, as this GPU fails WebGPU' : 'WebGL 2'
@@ -77,6 +78,15 @@ function capabilitiesOf(renderer: WebGPURenderer): BackendCapabilities {
   const has = (extension: string) => context.getExtension(extension) !== null
   const halfFloatTargets = has('EXT_color_buffer_half_float') || has('EXT_color_buffer_float')
   return { weighted: halfFloatTargets, oit: halfFloatTargets && has('OES_draw_buffers_indexed') }
+}
+
+// Whether the backend clips by distances its vertex stage writes, which three clips a clipping group's planes by
+// wherever it can: WebGPU's clip-distances feature, or WEBGL_clip_cull_distance on the WebGL 2 fallback. A cut made so
+// lies across each pixel's samples as a mesh's own edge does, where a discard keeps or drops the pixel whole
+export function hasClipDistances(renderer: WebGPURenderer) {
+  const context: unknown = renderer.getContext()
+  if (context instanceof WebGL2RenderingContext) return context.getSupportedExtensions()?.includes('WEBGL_clip_cull_distance') === true
+  return renderer.hasFeature('clip-distances')
 }
 
 // Names the adapter if it's in failingGPUs, or returns null
