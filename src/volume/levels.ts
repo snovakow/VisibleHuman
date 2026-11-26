@@ -40,7 +40,19 @@ export interface Level {
   // the mean over every voxel it spans, so a block the skin runs through is partly covered. The splats' alpha is
   // weighted by it, so a partly covered cell fades instead of standing a whole cell proud of the surface
   coverage: Uint8Array
+  // For a level built for a posed body, each cell's chain, the part of the body it moves with, or noChainOfCell
+  chains?: Uint8Array
 }
+
+// What a level built for a posed body is told of each body voxel: the chain of the rig it moves with, the trunk, an
+// arm or a leg, by its index in the rig's chains, or any number past them for none. A block a wall crosses holds the
+// flesh of two chains, as where an arm lay against the chest, and one cell for it would hang between them once the
+// pose parts them, so such a level gives a block one cell for each chain it holds
+export type ChainOf = (i: number, j: number, k: number) => number
+// The chains a block's voxels are told apart by: the rig's five, and none, which takes every number past them
+const chainGroups = 6
+// A cell of no chain, as the rig file writes it (its noChain), named here so the volume's modules import none of the rig's
+export const noChainOfCell = 255
 
 // Finest first
 export type Levels = readonly Level[]
@@ -130,8 +142,10 @@ interface LevelBuild {
 // A level of blocks of `block` voxels along each axis, listing the blocks that hold body in index order. The blocks
 // start at the body's lowest voxel along each axis, not at the grid's first, which lies in the margin, so they group
 // the body as they always have. The body voxels come in index order, so they fill one layer of blocks after another,
-// and the sums only ever hold one layer, which is also why the build can stop after any voxel and go on from the next
-function levelBuild(volume: Volume, bounds: Bounds, block: number, indices: Uint32Array, extent: Extent): LevelBuild {
+// and the sums only ever hold one layer, which is also why the build can stop after any voxel and go on from the next.
+// Given each voxel's chain, a block's body voxels are summed by chain, and the block gives a cell for each chain it
+// holds, each covered by its chain's share of the block's coverage
+function levelBuild(volume: Volume, bounds: Bounds, block: number, indices: Uint32Array, extent: Extent, chainOf?: ChainOf): LevelBuild {
   const [nx, ny, nz] = volume.size
   const { red, green, blue, coverage } = volume
   const { low, high } = extent
@@ -140,17 +154,38 @@ function levelBuild(volume: Volume, bounds: Bounds, block: number, indices: Uint
   const layerBlocks = bx * by
   const blockLayers = Math.floor((high[2] - low[2]) / block) + 1
   const layerCells = nx * ny
-  // A level has at most one cell per body voxel, and one per block
-  const most = Math.min(indices.length, layerBlocks * blockLayers)
-  const centers = new Float32Array(most * 3)
-  const levelColors = new Uint8Array(most * 3)
-  const levelCoverage = new Uint8Array(most)
+  // A level has at most one cell per body voxel, and one per block; one built by chain may have a few blocks' more,
+  // so it starts with room for that many and makes more as it needs it
+  const groups = chainOf ? chainGroups : 1
+  let most = Math.min(indices.length, layerBlocks * blockLayers)
+  let centers = new Float32Array(most * 3)
+  let levelColors = new Uint8Array(most * 3)
+  let levelCoverage = new Uint8Array(most)
+  let levelChains = chainOf ? new Uint8Array(most) : null
   const [cx, cy, cz] = bounds.center
   const [ei, ej, ek] = sceneBasis(volume)
   let count = 0
+  const grow = () => {
+    most = Math.min(indices.length, Math.ceil(most * 1.25) + 1)
+    const centersBefore = centers
+    centers = new Float32Array(most * 3)
+    centers.set(centersBefore.subarray(0, count * 3))
+    const colorsBefore = levelColors
+    levelColors = new Uint8Array(most * 3)
+    levelColors.set(colorsBefore.subarray(0, count * 3))
+    const coverageBefore = levelCoverage
+    levelCoverage = new Uint8Array(most)
+    levelCoverage.set(coverageBefore.subarray(0, count))
+    const chainsBefore = levelChains
+    levelChains = chainsBefore ? new Uint8Array(most) : null
+    levelChains?.set(chainsBefore?.subarray(0, count) ?? [])
+  }
 
-  // Adds a cell at a place in the grid, in voxels, which needn't be whole, with its colour and coverage
-  const emit = (i: number, j: number, k: number, r: number, g: number, b: number, covered: number) => {
+  // Adds a cell at a place in the grid, in voxels, which needn't be whole, with its colour and coverage, and its chain
+  // where the level is built by chain
+  const emit = (i: number, j: number, k: number, r: number, g: number, b: number, covered: number, chain = noChainOfCell) => {
+    if (count === most) grow()
+    if (levelChains) levelChains[count] = chain
     const at = count * 3
     centers[at] = i * ei[0] + j * ej[0] + k * ek[0] - cx
     centers[at + 1] = i * ei[1] + j * ej[1] + k * ek[1] - cy
@@ -162,9 +197,12 @@ function levelBuild(volume: Volume, bounds: Bounds, block: number, indices: Uint
     count++
   }
 
-  // Per block of the layer: the sums of its body voxels' i, j and k, and of their R, G and B, then how many there are
-  const sums = block === 1 ? null : new Float64Array(layerBlocks * 6)
-  const counts = new Uint32Array(block === 1 ? 0 : layerBlocks)
+  // Per block of the layer, and by chain where it's built so: the sums of its body voxels' i, j and k, and of their R,
+  // G and B, then how many there are
+  const sums = block === 1 ? null : new Float64Array(layerBlocks * groups * 6)
+  const counts = new Uint32Array(block === 1 ? 0 : layerBlocks * groups)
+  const groupOf = (chain: number) => (chain < chainGroups - 1 ? chain : chainGroups - 1)
+  const chainOfGroup = (group: number) => (group < chainGroups - 1 ? group : noChainOfCell)
   // And the coverage of every voxel each block spans, body or not. A block past the grid's last voxel along an axis
   // spans voxels that aren't there, which count as uncovered, as the margin's voxels are
   const coverageSums = new Uint32Array(block === 1 ? 0 : layerBlocks)
@@ -182,18 +220,46 @@ function levelBuild(volume: Volume, bounds: Bounds, block: number, indices: Uint
       }
     }
     for (let b = 0; b < layerBlocks; b++) {
-      const n = counts[b]
-      if (n === 0) continue
-      const s = b * 6
-      emit(
-        sums[s] / n,
-        sums[s + 1] / n,
-        sums[s + 2] / n,
-        Math.round(sums[s + 3] / n),
-        Math.round(sums[s + 4] / n),
-        Math.round(sums[s + 5] / n),
-        Math.round(coverageSums[b] / blockVoxels),
-      )
+      if (groups === 1) {
+        const n = counts[b]
+        if (n === 0) continue
+        const s = b * 6
+        emit(
+          sums[s] / n,
+          sums[s + 1] / n,
+          sums[s + 2] / n,
+          Math.round(sums[s + 3] / n),
+          Math.round(sums[s + 4] / n),
+          Math.round(sums[s + 5] / n),
+          Math.round(coverageSums[b] / blockVoxels),
+        )
+        continue
+      }
+      // Each chain's share of the block's coverage, by its share of the block's body voxels, rounded so that the
+      // shares sum to the block's coverage as one cell would have it
+      let total = 0
+      for (let g = 0; g < groups; g++) total += counts[b * groups + g]
+      let taken = 0
+      let given = 0
+      for (let g = 0; g < groups; g++) {
+        const n = counts[b * groups + g]
+        if (n === 0) continue
+        taken += n
+        const upTo = Math.round((coverageSums[b] * taken) / (total * blockVoxels))
+        const share = upTo - given
+        given = upTo
+        const s = (b * groups + g) * 6
+        emit(
+          sums[s] / n,
+          sums[s + 1] / n,
+          sums[s + 2] / n,
+          Math.round(sums[s + 3] / n),
+          Math.round(sums[s + 4] / n),
+          Math.round(sums[s + 5] / n),
+          share,
+          chainOfGroup(g),
+        )
+      }
     }
     sums.fill(0)
     counts.fill(0)
@@ -214,7 +280,9 @@ function levelBuild(volume: Volume, bounds: Bounds, block: number, indices: Uint
         const k = Math.floor(index / layerCells)
         const inLayer = index - k * layerCells
         const j = Math.floor(inLayer / nx)
-        emit(inLayer - j * nx, j, k, red[index], green[index], blue[index], coverage[index])
+        const i = inLayer - j * nx
+        const chain = chainOf ? chainOfGroup(groupOf(chainOf(i, j, k))) : noChainOfCell
+        emit(i, j, k, red[index], green[index], blue[index], coverage[index], chain)
       }
     } else {
       for (let n = next; n < end; n++) {
@@ -228,7 +296,8 @@ function levelBuild(volume: Volume, bounds: Bounds, block: number, indices: Uint
           if (layer >= 0) flush(layer)
           layer = blockLayer
         }
-        const b = Math.floor((i - low[0]) / block) + bx * Math.floor((j - low[1]) / block)
+        const inBlocks = Math.floor((i - low[0]) / block) + bx * Math.floor((j - low[1]) / block)
+        const b = chainOf ? inBlocks * groups + groupOf(chainOf(i, j, k)) : inBlocks
         const s = b * 6
         sums[s] += i
         sums[s + 1] += j
@@ -253,20 +322,22 @@ function levelBuild(volume: Volume, bounds: Bounds, block: number, indices: Uint
       colors: count === most ? levelColors : levelColors.slice(0, count * 3),
       coverage: count === most ? levelCoverage : levelCoverage.slice(0, count),
     }
+    if (levelChains) built.chains = count === most ? levelChains : levelChains.slice(0, count)
     return built
   }
   return { advance }
 }
 
-// A level of blocks of `block` voxels along each axis, built at once
+// A level of blocks of `block` voxels along each axis, built at once, by chain where each voxel's chain is given
 export function buildLevel(
   volume: Volume,
   bounds: Bounds,
   block: number,
   indices = bodyIndices(volume),
   extent = extentOf(volume, indices),
+  chainOf?: ChainOf,
 ): Level {
-  const level = levelBuild(volume, bounds, block, indices, extent).advance(indices.length)
+  const level = levelBuild(volume, bounds, block, indices, extent, chainOf).advance(indices.length)
   if (!level) throw new Error(`The ${labelOf(volume, block)} level took every body voxel and isn't built`)
   return level
 }
@@ -297,6 +368,17 @@ export interface StagedBody {
   readonly details: readonly DetailEntry[]
   // Takes up to `voxels` more body voxels into the levels still to build, into the level of `first` before the others
   // where it's one of them, and returns whether any level is still to build
+  advance: (voxels: number, first?: Detail) => boolean
+  // The levels again for the body posed, each block giving a cell for each chain it holds, built a share at a time:
+  // one for each Detail the body may have, the finest first, but for any over the cap
+  stagePosed: (chainOf: ChainOf) => PosedLevels
+}
+
+// A posed body's levels, as they're built
+export interface PosedLevels {
+  // The levels built so far, finest first, as a new list whenever a level is added
+  readonly levels: Levels
+  // As StagedBody's advance
   advance: (voxels: number, first?: Detail) => boolean
 }
 
@@ -384,6 +466,37 @@ export function stageBody(volume: Volume, { limits = pageLimits, opening: openin
     return pending.length > 0
   }
 
+  const stagePosed = (chainOf: ChainOf): PosedLevels => {
+    const posedBuilt = new Map<Detail, Level>()
+    // Every level the body may list, those not yet listed among them, since a coarser level is listed only once it's
+    // built and the posed build may get to it first; one over the cap is left out once it's built
+    const posedPending: Detail[] = blocks.filter((block) => !dropped.has(block))
+    const posedBuilding = new Map<Detail, LevelBuild>()
+    let posedLevels: Levels = []
+    return {
+      get levels() {
+        return posedLevels
+      },
+      advance(voxels, first) {
+        const block = first !== undefined && posedPending.includes(first) ? first : posedPending[0]
+        if (block === undefined) return false
+        let build = posedBuilding.get(block)
+        if (!build) {
+          build = levelBuild(volume, bounds, block, indices, extent, chainOf)
+          posedBuilding.set(block, build)
+        }
+        const level = build.advance(voxels)
+        if (level) {
+          if (level.count <= limits.maxCells) posedBuilt.set(block, level)
+          posedBuilding.delete(block)
+          posedPending.splice(posedPending.indexOf(block), 1)
+          posedLevels = blocks.flatMap((each) => posedBuilt.get(each) ?? [])
+        }
+        return posedPending.length > 0
+      },
+    }
+  }
+
   return {
     bounds,
     opening,
@@ -394,6 +507,7 @@ export function stageBody(volume: Volume, { limits = pageLimits, opening: openin
       return details
     },
     advance,
+    stagePosed,
   }
 }
 

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { axesFromBytes, cellCount, cellIndex, scenePosition, type Triple, type Volume } from '../src/volume/format.ts'
-import { bodyBounds, bodyIndices, buildBody, buildLevel, levelOf, stageBody } from '../src/volume/levels.ts'
+import { bodyBounds, bodyIndices, buildBody, buildLevel, extentOf, levelOf, noChainOfCell, stageBody } from '../src/volume/levels.ts'
 
 // The levels: every body voxel, and the coarser levels' blocks, each at the centre of its body voxels and coloured by
 // their mean, all centred on the body's bounds
@@ -354,4 +354,104 @@ void test('a label opens its level wherever it is within the cap, and the finest
     assert.equal(calls, 2, `opening ${opening}`)
     assert.deepEqual(staged.levels, atOnce)
   }
+})
+
+// A chain for each voxel of a volume, as a posed body's levels are told it: here by which side of a plane across i a
+// voxel lies, the trunk's below and the left arm's from it on, and none past the grid's far corner along k
+const chainsBy = (split: number, noneFromK = Number.POSITIVE_INFINITY) => (i: number, _j: number, k: number) =>
+  k >= noneFromK ? 200 : i < split ? 0 : 1
+
+void test('built by chain, a block that holds two chains gives a cell for each, their coverage summing to the block’s', () => {
+  // One 2 × 2 × 2 block: two voxels of the trunk at i = 0 and two of the left arm at i = 1, and one more voxel of the
+  // arm alone in the block above along k
+  const volume = volumeOf(
+    [2, 2, 4],
+    [
+      { at: [0, 0, 0], rgb: [10, 20, 30] },
+      { at: [0, 1, 1], rgb: [30, 40, 50] },
+      { at: [1, 0, 0], rgb: [100, 0, 0] },
+      { at: [1, 1, 0], rgb: [120, 2, 0] },
+      { at: [1, 1, 3], rgb: [7, 8, 9] },
+    ],
+  )
+  const bounds = bodyBounds(volume)
+  const plain = buildLevel(volume, bounds, 2)
+  const posed = buildLevel(volume, bounds, 2, undefined, undefined, chainsBy(1))
+  assert.equal(plain.count, 2)
+  assert.equal(posed.count, 3)
+  assert.deepEqual([...(posed.chains ?? [])], [0, 1, 1])
+  // Each at its chain's mean centre, in its chain's mean colour
+  assertCentre(posed.centers, 0, volume, bounds.center, [0, 0.5, 0.5])
+  assertCentre(posed.centers, 1, volume, bounds.center, [1, 0.5, 0])
+  assertCentre(posed.centers, 2, volume, bounds.center, [1, 1, 3])
+  assert.deepEqual([...posed.colors], [20, 30, 40, 110, 1, 0, 7, 8, 9])
+  // The block's coverage, over all eight voxels, shared by its body voxels' chains, two each here
+  assert.equal(posed.coverage[0] + posed.coverage[1], plain.coverage[0])
+  assert.ok(Math.abs(posed.coverage[0] - posed.coverage[1]) <= 1)
+  assert.equal(posed.coverage[2], plain.coverage[1])
+  // The finest level by chain is every voxel, each with its own chain
+  const finest = buildLevel(volume, bounds, 1, undefined, undefined, chainsBy(1))
+  assert.deepEqual([...(finest.chains ?? [])], [0, 1, 1, 0, 1])
+  assert.deepEqual(finest.centers, buildLevel(volume, bounds, 1).centers)
+})
+
+void test('built with no chains, a level is as it was, and with one chain throughout it holds the same cells', () => {
+  const volume = scatteredVolume()
+  const bounds = bodyBounds(volume)
+  for (const block of [1, 2, 4, 8]) {
+    const plain = buildLevel(volume, bounds, block)
+    assert.equal(plain.chains, undefined)
+    const one = buildLevel(volume, bounds, block, undefined, undefined, () => 3)
+    assert.deepEqual(one.centers, plain.centers, `${block}`)
+    assert.deepEqual(one.colors, plain.colors, `${block}`)
+    assert.deepEqual(one.coverage, plain.coverage, `${block}`)
+    assert.ok(one.chains?.every((chain) => chain === 3))
+    // A voxel of no chain, past the rig's five, is a chain of its own, written as the rig file writes none
+    const none = buildLevel(volume, bounds, block, undefined, undefined, () => 99)
+    assert.ok(none.chains?.every((chain) => chain === noChainOfCell))
+  }
+})
+
+void test('a posed body’s levels built a share at a time equal those built at once, and the cap still holds', () => {
+  const volume = scatteredVolume()
+  const chainOf = chainsBy(6, 15)
+  const indices = bodyIndices(volume)
+  const extent = extentOf(volume, indices)
+  for (const voxels of [1, 7, 1000]) {
+    for (const first of [undefined, 4, 1]) {
+      const staged = stageBody(volume)
+      const posed = staged.stagePosed(chainOf)
+      while (posed.advance(voxels, first));
+      assert.deepEqual(
+        posed.levels,
+        [1, 2, 4, 8].map((block) => buildLevel(volume, staged.bounds, block, indices, extent, chainOf)),
+        `${voxels} voxels a share, ${first} first`,
+      )
+      // Some block holds two chains, and one the chain of none
+      assert.ok(posed.levels[1].count > (levelOf(staged.levels, 2)?.count ?? 0))
+      assert.ok(posed.levels[1].chains?.includes(noChainOfCell))
+    }
+  }
+  // Under a cap that keeps the plain 8 mm level, its posed level, which holds more cells, is left out
+  const plain8 = buildLevel(volume, bodyBounds(volume), 2)
+  const limits = { maxCells: plain8.count, defaultCells: 1 }
+  const staged = stageBody(volume, { limits })
+  while (staged.advance(Number.POSITIVE_INFINITY));
+  assert.ok(levelOf(staged.levels, 2))
+  const posed = staged.stagePosed(chainOf)
+  while (posed.advance(Number.POSITIVE_INFINITY));
+  assert.equal(levelOf(posed.levels, 2), undefined)
+  assert.ok(posed.levels.every((level) => level.count <= limits.maxCells))
+})
+
+void test('a posed body’s levels take in a level not yet listed, which the plain build lists once it’s built', () => {
+  const volume = lVolume()
+  const staged = stageBody(volume, { limits: lLimits, opening: '16 mm' })
+  assert.ok(!staged.details.some((detail) => detail.block === 2))
+  const posed = staged.stagePosed(() => 0)
+  while (posed.advance(4));
+  assert.deepEqual(
+    posed.levels.map((level) => level.label),
+    ['8 mm', '16 mm', '32 mm'],
+  )
 })
