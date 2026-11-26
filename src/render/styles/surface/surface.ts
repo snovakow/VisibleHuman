@@ -184,7 +184,12 @@ export function createSurface({ events, renderer }: StyleContext): StyleDrawing 
   const discard = (kind: Drawable) => {
     const last = drawn[kind]
     if (!last) return
-    for (const each of last.meshes) each.removeFromParent()
+    // The renderer keeps a mesh's uniforms until the mesh itself is disposed of, a geometry's dispose freeing only its
+    // buffers, so a posed mesh's skinning would otherwise stay with each pose shown and taken off
+    for (const each of last.meshes) {
+      each.removeFromParent()
+      each.dispose()
+    }
     last.geometry.dispose()
     drawn[kind] = null
   }
