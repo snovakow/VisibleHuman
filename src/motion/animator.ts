@@ -1,5 +1,6 @@
 import { AnimationMixer, type AnimationAction, type AnimationClip, type Bone } from 'three'
 import { isStill } from './clip.ts'
+import type { Limbs } from './ik.ts'
 
 // Plays the library's motions on a rig's bones, through three's mixer rooted at the hips, so that a clip's
 // `<joint>.quaternion` tracks bind to the bones by name with no skinned mesh between. One motion plays at a time, and
@@ -12,6 +13,10 @@ import { isStill } from './clip.ts'
 // it, so the bones are put in the neutral pose before the first motion plays. The root's place isn't touched: the
 // clips play in place, the hips where the scan holds them. Nothing here allocates once a motion is playing, but
 // three's own event as a looping clip comes round, once a loop.
+//
+// Where the body has limbs to pose by hand (ik.ts), each time the mixer sets the bones the offsets a drag left are laid
+// over what it set, and a limb being dragged is turned toward its target, so a drag poses the body over whatever it
+// plays; a target moved, or offsets set or cleared, turns the bones on the next update as a change of motion does.
 
 // How long a crossfade from one motion to the next takes, in seconds
 export const fadeSeconds = 0.5
@@ -36,9 +41,10 @@ export interface Animator {
   setPlaying(playing: boolean): void
   // Moves every clip playing on by stepSeconds, which the next update draws
   step(): void
-  // Whether the next update would turn the bones: a fade under way, a clip running, or a change not yet drawn
+  // Whether the next update would turn the bones: a fade under way, a clip running, or a change not yet drawn, the
+  // limbs' among them
   readonly moving: boolean
-  // Advances by the seconds since the last frame and sets the bones' rotations
+  // Advances by the seconds since the last frame and sets the bones' rotations, the limbs' offsets over them
   update(seconds: number): void
   // Lets the bones go, back in the neutral pose
   dispose(): void
@@ -47,7 +53,7 @@ export interface Animator {
 // The fade's progress eased in and out, so a pose comes to rest rather than stopping dead, and never past either end
 const eased = (t: number) => t * t * (3 - 2 * t)
 
-export function createAnimator(root: Bone): Animator {
+export function createAnimator(root: Bone, limbs: Limbs | null = null): Animator {
   root.traverse((bone) => bone.quaternion.identity())
   const mixer = new AnimationMixer(root)
 
@@ -160,7 +166,7 @@ export function createAnimator(root: Bone): Animator {
       changed = true
     },
     get moving() {
-      return changed || fading || (running && speed !== 0 && moves)
+      return changed || fading || (running && speed !== 0 && moves) || (limbs?.pending ?? false)
     },
     update(seconds) {
       clock += seconds
@@ -178,7 +184,9 @@ export function createAnimator(root: Bone): Animator {
           }
         }
       }
+      limbs?.restore()
       mixer.update(seconds)
+      limbs?.apply()
       changed = false
     },
     dispose() {

@@ -66,3 +66,10 @@ export function anglesOfPose(pose: Pose): AnglePose {
   }
   return { joints }
 }
+
+// A pose as the library's pose files are written, a joint to a line, ready to save as one
+export function writeAnglePose(pose: AnglePose): string {
+  const lines = Object.entries(pose.joints).map(([joint, angles]) => `    "${joint}": [${angles.join(', ')}]`)
+  if (lines.length === 0) return '{ "joints": {} }\n'
+  return `{\n  "joints": {\n${lines.join(',\n')}\n  }\n}\n`
+}
