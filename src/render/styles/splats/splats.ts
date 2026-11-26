@@ -8,6 +8,7 @@ import type { Blend } from '../../look.ts'
 import { whenFirstDrawn, type StyleContext, type StyleDrawing } from '../style.ts'
 import { isSorted } from './blend.ts'
 import { cellColor, createCellTable, isPainted, paintCellTable, writeCellIndex, type CellTable } from './cellTable.ts'
+import { freeSplatBuffers } from './threeSplat.ts'
 
 // The Splats style: the body as one round Gaussian per cell of the level Detail asks for. Each level's splat is built
 // the first time it's shown and kept, hidden while another is shown, until Size, Blend or the volume changes or the
@@ -60,11 +61,13 @@ export function createSplats({ renderer, camera, webgpu, cue, events }: StyleCon
   const built = new Map<Detail, BuiltLevel>()
   let builtAt: BuiltAt | null = null
 
-  // Frees every splat built. GaussianSplat has no dispose(): its storage buffers go when it's garbage-collected, so
-  // nothing else keeps a splat
+  // Frees every splat built. GaussianSplat has no dispose(), and its storage buffers and its sort's, with the textures
+  // the WebGL 2 fallback reads them through, outlive it on the GPU unless they're freed here: five textures a splat,
+  // 12 MB at the male's 8 mm Detail, were left behind by every change of style, Size, Blend or body
   const clear = () => {
     for (const { splat, geometry, table } of built.values()) {
       group.remove(splat)
+      freeSplatBuffers(splat)
       splat.geometry.dispose()
       splat.material.dispose()
       geometry.dispose()
