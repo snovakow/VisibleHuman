@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import { gunzipSync } from 'node:zlib'
 import type { Placement } from '../src/rig/pose.ts'
-import { jointCellBoxes, jointSceneBoxes, noOwnerChain, noOwnerJoint, ownerBytes, ownerChain, ownerJoint, ownerOf } from '../src/rig/owners.ts'
+import { jointCellBoxes, jointOfVoxel, jointSceneBoxes, noOwnerChain, noOwnerJoint, ownerBytes, ownerChain, ownerJoint, ownerOf } from '../src/rig/owners.ts'
 import { chainNames, jointNames } from '../src/rig/rig.ts'
 import { noChain, readRigFile } from '../src/rig/rigFile.ts'
 import { readVolume } from '../src/volume/format.ts'
@@ -110,4 +110,17 @@ void test("each joint's box holds every cell it owns, and together they reach ev
     assert.ok(Math.abs(highest - bounds.half[axis]) < 1e-6, `the boxes end at ${highest} along axis ${axis}, the bounds at ${bounds.half[axis]}`)
     for (const box of sceneBoxes) assert.ok(box && box.min[axis] >= -bounds.half[axis] - 1e-9 && box.max[axis] <= bounds.half[axis] + 1e-9)
   }
+})
+
+void test("a voxel of a mesh's grid moves with the owner of the rig cell nearest it, and with none off the rig's grid", () => {
+  // On the rig's own grid, each voxel is its cell
+  const own = jointOfVoxel(file, file)
+  const [nx, ny, nz] = file.size
+  for (let k = 0, n = 0; k < nz; k++) for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++, n++) if (own(i, j, k) !== ownerOf(file.cells, n)) assert.fail(`voxel ${i}, ${j}, ${k}`)
+  // On a grid of half the spacing, two voxels to a cell along each axis, the even ones on the cells' centres
+  const half = jointOfVoxel(file, { size: [nx * 2, ny * 2, nz * 2], spacing: [file.spacing[0] / 2, file.spacing[1] / 2, file.spacing[2] / 2], origin: file.origin })
+  const middle = [Math.floor(nx / 2), Math.floor(ny / 2), Math.floor(nz / 2)]
+  assert.equal(half(middle[0] * 2, middle[1] * 2, middle[2] * 2), ownerOf(file.cells, middle[0] + nx * (middle[1] + ny * middle[2])))
+  assert.equal(own(-1, 0, 0), -1)
+  assert.equal(own(nx, 0, 0), -1)
 })

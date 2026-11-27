@@ -2,9 +2,10 @@ import { chainsOnGrid, type ChainsOnGrid, type RigGridCells } from '../rig/sampl
 import { chainDistanceField, distanceField, hasWallsTo, skinDistance } from './distanceField.ts'
 import { meshIsosurface, type IsosurfaceMesh } from './marchingCubes.ts'
 import { meshRigged, meshRiggedShell, type RiggedMesh } from './rigMesh.ts'
-import { chainNames, jointNames, skeletonShape } from '../rig/rig.ts'
+import { chainNames, jointNames } from '../rig/rig.ts'
+import { jointOfVoxel } from '../rig/owners.ts'
 import { capMesh } from './capGrid.ts'
-import { partedTriangles, skinMesh, type MeshSkinning } from './rigSkin.ts'
+import { meshRigidParts, skinMesh, type MeshSkinning } from './rigSkin.ts'
 import { isCapRequest, type CapRequest, type DistanceTiming, type SurfaceMessage, type SurfaceReply } from './surfaceWorker.ts'
 
 // Answers one request per message, meshing the surface asked for, and sends the mesh back with its arrays
@@ -71,14 +72,15 @@ self.onmessage = (event: MessageEvent<SurfaceMessage>) => {
         const { chain, other } = shell.chains
         const fields = { distance: kept.field, chainDistances: shell.distances, level: isolevel, chain, other }
         mesh = meshRiggedShell({ ...fields, size, spacing, origin, axes, ...(colors ? { colors } : {}) })
+        skinning = skinMesh(mesh, rig.file, posed.placement)
+      } else if (posed.mode === 'rigid') {
+        // The bone, a part for each joint, so no triangle joins two joints' bone for a pose to stretch
+        const parts = meshRigidParts(input, jointOfVoxel(rig.file, posed.grid), jointNames.length)
+        mesh = parts.mesh
+        skinning = parts.skinning
       } else {
         mesh = request.kind === 'skin' ? meshRigged({ ...input, ...chainsOnGrid(rig.file, posed.grid) }) : meshIsosurface(input)
-      }
-      skinning = skinMesh(mesh, rig.file, posed.placement, posed.mode)
-      // A rigid mesh's triangles across two chains' bones go, which a pose would stretch apart
-      if (posed.mode === 'rigid') {
-        const joints = skinning.joints
-        mesh = { ...mesh, indices: partedTriangles(mesh.indices, joints, (joint) => chainNames.indexOf(skeletonShape[jointNames[joint]].chain)) }
+        skinning = skinMesh(mesh, rig.file, posed.placement)
       }
     } else {
       mesh = meshIsosurface(input)
@@ -105,7 +107,7 @@ function answerCap(request: CapRequest) {
   const start = performance.now()
   const { placement } = request.rig
   const built = capMesh({ file: rig.file, placement, axis: request.axis, level: request.level })
-  const skinning = skinMesh(built, rig.file, placement, 'blended')
+  const skinning = skinMesh(built, rig.file, placement)
   const mesh = { positions: built.positions, normals: built.normals, indices: built.indices }
   const cap = { measures: built.measures, chains: built.chains }
   const reply: SurfaceReply = { kind: request.kind, mesh, milliseconds: performance.now() - start, skinning, cap }

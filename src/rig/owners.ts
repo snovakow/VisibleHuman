@@ -2,6 +2,7 @@ import type { Triple } from '../volume/format.ts'
 import type { Placement } from './pose.ts'
 import { chainNames, jointNames } from './rig.ts'
 import { noChain, type RigCells, type RigGrid } from './rigFile.ts'
+import type { SourceGrid } from './sampling.ts'
 
 // Which joint each cell of the rig file moves with alone, for the styles that read the body point by point and move
 // every point rigidly with one joint: the cell's first joint, which takes the greater share of its flesh, as no cell's
@@ -22,6 +23,22 @@ export const ownerChain = (byte: number) => byte >> jointBits
 // takes, so the chain decides
 export function ownerOf(cells: Pick<RigCells, 'chain' | 'jointA'>, cell: number): number {
   return cells.chain[cell] === noChain ? -1 : cells.jointA[cell]
+}
+
+// The joint each voxel of another grid moves with, a mesh's, from the rig file's cell nearest it, or −1 beyond the
+// body's reach or the file's grid: so a mesh drawn of the voxels moves with the joints the volume and the raytrace move
+// those same places with
+export function jointOfVoxel(file: RigGrid & { cells: Pick<RigCells, 'chain' | 'jointA'> }, grid: SourceGrid): (i: number, j: number, k: number) => number {
+  const [fx, fy, fz] = file.size
+  const scale = [0, 1, 2].map((axis) => grid.spacing[axis] / file.spacing[axis])
+  const offset = [0, 1, 2].map((axis) => (grid.origin[axis] - file.origin[axis]) / file.spacing[axis])
+  return (i, j, k) => {
+    const ri = Math.round(offset[0] + i * scale[0])
+    const rj = Math.round(offset[1] + j * scale[1])
+    const rk = Math.round(offset[2] + k * scale[2])
+    if (ri < 0 || rj < 0 || rk < 0 || ri >= fx || rj >= fy || rk >= fz) return -1
+    return ownerOf(file.cells, ri + fx * (rj + fy * rk))
+  }
 }
 
 // Every cell's owner byte, in the file's index order
