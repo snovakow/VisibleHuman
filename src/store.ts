@@ -144,8 +144,8 @@ export interface ImportedMotion {
 // No motion: the body drawn as it always has been, and as it was scanned, the pose the rig is bound in
 export const noMotion = 'none'
 export const scanMotion = 'scan'
-// The styles that draw a body posed, more as each learns to; the others draw it as it was scanned, whatever the motion
-const movingStyles: readonly Style[] = ['surface', 'splats']
+// The styles that draw a body posed, all four; a style left out would draw it as it was scanned, whatever the motion
+const movingStyles: readonly Style[] = ['surface', 'splats', 'volume', 'raytrace']
 export const styleMoves = (style: unknown): boolean => movingStyles.some((each) => each === style)
 
 // Whether what the body is drawn in changes over time, so that playing it, its speed and a step change what's drawn:

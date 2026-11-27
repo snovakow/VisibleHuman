@@ -48,7 +48,13 @@ export interface DepthCue {
   // The cue's share, and the body's bounds as their half extents along the scene's x, y and z, in millimetres, or
   // none before a body loads
   set(share: number, half: Triple | null): void
+  // The same cue for bounds that move about the scene, as a posed body's do, given as their centre and half extents:
+  // the share is the one set, the bounds the nodes'
+  within(center: Node<'vec3'>, half: Node<'vec3'>): RayCue
 }
+
+// What a style that marches or traces asks of the cue
+export type RayCue = Pick<DepthCue, 'near' | 'far' | 'at' | 'alongRay'>
 
 export function createDepthCue(): DepthCue {
   // Each is a uniform three refreshes on every render for every material: one in an object's own group refreshes,
@@ -57,39 +63,45 @@ export function createDepthCue(): DepthCue {
   const share = uniform(0).setGroup(renderGroup)
   const bodyHalf = uniform(new Vector3()).setGroup(renderGroup)
 
-  // The body's bounds are centred on the origin, so its centre's view depth follows the camera as it orbits, zooms or
-  // pans
-  const centreDepth = cameraViewMatrix.mul(vec4(0, 0, 0, 1)).z.negate()
-  // How far the bounds reach toward the camera from their centre, and away from it: their half extents laid along the
+  // How far bounds about a centre reach toward the camera from it, and away from it: their half extents laid along the
   // way the camera looks. A standing body is several times as tall as it is deep, so a sphere about it, which reaches
   // as far from every side, would leave the cue a fraction of its range from the front, where the male's is a sixth
   const towardCamera = cameraWorldMatrix.mul(vec4(0, 0, 1, 0)).xyz
-  const span = max(dot(abs(towardCamera), bodyHalf), minimumSpan)
-  const near = centreDepth.sub(span)
-  const far = centreDepth.add(span)
+  const between = (centreDepth: Node<'float'>, half: Node<'vec3'>): RayCue => {
+    const span = max(dot(abs(towardCamera), half), minimumSpan)
+    const near = centreDepth.sub(span)
+    const far = centreDepth.add(span)
+    return {
+      near,
+      far,
+      at: (viewDepth) => float(1).sub(share.mul(smoothstep(near, far, viewDepth))),
+      alongRay(depthPerDistance) {
+        const range = far.sub(near).toVar()
+        const rate = depthPerDistance.div(range).toVar()
+        const start = near.div(range).negate().toVar()
+        return (distance) => {
+          const left = float(1).toVar()
+          If(share.greaterThan(0), () => {
+            const along = clamp(distance.mul(rate).add(start), 0, 1).toVar()
+            left.assign(float(1).sub(share.mul(along.mul(along).mul(along.mul(-2).add(3)))))
+          })
+          return left
+        }
+      },
+    }
+  }
+  // The body's bounds are centred on the origin, so its centre's view depth follows the camera as it orbits, zooms or
+  // pans
+  const cue = between(cameraViewMatrix.mul(vec4(0, 0, 0, 1)).z.negate(), bodyHalf)
 
   return {
-    near,
-    far,
-    at: (viewDepth) => float(1).sub(share.mul(smoothstep(near, far, viewDepth))),
-    alongRay(depthPerDistance) {
-      const range = far.sub(near).toVar()
-      const rate = depthPerDistance.div(range).toVar()
-      const start = near.div(range).negate().toVar()
-      return (distance) => {
-        const left = float(1).toVar()
-        If(share.greaterThan(0), () => {
-          const along = clamp(distance.mul(rate).add(start), 0, 1).toVar()
-          left.assign(float(1).sub(share.mul(along.mul(along).mul(along.mul(-2).add(3)))))
-        })
-        return left
-      }
-    },
-    fog: fog(vec3(0), rangeFogFactor(near, far).mul(share)),
+    ...cue,
+    fog: fog(vec3(0), rangeFogFactor(cue.near, cue.far).mul(share)),
     set(value, half) {
       share.value = value
       if (half) bodyHalf.value.fromArray(half)
       else bodyHalf.value.set(0, 0, 0)
     },
+    within: (center, half) => between(cameraViewMatrix.mul(vec4(center, 1)).z.negate(), half),
   }
 }

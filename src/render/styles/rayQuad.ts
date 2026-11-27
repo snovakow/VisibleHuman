@@ -39,12 +39,19 @@ interface QuadRay {
   tExit: Node<'float'>
 }
 
-// The quad as a mesh of the material, which draws from both sides, so that neither winding of its two triangles on
-// the screen culls it, and is never frustum-culled, since its vertices are placed in clip space, not in the scene
-export function createRayQuad(material: NodeMaterial) {
+// Readies a material to draw the quad: from both sides, so that neither winding of its two triangles on the screen
+// culls it, and with each corner at its clip-space place, whatever the camera's matrices say. Every material a quad
+// wears is readied so
+export function quadMaterial(material: NodeMaterial) {
   material.side = DoubleSide
-  // Each corner at its clip-space place, whatever the camera's matrices say
   material.vertexNode = vec4(positionGeometry.xy, 0, 1)
+  return material
+}
+
+// The quad as a mesh of the material, readied, and never frustum-culled, since its vertices are placed in clip space,
+// not in the scene
+export function createRayQuad(material: NodeMaterial) {
+  quadMaterial(material)
   const quad = new Mesh(new PlaneGeometry(2, 2), material)
   quad.frustumCulled = false
   return quad

@@ -33,6 +33,7 @@ import {
 } from '../../../volume/density.ts'
 import type { Triple } from '../../../volume/format.ts'
 import { darkMax } from '../../../volume/segment.ts'
+import type { PosedRead } from '../../body/posedRead.ts'
 import type { BodySampler } from '../../body/sampler.ts'
 import type { CutBox } from '../../cuts.ts'
 import type { DepthCue } from '../../depthCue.ts'
@@ -44,7 +45,14 @@ import { rayQuad } from '../rayQuad.ts'
 // shows of what the ray met is the mode's: laid over step by step until the light is spent, the light an x-ray would
 // leave, the most density met, or light the body gives off. Each step counts for less the farther it lies, by the
 // depth cue. PDBSplat's field march is the model, with the ray from the quad rather than a box's back face, a step per
-// axis spacing rather than one, and the colour from the texture itself
+// axis spacing rather than one, and the colour from the texture itself.
+//
+// A posed body is marched through the posed read (src/render/body/posedRead.ts): the ray runs through the posed scene
+// from where the posed bounds begin, with the same steps and the same offset, and each step reads the scan where the
+// joint that owns its point takes it back, or nothing; a step outside the stretch the ray's joints span costs no read.
+// A step's shading reads about that point of the scan and is lit by the camera's direction turned back with the same
+// joint, so a moved limb is lit as it faces now. The cuts act in the scan, inside the read, and the depth cue spans the
+// posed bounds. A body with no pose is marched as it always was, by a material of its own
 
 // The light a unit of windowed density takes per millimetre at Opacity 1, chosen by eye on the male: soft tissue,
 // which sits about a quarter of the way up the density scale, closes over within a few voxels, so the skin reads as a
@@ -106,14 +114,19 @@ export interface VolumeMarch {
   grey: UniformNode<'bool'>
   // The voxels' spacing along the grid's axes, in millimetres, which the step is a share of the smallest of
   setSpacing(spacing: Triple): void
-  // The box the cuts leave, in the scene's millimetres, which clips every ray and bounds the steps one can take
+  // The box the cuts leave, in the scene's millimetres, which clips every ray and bounds the steps one can take, or
+  // which a posed march's read cuts the scan by
   setCuts(box: CutBox): void
   // The step, as a share of the smallest voxel spacing
   setStep(voxelShare: number): void
+  // For a posed march: brings the read up to date with the bones, and the steps with the posed bounds, ahead of a
+  // frame
+  pose(): void
 }
 
-// The march of the body a sampler reads, darkened with depth by the cue
-export function volumeMarch(sampler: BodySampler, depthCue: DepthCue): VolumeMarch {
+// The march of the body a sampler reads, darkened with depth by the cue, posed by the read where one is given, whose
+// sampler must read the coverage too, to tell apart two joints that claim one point
+export function volumeMarch(sampler: BodySampler, depthCue: DepthCue, posed?: PosedRead): VolumeMarch {
   // A voxel's size along the scene's x, y and z, in millimetres, for the shading's differences
   const { voxel } = sampler
   const cutMin = uniform(new Vector3())
@@ -154,26 +167,43 @@ export function volumeMarch(sampler: BodySampler, depthCue: DepthCue): VolumeMar
   // The x-ray's and the maximum's colour: the film's cold white, or white in grey
   const shownTint = select(grey, vec3(1), tintNode)
 
-  const colorNode = rayQuad(cutMin, cutMax, ({ origin, direction, viewDir, tEnter, tExit }) => {
+  // A posed march clips its rays to the posed bounds and cues the depth across them
+  const rayCue = posed ? depthCue.within(posed.center, posed.half) : depthCue
+  const colorNode = rayQuad(posed ? posed.boundsMin : cutMin, posed ? posed.boundsMax : cutMax, ({ origin, direction, viewDir, tEnter, tExit }) => {
+    const ray = posed?.ray(origin, direction, tEnter, tExit, true)
     // The first step is offset by a share of a step from a hash of the pixel's place, which trades the bands that
     // equal steps draw for fine noise
     const offset = hash(screenCoordinate.y.mul(screenHashRow).add(screenCoordinate.x))
     const t = tEnter.add(stepLength.mul(offset)).toVar()
-    const end = tExit.toVar()
+    // A posed ray reads nothing past the last of its joints
+    const end = (ray ? min(tExit, ray.to) : tExit).toVar()
     const gathered = vec3(0).toVar()
     const transmittance = float(1).toVar()
     const most = float(0).toVar()
     // The light comes from the camera, so a slope facing the camera is lit
     const toCamera = direction.negate().toVar()
     // The depth cue at a distance along the ray, from how much view depth a millimetre of the ray covers
-    const cueAtDistance = depthCue.alongRay(viewDir.z.negate())
+    const cueAtDistance = rayCue.alongRay(viewDir.z.negate())
 
     Loop(maxSteps, () => {
       If(t.greaterThan(end).or(transmittance.lessThan(minTransmittance)), () => {
         Break()
       })
       const p = origin.add(direction.mul(t)).toVar()
-      const texel = sampler.texelAt(p).toVar()
+      // What the step reads and where its shading reads about, with the way to the camera there: the step's own point,
+      // or, posed, the point of the scan its owner takes it back to, with the camera's way turned back with it
+      let texel: Node<'vec4'>
+      let at: Node<'vec3'> = p
+      let towardCamera: Node<'vec3'> = toCamera
+      if (posed && ray) {
+        const claim = posed.claim(ray, t, p, (rest) => sampler.coverageAt(rest), true)
+        texel = vec4(0).toVar()
+        If(claim.found, () => {
+          texel.assign(sampler.texelAt(claim.rest))
+        })
+        at = claim.rest
+        towardCamera = posed.restDirection(claim.joint, direction).negate()
+      } else texel = sampler.texelAt(p).toVar()
       const density = densityAt(texel).toVar()
       // What the depth cue leaves of the step: of its colour where it has one, of what it takes from an x-ray, and of
       // its density toward the maximum, so that in every mode the far side shows less
@@ -191,9 +221,9 @@ export function volumeMarch(sampler: BodySampler, depthCue: DepthCue): VolumeMar
             const dy = vec3(0, voxel.y, 0)
             const dz = vec3(0, 0, voxel.z)
             const gradient = vec3(
-              densityAtPoint(p.add(dx)).sub(densityAtPoint(p.sub(dx))),
-              densityAtPoint(p.add(dy)).sub(densityAtPoint(p.sub(dy))),
-              densityAtPoint(p.add(dz)).sub(densityAtPoint(p.sub(dz))),
+              densityAtPoint(at.add(dx)).sub(densityAtPoint(at.sub(dx))),
+              densityAtPoint(at.add(dy)).sub(densityAtPoint(at.sub(dy))),
+              densityAtPoint(at.add(dz)).sub(densityAtPoint(at.sub(dz))),
             ).toVar()
             // The slope per voxel, over the two voxels the differences span; the density falls toward the surface, so
             // the surface's normal is the slope's opposite. Where the six reads agree there's no slope, and the
@@ -202,7 +232,7 @@ export function volumeMarch(sampler: BodySampler, depthCue: DepthCue): VolumeMar
             const change = length(gradient).toVar()
             const slope = change.mul(0.5)
             const normal = gradient.negate().div(max(change, 1e-6))
-            const lit = mix(float(shadeAmbient), float(1), max(dot(normal, toCamera), 0))
+            const lit = mix(float(shadeAmbient), float(1), max(dot(normal, towardCamera), 0))
             color.mulAssign(mix(float(1), lit, clamp(slope.div(fullSlopePerVoxel), 0, 1)))
           })
           gathered.addAssign(color.mul(cue).mul(alpha.mul(transmittance)))
@@ -242,11 +272,12 @@ export function volumeMarch(sampler: BodySampler, depthCue: DepthCue): VolumeMar
     return result
   })
 
-  // The step and the most steps follow the voxel spacing, the step's share and the cut box as they stand: the
-  // diagonal of the box in steps, and one more for the first step's offset
+  // The step and the most steps follow the voxel spacing, the step's share and the box the rays are clipped to as they
+  // stand, the cut box or the posed bounds: the diagonal of the box in steps, and one more for the first step's offset
   const fit = () => {
     stepLength.value = Math.min(...spacing) * voxelShare
-    const diagonal = Math.hypot(...box.max.map((high, axis) => high - box.min[axis]))
+    const { min: low, max: high } = posed ? posed.bounds : box
+    const diagonal = Math.hypot(high[0] - low[0], high[1] - low[1], high[2] - low[2])
     maxSteps.value = Math.ceil(diagonal / stepLength.value) + 1
   }
 
@@ -265,13 +296,19 @@ export function volumeMarch(sampler: BodySampler, depthCue: DepthCue): VolumeMar
     },
     setCuts(next) {
       box = next
-      cutMin.value.fromArray(next.min)
-      cutMax.value.fromArray(next.max)
+      if (posed) posed.setCuts(next)
+      else {
+        cutMin.value.fromArray(next.min)
+        cutMax.value.fromArray(next.max)
+      }
       fit()
     },
     setStep(share) {
       voxelShare = share
       fit()
+    },
+    pose() {
+      if (posed?.pose()) fit()
     },
   }
 }
