@@ -177,8 +177,9 @@ export function createStage(renderer: WebGPURenderer, scene: Scene, camera: Came
     if (lastDrawn) strike(lastDrawn)
     compositor.set(framePlan(look))
 
-    // The last volume's textures go once the styles have let go of them
+    // The last volume's textures go once the styles have let go of them, and so do the last binding's of its rig
     if (lastBody && !kept) lastBody.textures.dispose()
+    if (lastPosed && lastPosed !== posed) lastPosed.textures.dispose()
   }
 
   return {
@@ -258,6 +259,7 @@ export function createStage(renderer: WebGPURenderer, scene: Scene, camera: Came
       overlay.dispose()
       compositor.dispose()
       body?.textures.dispose()
+      body?.posed?.textures.dispose()
       body = null
       scene.fogNode = null
     },
