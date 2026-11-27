@@ -74,6 +74,23 @@ export function sceneToTexture(volume: Mapped, center: Triple): Matrix4 {
   return matrix
 }
 
+// The affine mapping from a point in the scene of a level, placed as given, to the cells of another grid in the source
+// frame, the rig file's, which is the default level's alone: along each of the grid's axes, the point's place in cells
+// from cell 0's centre, and a half, so that its floor is the index of the cell nearest the point. On the default level
+// it is the texture's coordinates times the grid's size; on a finer level its cells are the finer voxels' twice over
+export function sceneToCell(placement: Pick<Volume, 'axes' | 'origin'> & { center: Triple }, grid: { spacing: Triple; origin: Triple }): Matrix4 {
+  const matrix = new Matrix4().makeScale(0, 0, 0)
+  const elements = matrix.elements
+  sceneAxes(placement.axes).forEach((axis, scene) => {
+    const cell = axis.source
+    // A scene coordinate is the sign times the source's offset from the level's voxel 0, less the bounds' centre
+    const perMm = axis.sign / grid.spacing[cell]
+    elements[scene * 4 + cell] = perMm
+    elements[12 + cell] = (placement.origin[cell] - grid.origin[cell]) / grid.spacing[cell] + perMm * placement.center[scene] + 0.5
+  })
+  return matrix
+}
+
 // The texture's coordinates of a point in the scene
 export function textureCoordinate(volume: Mapped, center: Triple, point: Vector3): Vector3 {
   return point.clone().applyMatrix4(sceneToTexture(volume, center))
