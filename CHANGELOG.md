@@ -2,6 +2,11 @@
 
 Version Release Notes
 
+## 0.9.0 - 2026-11-27
+
+- Motion folder in the volume and raytrace styles, each part of the male moving rigidly with its bone
+- Posed bone in the surface style ending cleanly at each joint in any pose
+
 ## 0.8.0 - 2026-11-26
 
 - Import, playing a clip made for another skeleton on the male, from a GLB, glTF, FBX or BVH file chosen with the button or dropped on the page
